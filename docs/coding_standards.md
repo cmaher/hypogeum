@@ -5,6 +5,8 @@ flow from binary composition roots through transport adapters and services to
 repositories. Services can delegate directly to repositories; add managers only
 when business behavior needs a distinct component.
 
+Executable composition roots for the public web server, Apalis dashboard and
+`hypogeum-db` CLI belong in `cmd/web-server`, `cmd/apalis-dashboard` and `cmd/db`.
 Reusable infrastructure belongs in `crates/`; domain crates belong in `crates/domain/`.
 The generic example is `crates/domain/users/`. See the README's project customization
 section before renaming a fresh project and its database schema.
@@ -48,9 +50,9 @@ for this unauthenticated example; it applies only to registered public RPC route
 never ordinary health routes or the unknown-service fallback.
 
 The executable composition root lives in `cmd/web-server/src/main.rs`; the
-reusable router stays in `crates/web-server`. Only main loads `EnvSource` once and deserializes `HYPOGEUM_WEB_` configuration
-and `HYPOGEUM_` logging. `HYPOGEUM_WEB_BIND` defaults to `127.0.0.1:8080`, using the
-existing `HYPOGEUM_ENV_FILE` semantics. Library constructors receive dependencies
+reusable router stays in `crates/web-server`. Only main loads `EnvSource` once
+and deserializes `HYPOGEUM_WEB_` configuration and `HYPOGEUM_` logging.
+`HYPOGEUM_WEB_BIND` defaults to `127.0.0.1:8080`, using the existing `HYPOGEUM_ENV_FILE` semantics. Library constructors receive dependencies
 explicitly. Shutdown drains active requests on Ctrl-C/SIGTERM. Deployment owns
 TLS/ALPN and ingress HTTP/2 forwarding. No frontend or JSON transcoding is needed.
 

@@ -1,5 +1,7 @@
 [workspace]
 members = [
+    "cmd/apalis-dashboard",
+    "cmd/db",
     "cmd/web-server",
     "crates/db",
     "crates/domain/hello-world",

@@ -9,10 +9,7 @@ apalis-postgres = { workspace = true, features = ["migrate"] }
 errors = { path = "../errors", default-features = false }
 sqlx = { workspace = true, features = ["migrate", "macros"] }
 tokio.workspace = true
-serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
-anyhow = "1"
-env-config = { path = "../env-config" }
 users = { path = "../domain/users" }
 sea-orm.workspace = true
 sea-orm-migration.workspace = true

@@ -128,10 +128,12 @@ starting with the generic User example in `crates/domain/users/`.
 | `web-server` | Reusable router for HTTP health, native gRPC and gRPC-Web |
 | `web-server-cli` (`cmd/web-server`) | Public web executable configuration and startup |
 | `rpc` | Generated protobuf client/server bindings |
-| `hypogeum-db` | Explicit migrations, verification and database inspection |
+| `hypogeum-db` | Reusable migrations, verification and database inspection |
+| `hypogeum-db-cli` (`cmd/db`) | The `hypogeum-db` administration executable |
 | `postgres` | Constructor-injected pool configuration |
 | `errors` | Shared typed errors and transport mappings |
 | `tasks` | Apalis queues, workers, retry policy and Board |
+| `apalis-dashboard` (`cmd/apalis-dashboard`) | Standalone Apalis dashboard and API |
 | `file-storage` | Streamed immutable byte storage with integrity checks |
 | `env-config` | Binary-only env snapshot and typed deserialization |
 | `test-support` | Testcontainers suite bootstrap and SQLx test configuration |
@@ -184,7 +186,7 @@ cargo make users
 ```
 
 The User gRPC endpoint defaults to `127.0.0.1:50051`. In another terminal,
-`cargo make tasks-board` serves the empty Apalis Board at `127.0.0.1:8082`.
+`cargo make apalis-dashboard` serves the empty Apalis Board at `127.0.0.1:8082`.
 `cargo make db-down` stops Compose while retaining its data volume.
 
 Configuration precedence is: process env > dotenv file > defaults. The `HYPOGEUM_ENV_FILE`
@@ -207,8 +209,8 @@ If changing local passwords or ports, update the matching URLs as well.
 Production credentials and binding policies belong in deployment configuration.
 
 ```sh
-cargo run --locked -p hypogeum-db -- --describe
-cargo run --locked -p hypogeum-db -- inspect --output json
+cargo run --locked -p hypogeum-db-cli --bin hypogeum-db -- --describe
+cargo run --locked -p hypogeum-db-cli --bin hypogeum-db -- inspect --output json
 ```
 
 The administration CLI returns JSON and exits nonzero on failure. Errors redact

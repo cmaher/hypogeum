@@ -1,0 +1,23 @@
+[package]
+name = "hypogeum-db-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "hypogeum-db"
+path = "src/main.rs"
+
+[dependencies]
+hypogeum-db = { path = "../../crates/db" }
+env-config = { path = "../../crates/env-config" }
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+sqlx = { workspace = true, features = ["macros"] }
+test-support = { path = "../../crates/test-support" }
+
+[lints]
+workspace = true

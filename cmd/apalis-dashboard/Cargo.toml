@@ -1,0 +1,17 @@
+[package]
+name = "apalis-dashboard"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+tasks = { path = "../../crates/tasks" }
+axum = "0.8"
+anyhow = "1"
+env-config = { path = "../../crates/env-config" }
+sqlx.workspace = true
+tokio.workspace = true
+serde.workspace = true
+
+[lints]
+workspace = true
