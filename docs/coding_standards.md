@@ -5,8 +5,8 @@ flow from binary composition roots through transport adapters and services to
 repositories. Services can delegate directly to repositories; add managers only
 when business behavior needs a distinct component.
 
-Reusable infrastructure belongs in `crates/`; domain crates belong in `domain/`.
-The generic example is `domain/users/`. See the README's schema customization
+Reusable infrastructure belongs in `crates/`; domain crates belong in `crates/domain/`.
+The generic example is `crates/domain/users/`. See the README's schema customization
 section before renaming database schemas in a new project.
 
 ## Boundaries
@@ -66,7 +66,9 @@ missing entities to NotFound and internal/database failures to redacted Internal
 responses. `ServiceError::Remote` represents downstream gRPC client failures;
 `RepoError::Database` covers PostgreSQL regardless of its location.
 
-Only binary composition roots load environment configuration. Libraries accept
+Only binary composition roots load environment configuration. Binaries load environment
+once via `env-config` (`EnvSource::load`), deserialize a per-binary `Config` with `envy`,
+use `Secret` for credentials, and never mutate process environment. Libraries accept
 explicit values and injected dependencies. Use `anyhow` for binary-level context.
 Do not include connection URLs, credentials or internal queries in public errors.
 

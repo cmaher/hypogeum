@@ -3,8 +3,8 @@
 A Rust workspace for starting services with PostgreSQL, gRPC, typed background
 tasks, and streamed byte storage. A small User service demonstrates the layers.
 
-Reusable infrastructure lives in `crates/`. Domain crates live in `domain/`,
-starting with the generic User example in `domain/users/`.
+Reusable infrastructure lives in `crates/`. Domain crates live in `crates/domain/`,
+starting with the generic User example in `crates/domain/users/`.
 
 | Crate | Responsibility |
 | --- | --- |
@@ -15,6 +15,7 @@ starting with the generic User example in `domain/users/`.
 | `errors` | Shared typed errors and transport mappings |
 | `tasks` | Apalis queues, workers, retry policy and Board |
 | `file-storage` | Streamed immutable byte storage with integrity checks |
+| `env-config` | Binary-only env snapshot and typed deserialization |
 | `test-support` | Testcontainers suite bootstrap and SQLx test configuration |
 
 ## Development
@@ -56,7 +57,7 @@ Compose provides a local PostgreSQL instance at `127.0.0.1:5432` with administra
 login `admin` / `password`. Service roles also default to `password` locally.
 
 ```sh
-cp env/local.secrets.example env/local.secrets
+cp env/local.env.example env/local.env
 cargo make db-up
 cargo make db-provision
 cargo make db-migrate
@@ -68,12 +69,21 @@ The User gRPC endpoint defaults to `127.0.0.1:50051`. In another terminal,
 `cargo make tasks-board` serves the empty Apalis Board at `127.0.0.1:8082`.
 `cargo make db-down` stops Compose while retaining its data volume.
 
-Environment variables override the optional `env/local.secrets` file. Set
-`FOUNDATION_LOCAL_CONFIG` to choose another file. The database can be remote:
-set `MIGRATION_DATABASE_URL`, `USERS_DATABASE_URL` and `TASKS_DATABASE_URL` to
-connections for their respective roles and skip Compose. Provision roles and
-database grants using the SQL in `infra/postgres/` with administrator access,
-then run the explicit migration command. Server processes never migrate.
+Configuration precedence is: process env > dotenv file > defaults. The `APP_ENV_FILE`
+variable selects the dotenv file to load:
+
+| `APP_ENV_FILE` | Behavior |
+| --- | --- |
+| unset | Load `env/local.env` if present; silently skip if absent |
+| `<path>` | File must exist, else exit with error |
+| `""` (empty) | Load no file (deployment opt-out) |
+
+Remote PostgreSQL: set `APP_MIGRATION_DATABASE_URL`, `APP_USERS_DATABASE_URL`, and
+`APP_TASKS_DATABASE_URL` to connections for their respective roles and skip Compose.
+Deployment: set real environment variables plus `APP_ENV_FILE=`. Set `APP_LOG`
+(default `info`) for log filtering. Provision roles and database grants using the
+SQL in `infra/postgres/` with administrator access, then run the explicit migration
+command. Server processes never migrate.
 
 If changing local passwords or ports, update the matching URLs as well.
 Production credentials and binding policies belong in deployment configuration.
@@ -106,7 +116,7 @@ When customizing a **fresh project before applying any migrations**:
 - To rename `app`, update the application migration SQL in
   [`crates/db/resources/migrations/`](crates/db/resources/migrations/), the
   SeaQuery table references and readiness check in
-  [`domain/users/src/repo/postgres.rs`](domain/users/src/repo/postgres.rs), and
+  [`crates/domain/users/src/repo/postgres.rs`](crates/domain/users/src/repo/postgres.rs), and
   database verification/inspection in [`crates/db/src/`](crates/db/src/).
   Update the integration tests and documentation to match.
 - To rename `infra`, update `create_schema` and `dangerous_set_table_name` in
@@ -130,6 +140,12 @@ the path in a PostgreSQL URL selects the database. Names such as
 are roles, also separate from schema names. Renaming roles requires matching
 changes to provisioning, grants, credential checks, connection URLs and tests.
 
+The `APP_` environment prefix is a rename point alongside schema names. Variable
+names are written out literally in each binary composition root and configuration file,
+so a consuming project can rename the prefix with a workspace-wide search and replace of
+`APP_` across Rust sources, `env/local.env.example`, `docker-compose.yml`, `Makefile.toml`,
+and documentation.
+
 ## User example
 
 `User` contains a UUID, display name, and creation/update timestamps. The API
@@ -137,7 +153,7 @@ supports create, get, list, rename and delete. Names are trimmed and accept
 1–200 Unicode characters. Lists use UUID ordering, an exclusive cursor, a
 default page size of 50, and a maximum of 100. The server generates IDs and
 PostgreSQL supplies timestamps. See `proto/users.proto` and the integration tests
-in `domain/users/tests/cases/` for the complete contract.
+in `crates/domain/users/tests/cases/` for the complete contract.
 
 The example leaves authentication and application-specific permissions to the
 project built from it. Keep development endpoints bound to loopback until a

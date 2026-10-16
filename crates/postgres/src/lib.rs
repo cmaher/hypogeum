@@ -3,13 +3,25 @@ pub use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
 use std::time::Duration;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct PostgresConfig {
     pub url: String,
     pub max_connections: u32,
     pub min_connections: u32,
     pub connect_timeout: Duration,
     pub idle_timeout: Duration,
+}
+
+impl std::fmt::Debug for PostgresConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PostgresConfig")
+            .field("url", &"[redacted]")
+            .field("max_connections", &self.max_connections)
+            .field("min_connections", &self.min_connections)
+            .field("connect_timeout", &self.connect_timeout)
+            .field("idle_timeout", &self.idle_timeout)
+            .finish()
+    }
 }
 
 impl PostgresConfig {
@@ -96,5 +108,19 @@ mod tests {
 
         let pool = create_pool(&config);
         assert!(pool.is_ok());
+    }
+
+    #[test]
+    fn test_postgres_config_debug_redacts_url() {
+        let config =
+            PostgresConfig::new("postgres://user:super_secret_password@localhost:5432/testdb");
+        let debug_str = format!("{config:?}");
+        assert!(!debug_str.contains("super_secret_password"));
+        assert!(!debug_str.contains("postgres://"));
+        assert!(debug_str.contains("[redacted]"));
+        assert!(debug_str.contains("max_connections"));
+        assert!(debug_str.contains("min_connections"));
+        assert!(debug_str.contains("connect_timeout"));
+        assert!(debug_str.contains("idle_timeout"));
     }
 }

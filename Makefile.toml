@@ -40,19 +40,19 @@ dependencies = ["fmt-fix", "clippy", "build", "test"]
 
 [tasks.db-up]
 script_runner = "@shell"
-script = ['docker compose --env-file "${FOUNDATION_LOCAL_CONFIG:-env/local.secrets}" up --detach --wait']
+script = ['set --; if [ -n "${APP_ENV_FILE+x}" ]; then [ -z "$APP_ENV_FILE" ] || set -- --env-file "$APP_ENV_FILE"; elif [ -f env/local.env ]; then set -- --env-file env/local.env; fi; docker compose "$@" up --detach --wait']
 
 [tasks.db-down]
 script_runner = "@shell"
-script = ['docker compose --env-file "${FOUNDATION_LOCAL_CONFIG:-env/local.secrets}" down']
+script = ['set --; if [ -n "${APP_ENV_FILE+x}" ]; then [ -z "$APP_ENV_FILE" ] || set -- --env-file "$APP_ENV_FILE"; elif [ -f env/local.env ]; then set -- --env-file env/local.env; fi; docker compose "$@" down']
 
 [tasks.db-status]
 script_runner = "@shell"
-script = ['docker compose --env-file "${FOUNDATION_LOCAL_CONFIG:-env/local.secrets}" ps']
+script = ['set --; if [ -n "${APP_ENV_FILE+x}" ]; then [ -z "$APP_ENV_FILE" ] || set -- --env-file "$APP_ENV_FILE"; elif [ -f env/local.env ]; then set -- --env-file env/local.env; fi; docker compose "$@" ps']
 
 [tasks.db-provision]
 script_runner = "@shell"
-script = ['docker compose --env-file "${FOUNDATION_LOCAL_CONFIG:-env/local.secrets}" exec -T postgres psql -X -U admin -d foundation -f /provision/provision.sql']
+script = ['set --; if [ -n "${APP_ENV_FILE+x}" ]; then [ -z "$APP_ENV_FILE" ] || set -- --env-file "$APP_ENV_FILE"; elif [ -f env/local.env ]; then set -- --env-file env/local.env; fi; docker compose "$@" exec -T postgres psql -X -U admin -d foundation -f /provision/provision.sql']
 
 [tasks.db-migrate]
 command = "cargo"
