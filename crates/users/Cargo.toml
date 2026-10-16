@@ -1,0 +1,24 @@
+[package]
+name = "users"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+errors = { path = "../errors" }
+postgres = { path = "../postgres" }
+sqlx = { workspace = true, features = ["macros"] }
+sea-query.workspace = true
+sea-query-sqlx.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+serde.workspace = true
+async-trait.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+foundation-db = { path = "../db" }
+test-support = { path = "../test-support" }
+
+[lints]
+workspace = true
