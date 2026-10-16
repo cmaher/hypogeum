@@ -11,16 +11,18 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 pub struct PgUserRepo {
-    pool: PgPool,
+    db: DatabaseConnection,
 }
 
 impl PgUserRepo {
     pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+        Self {
+            db: SqlxPostgresConnector::from_sqlx_postgres_pool(pool),
+        }
     }
 
-    fn db(&self) -> DatabaseConnection {
-        SqlxPostgresConnector::from_sqlx_postgres_pool(self.pool.clone())
+    fn db(&self) -> &DatabaseConnection {
+        &self.db
     }
 }
 
@@ -41,13 +43,13 @@ impl UserRepo for PgUserRepo {
             created_at: sea_orm::ActiveValue::NotSet,
             updated_at: sea_orm::ActiveValue::NotSet,
         };
-        let model = active.insert(&self.db()).await.map_err(map_db_err)?;
+        let model = active.insert(self.db()).await.map_err(map_db_err)?;
         Ok(model.into())
     }
 
     async fn get(&self, id: Uuid) -> Result<User, RepoError> {
         let model = Entity::find_by_id(id)
-            .one(&self.db())
+            .one(self.db())
             .await
             .map_err(map_db_err)?
             .ok_or(RepoError::NotFound)?;
@@ -61,7 +63,7 @@ impl UserRepo for PgUserRepo {
         if let Some(after) = page.after() {
             select = select.filter(Column::Id.gt(after));
         }
-        let models = select.all(&self.db()).await.map_err(map_db_err)?;
+        let models = select.all(self.db()).await.map_err(map_db_err)?;
         let mut users: Vec<User> = models.into_iter().map(User::from).collect();
         let more = users.len() > page.limit() as usize;
         users.truncate(page.limit() as usize);
@@ -81,13 +83,13 @@ impl UserRepo for PgUserRepo {
             updated_at: sea_orm::ActiveValue::Set(chrono::Utc::now()),
             created_at: sea_orm::ActiveValue::NotSet,
         };
-        let model = active.update(&self.db()).await.map_err(map_db_err)?;
+        let model = active.update(self.db()).await.map_err(map_db_err)?;
         Ok(model.into())
     }
 
     async fn delete(&self, id: Uuid) -> Result<(), RepoError> {
         let res = Entity::delete_by_id(id)
-            .exec(&self.db())
+            .exec(self.db())
             .await
             .map_err(map_db_err)?;
         if res.rows_affected == 0 {

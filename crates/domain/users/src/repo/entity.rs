@@ -63,10 +63,6 @@ impl From<&User> for Model {
     }
 }
 
-pub mod user {
-    pub use super::{ActiveModel, Column, Entity, Model, PrimaryKey, Relation};
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
