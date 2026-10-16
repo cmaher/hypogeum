@@ -4,7 +4,7 @@ Read [the coding standards](docs/coding_standards.md) before changing code.
 
 - Use plain data structs, constructor injection, and trait-based repository,
   service and client interfaces. Keep transport adapters thin.
-- Repositories own application SQL. Build parameterized statements with SeaQuery
+- Repositories own application SQL. Build parameterized statements with SeaQL's SeaQuery
   and execute/map them with SQLx. Keep tables schema-qualified.
 - Define shared errors in `crates/errors`; use `anyhow` at binary boundaries.
   Database and internal details must not enter gRPC responses.
@@ -12,6 +12,8 @@ Read [the coding standards](docs/coding_standards.md) before changing code.
   receive configuration, pools and dependencies explicitly.
 - Run migrations explicitly through `foundation-db`; service startup checks
   readiness using restricted runtime credentials.
+- Keep schema DDL, grants and readiness functions in versioned SQL migrations.
+  The Rust runner orchestrates SQLx migrators; SQLx owns locking and checksums.
 - Keep this workspace generic. Add product behavior in the consuming project.
 - Use Cargo Make for local Docker/Compose operations. Database integration tests
   own their containers through Testcontainers and isolate databases with SQLx.

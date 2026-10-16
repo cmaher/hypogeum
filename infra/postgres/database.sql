@@ -8,6 +8,8 @@ DO $$ DECLARE db text := current_database(); BEGIN
   EXECUTE format('ALTER ROLE foundation_tasks IN DATABASE %I SET search_path=pg_catalog,apalis',db);
 END $$;
 REVOKE ALL ON SCHEMA public FROM PUBLIC;
+ALTER DEFAULT PRIVILEGES FOR ROLE foundation_owner REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+ALTER DEFAULT PRIVILEGES FOR ROLE foundation_owner REVOKE USAGE ON TYPES FROM PUBLIC;
 -- Trusted extensions create contained objects as the bootstrap superuser.
 -- Give only the owner the ability to delegate their runtime privileges.
 DO $$ DECLARE bootstrap text; BEGIN

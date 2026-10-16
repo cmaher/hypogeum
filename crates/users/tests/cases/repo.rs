@@ -9,6 +9,35 @@ use uuid::Uuid;
 
 #[sqlx::test(migrations = false)]
 #[ignore = "run by integration_suite"]
+async fn existing_user_survives_migration_upgrade(
+    _pool_options: sqlx::postgres::PgPoolOptions,
+    options: PgConnectOptions,
+) {
+    use std::str::FromStr;
+    let db = TestDatabase::provision(options).await;
+    let owner = PgConnectOptions::from_str(&db.migration_url)
+        .unwrap()
+        .options([("role", "foundation_owner")]);
+    let mut connection = PgConnection::connect_with(&owner).await.unwrap();
+    // Reproduce an existing database with the unchanged first migration applied.
+    let mut initial = sqlx::migrate!("../db/resources/migrations");
+    initial.create_schema("infra");
+    initial.dangerous_set_table_name("infra._sqlx_migrations");
+    initial.run_to(1, &mut connection).await.unwrap();
+    connection.close().await.unwrap();
+    let pool = sqlx::PgPool::connect(&db.users_url).await.unwrap();
+    let repo = PgUserRepo::new(pool.clone());
+    let before = repo.create(Uuid::new_v4(), "Existing User").await.unwrap();
+    assert!(users::repo::check_ready(&pool).await.is_err());
+    db.migrate().await;
+    assert_eq!(repo.get(before.id).await.unwrap(), before);
+    users::repo::check_ready(&pool).await.unwrap();
+    foundation_db::verify(&db.migration_url).await.unwrap();
+    pool.close().await;
+}
+
+#[sqlx::test(migrations = false)]
+#[ignore = "run by integration_suite"]
 async fn user_repository_connects_and_persists_under_runtime_privileges(
     _pool_options: sqlx::postgres::PgPoolOptions,
     options: PgConnectOptions,
@@ -101,9 +130,10 @@ async fn user_repository_connects_and_persists_under_runtime_privileges(
     let mut admin = PgConnection::connect(&db.admin_url).await.unwrap();
     sqlx::raw_sql("CREATE OR REPLACE FUNCTION app.schema_version() RETURNS bigint LANGUAGE sql AS 'SELECT 0::bigint'").execute(&mut admin).await.unwrap();
     assert!(users::repo::check_ready(&pool).await.is_err());
-    // Restore the function from the explicit migration command.
+    // Applied migrations do not silently rewrite objects after manual tampering.
     foundation_db::migrate(&migration_url).await.unwrap();
-    users::repo::check_ready(&pool).await.unwrap();
+    assert!(users::repo::check_ready(&pool).await.is_err());
+    assert!(foundation_db::verify(&migration_url).await.is_err());
     pool.close().await;
     tasks.close().await;
 }

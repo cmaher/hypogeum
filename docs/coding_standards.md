@@ -25,7 +25,7 @@ real adapters and PostgreSQL through the User repository and transport.
 
 ## SQL and migrations
 
-Repositories build application statements with SeaQuery and bind values using
+Repositories build application statements with SeaQL's SeaQuery and bind values using
 `sea-query-sqlx`. SQLx owns pools, execution, row mapping and migrations. Raw SQL
 is appropriate for migrations, PostgreSQL-specific administration/readiness and
 upstream infrastructure APIs. Audit `AssertSqlSafe` boundaries: interpolating
@@ -33,15 +33,23 @@ caller values into SQL remains forbidden.
 
 Use schema-qualified names. `app.users` belongs to the User service; `apalis`
 belongs to upstream task infrastructure. The explicit migration runner uses a
-dedicated connection and administrative advisory lock. Application history lives
+dedicated connection and SQLx's standard migration locking and checksum validation.
+SQLx creates the ledger schemas and uses schema-qualified ledger table names.
+Application history lives
 in `infra._sqlx_migrations`; upstream history lives in `apalis._sqlx_migrations`.
 Never edit an applied migration. Add a new one and update the matching readiness
-contract.
+contract. Keep DDL, functions and grants in versioned SQL files rather than
+reconciling them from Rust on each invocation. Upstream Apalis migrations run
+first, then application migrations install their tables and runtime contracts.
+Provisioning owns roles and initial default privileges.
 
 `foundation_migrator` may select `foundation_owner` for DDL. `foundation_users`
 and `foundation_tasks` receive deliberately limited runtime privileges. They
 cannot read migration ledgers or each other's data. Readiness uses narrow
-owner-defined functions instead of ledger access or runtime migrations.
+version functions instead of ledger access or runtime migrations. These return
+an explicit compatibility version; adding an unrelated migration does not change
+readiness by changing a ledger row count. The separate `verify` command checks
+history and runtime boundaries without applying or repairing schema changes.
 
 For operations needing multiple atomic statements, keep transaction management
 inside the repository boundary. Do not thread SQLx transaction handles through
