@@ -74,3 +74,8 @@ args = ["run", "--locked", "-p", "users"]
 [tasks.tasks-board]
 command = "cargo"
 args = ["run", "--locked", "-p", "tasks"]
+
+[tasks.web-server]
+description = "Run public HTTP, native gRPC and gRPC-Web without a database"
+command = "cargo"
+args = ["run", "--locked", "-p", "web-server"]

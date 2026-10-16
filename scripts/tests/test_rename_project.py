@@ -83,6 +83,39 @@ class RenameProjectTests(unittest.TestCase):
         self.assertIn("NextProject", self.fixture.read_text())
         self.assertNotIn(TARGET, self.fixture.read_text())
 
+    def test_public_rpc_and_web_configuration_stay_aligned(self):
+        repository = SCRIPT.parent.parent
+        paths = [
+            "proto/public_hello_world.proto",
+            "crates/rpc/src/lib.rs",
+            "crates/web-server/src/main.rs",
+            "crates/web-server/tests/transport.rs",
+            "env/local.env.example",
+        ]
+        for relative in paths:
+            source = repository / relative
+            self.assertTrue(source.is_file(), f"missing public web surface: {relative}")
+            target = self.root / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+        self.git("add", ".")
+        self.run_script(TARGET)
+        proto = (self.root / paths[0]).read_text()
+        bindings = (self.root / paths[1]).read_text()
+        main = (self.root / paths[2]).read_text()
+        transport = (self.root / paths[3]).read_text()
+        env = (self.root / paths[4]).read_text()
+        package = f"{TARGET}.public.v1"
+        self.assertIn(f"package {package};", proto)
+        self.assertIn(f'tonic::include_proto!("{package}")', bindings)
+        self.assertIn(f"/{package}.PublicHelloWorld/SayHello", transport)
+        self.assertIn(f'"{TARGET.upper()}_WEB_"', main)
+        self.assertIn(f"{TARGET.upper()}_WEB_BIND", main)
+        self.assertIn(f"{TARGET.upper()}_WEB_BIND=127.0.0.1:8080", env)
+        self.assertIn(f"/{TARGET}.users.v1.Users/GetUser", transport)
+        for relative in paths:
+            self.assertNotIn(SOURCE, (self.root / relative).read_text().lower())
+
     def test_hidden_tracked_files_are_included_but_local_files_are_excluded(self):
         hidden = self.root / ".settings"
         hidden.write_text(SOURCE)

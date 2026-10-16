@@ -1,0 +1,29 @@
+[package]
+name = "web-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+hello-world = { path = "../domain/hello-world" }
+axum = { version = "0.8", features = ["http2"] }
+tonic.workspace = true
+tonic-web = "0.14"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors"] }
+tokio.workspace = true
+anyhow = "1"
+env-config = { path = "../env-config" }
+serde.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+errors = { path = "../errors" }
+rpc = { path = "../rpc" }
+prost.workspace = true
+base64 = "0.22"
+tonic-prost = "0.14"
+reqwest = { version = "0.12", default-features = false }
+
+[lints]
+workspace = true

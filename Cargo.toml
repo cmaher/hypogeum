@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/db",
+    "crates/domain/hello-world",
     "crates/domain/users",
     "crates/env-config",
     "crates/errors",
@@ -9,6 +10,7 @@ members = [
     "crates/rpc",
     "crates/tasks",
     "crates/test-support",
+    "crates/web-server",
 ]
 resolver = "3"
 
