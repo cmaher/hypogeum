@@ -20,7 +20,7 @@ async fn existing_user_survives_migration_upgrade(
         .options([("role", "foundation_owner")]);
     let mut connection = PgConnection::connect_with(&owner).await.unwrap();
     // Reproduce an existing database with the unchanged first migration applied.
-    let mut initial = sqlx::migrate!("../db/resources/migrations");
+    let mut initial = sqlx::migrate!("../../crates/db/resources/migrations");
     initial.create_schema("infra");
     initial.dangerous_set_table_name("infra._sqlx_migrations");
     initial.run_to(1, &mut connection).await.unwrap();

@@ -5,8 +5,8 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-errors = { path = "../errors" }
-postgres = { path = "../postgres" }
+errors = { path = "../../crates/errors" }
+postgres = { path = "../../crates/postgres" }
 sqlx = { workspace = true, features = ["macros"] }
 sea-query.workspace = true
 sea-query-sqlx.workspace = true
@@ -15,7 +15,7 @@ chrono.workspace = true
 serde.workspace = true
 async-trait.workspace = true
 tokio.workspace = true
-rpc = { path = "../rpc" }
+rpc = { path = "../../crates/rpc" }
 tonic.workspace = true
 prost-types.workspace = true
 anyhow = "1"
@@ -23,8 +23,8 @@ dotenvy = "0.15"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
-foundation-db = { path = "../db" }
-test-support = { path = "../test-support" }
+foundation-db = { path = "../../crates/db" }
+test-support = { path = "../../crates/test-support" }
 tokio-stream = { version = "0.1", features = ["net"] }
 
 [lints]

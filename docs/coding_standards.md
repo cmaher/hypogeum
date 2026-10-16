@@ -5,6 +5,10 @@ flow from binary composition roots through transport adapters and services to
 repositories. Services can delegate directly to repositories; add managers only
 when business behavior needs a distinct component.
 
+Reusable infrastructure belongs in `crates/`; domain crates belong in `domain/`.
+The generic example is `domain/users/`. See the README's schema customization
+section before renaming database schemas in a new project.
+
 ## Boundaries
 
 - **Objects:** data without pools, clients, or workflows. `User` is an example.

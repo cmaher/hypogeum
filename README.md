@@ -3,6 +3,9 @@
 A Rust workspace for starting services with PostgreSQL, gRPC, typed background
 tasks, and streamed byte storage. A small User service demonstrates the layers.
 
+Reusable infrastructure lives in `crates/`. Domain crates live in `domain/`,
+starting with the generic User example in `domain/users/`.
+
 | Crate | Responsibility |
 | --- | --- |
 | `users` | Plain User objects, repository, service, gRPC server and client |
@@ -84,6 +87,49 @@ The administration CLI returns JSON and exits nonzero on failure. Errors redact
 connection details. Migration and runtime accounts are separate; runtime roles
 cannot perform DDL, inspect migration ledgers, or access each other's data.
 
+## Schema names and customization
+
+| Schema | Purpose | Can a new project rename it? |
+| --- | --- | --- |
+| `app` | Application tables (`app.users`) and User readiness function | Yes. This is the application-owned example schema; replace it with your domain name if useful. |
+| `infra` | Application SQLx migration ledger (`infra._sqlx_migrations`) | Yes, but keeping it is recommended. Update both the migrator's schema and its qualified ledger table name together. |
+| `apalis` | Upstream task tables, functions, extensions and a separate migration ledger | Keep this name. The pinned Apalis implementation and migrations use schema-qualified `apalis` references. Changing our settings alone cannot rename it. |
+| `public` | PostgreSQL's default schema; unused for application data | Leave it in place. Application tables belong in explicitly owned schemas. |
+| `pg_catalog`, `pg_temp` | PostgreSQL system schemas used in controlled search paths | Leave these names unchanged. |
+
+Schema names are currently fixed in code and SQL; there is no schema environment
+variable. Changing a connection URL or `search_path` does not rename them:
+SeaQuery repository statements use explicit schema names.
+
+When customizing a **fresh project before applying any migrations**:
+
+- To rename `app`, update the application migration SQL in
+  [`crates/db/resources/migrations/`](crates/db/resources/migrations/), the
+  SeaQuery table references and readiness check in
+  [`domain/users/src/repo/postgres.rs`](domain/users/src/repo/postgres.rs), and
+  database verification/inspection in [`crates/db/src/`](crates/db/src/).
+  Update the integration tests and documentation to match.
+- To rename `infra`, update `create_schema` and `dangerous_set_table_name` in
+  [`crates/db/src/lib.rs`](crates/db/src/lib.rs), plus qualified references in
+  migrations, verification, inspection and integration tests. Retain a separate
+  application ledger and upstream Apalis ledger.
+- Keep provisioning grants and role search paths in
+  [`infra/postgres/`](infra/postgres/) consistent with any schema changes. Run
+  `cargo make ci` to check migrations, User CRUD and runtime privilege boundaries.
+
+For a database that **already has migrations applied**, preserve existing
+migration files and checksums. Rename application schemas through a new forward
+migration and coordinate the code change. Renaming the ledger schema also needs
+a coordinated move of the existing ledger before switching the migrator's
+configured location. Pointing SQLx at a new, empty ledger would make existing
+migrations appear unapplied.
+
+The database name (`foundation` in local Compose) is separate from these schemas;
+the path in a PostgreSQL URL selects the database. Names such as
+`foundation_owner`, `foundation_migrator`, `foundation_users` and `foundation_tasks`
+are roles, also separate from schema names. Renaming roles requires matching
+changes to provisioning, grants, credential checks, connection URLs and tests.
+
 ## User example
 
 `User` contains a UUID, display name, and creation/update timestamps. The API
@@ -91,7 +137,7 @@ supports create, get, list, rename and delete. Names are trimmed and accept
 1–200 Unicode characters. Lists use UUID ordering, an exclusive cursor, a
 default page size of 50, and a maximum of 100. The server generates IDs and
 PostgreSQL supplies timestamps. See `proto/users.proto` and the integration tests
-in `crates/users/tests/cases/` for the complete contract.
+in `domain/users/tests/cases/` for the complete contract.
 
 The example leaves authentication and application-specific permissions to the
 project built from it. Keep development endpoints bound to loopback until a
