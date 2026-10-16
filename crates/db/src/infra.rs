@@ -3,6 +3,21 @@ use errors::MigrationError;
 use sqlx::{Executor, PgConnection};
 
 pub async fn apply_contracts(conn: &mut PgConnection) -> Result<()> {
+    let already_applied: bool = sqlx::query_scalar(
+        "SELECT EXISTS (
+            SELECT 1 FROM pg_catalog.pg_proc p
+            JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+            WHERE n.nspname = 'apalis' AND p.proname = 'schema_version'
+        )",
+    )
+    .fetch_one(&mut *conn)
+    .await
+    .map_err(MigrationError::database)?;
+
+    if already_applied {
+        return Ok(());
+    }
+
     conn.execute(
         "CREATE SCHEMA IF NOT EXISTS infra AUTHORIZATION foundation_owner;\
          REVOKE ALL ON SCHEMA infra FROM PUBLIC;\
