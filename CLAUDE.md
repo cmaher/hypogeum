@@ -4,8 +4,8 @@ Read [the coding standards](docs/coding_standards.md) before changing code.
 
 - Use plain data structs, constructor injection, and trait-based repository,
   service and client interfaces. Keep transport adapters thin.
-- Repositories own application SQL. Build parameterized statements with SeaQL's SeaQuery
-  and execute/map them with SQLx. Keep tables schema-qualified.
+- Repositories own application SQL. Build typed entity queries with SeaORM,
+  integrating with SQLx pool ownership via `SqlxPostgresConnector`. Keep tables schema-qualified.
 - Define shared errors in `crates/errors`; use `anyhow` at binary boundaries.
   Database and internal details must not enter gRPC responses.
 - Binaries load environment once via `env-config` (`EnvSource::load`), deserialize

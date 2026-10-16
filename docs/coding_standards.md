@@ -29,11 +29,11 @@ real adapters and PostgreSQL through the User repository and transport.
 
 ## SQL and migrations
 
-Repositories build application statements with SeaQL's SeaQuery and bind values using
-`sea-query-sqlx`. SQLx owns pools, execution, row mapping and migrations. Raw SQL
-is appropriate for migrations, PostgreSQL-specific administration/readiness and
-upstream infrastructure APIs. Audit `AssertSqlSafe` boundaries: interpolating
-caller values into SQL remains forbidden.
+Repositories build typed database queries with SeaORM entities and active models,
+integrating with SQLx pool ownership via `SqlxPostgresConnector`. SQLx owns pools
+and migrations. Raw SQL is appropriate for migrations, PostgreSQL-specific
+administration/readiness and upstream infrastructure APIs. Audit `AssertSqlSafe`
+boundaries: interpolating caller values into SQL remains forbidden.
 
 Use schema-qualified names. `app.users` belongs to the User service; `apalis`
 belongs to upstream task infrastructure. The explicit migration runner uses a

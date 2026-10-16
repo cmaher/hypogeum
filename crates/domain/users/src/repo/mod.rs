@@ -2,8 +2,8 @@ pub mod entity;
 mod postgres;
 use crate::models::{PageRequest, User, UserPage};
 use async_trait::async_trait;
-use errors::RepoError;
 pub use entity::{ActiveModel, Column, Entity, Model};
+use errors::RepoError;
 pub use postgres::{PgUserRepo, check_ready};
 use uuid::Uuid;
 
