@@ -1,4 +1,4 @@
-# Rust Foundation
+# Hypogeum
 
 Read [the coding standards](docs/coding_standards.md) before changing code.
 
@@ -11,10 +11,10 @@ Read [the coding standards](docs/coding_standards.md) before changing code.
 - Binaries load environment once via `env-config` (`EnvSource::load`), deserialize
   per-binary `Config` with `envy`, use `Secret` for credentials, and never mutate
   process env. Libraries receive typed values, pools and dependencies explicitly.
-- Run migrations explicitly through `foundation-db`; service startup checks
+- Run migrations explicitly through `hypogeum-db`; service startup checks
   readiness using restricted runtime credentials.
 - Domain crates own their schema DDL, grants and readiness functions in collocated
-  SeaORM migrations under `src/pg/migrations/`. `foundation-db` orchestrates upstream
+  SeaORM migrations under `src/pg/migrations/`. `hypogeum-db` orchestrates upstream
   Apalis SQLx migrations, infrastructure contracts, and domain SeaORM migrators.
 - Keep this workspace generic. Add product behavior in the consuming project.
 - Keep reusable infrastructure in `crates/` and domain crates in `crates/domain/`.

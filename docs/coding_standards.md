@@ -6,8 +6,8 @@ repositories. Services can delegate directly to repositories; add managers only
 when business behavior needs a distinct component.
 
 Reusable infrastructure belongs in `crates/`; domain crates belong in `crates/domain/`.
-The generic example is `crates/domain/users/`. See the README's schema customization
-section before renaming database schemas in a new project.
+The generic example is `crates/domain/users/`. See the README's project customization
+section before renaming a fresh project and its database schema.
 
 ## Boundaries
 
@@ -36,23 +36,23 @@ SeaORM's `MigratorTrait` and `MigrationTrait`. Raw SQL remains appropriate for
 PostgreSQL-specific administration, readiness functions, and upstream infrastructure APIs.
 Audit `AssertSqlSafe` boundaries: interpolating caller values into SQL remains forbidden.
 
-Use schema-qualified names. `fndapp.users` belongs to the User service; `apalis`
-belongs to upstream task infrastructure. The explicit migration runner (`foundation-db`)
-uses a dedicated `foundation_migrator` connection (selecting role `foundation_owner`) and
+Use schema-qualified names. `hypogeum.users` belongs to the User service; `apalis`
+belongs to upstream task infrastructure. The explicit migration runner (`hypogeum-db`)
+uses a dedicated `hypogeum_migrator` connection (selecting role `hypogeum_owner`) and
 orchestrates migrations in order:
 1. Upstream Apalis SQLx migrations run first (`apalis._sqlx_migrations`).
 2. Infrastructure runtime contracts and privilege hardening apply to `infra` and `apalis`.
 3. Domain SeaORM migrators (`users::pg::migrations::Migrator::up`) install domain schemas,
    tables, check constraints, grants, and readiness functions, tracking history under
-   domain-qualified tables (e.g. `fndapp.seaql_migrations`).
+   domain-qualified tables (e.g. `hypogeum.seaql_migrations`).
 
 Never edit an applied migration. Add a new one and update the matching readiness
 contract. Keep DDL, functions and grants versioned within migration definitions rather than
 reconciling them from Rust on each service invocation. Provisioning owns roles and initial
 default privileges.
 
-`foundation_migrator` may select `foundation_owner` for DDL. `foundation_users`
-and `foundation_tasks` receive deliberately limited runtime privileges. They
+`hypogeum_migrator` may select `hypogeum_owner` for DDL. `hypogeum_users`
+and `hypogeum_tasks` receive deliberately limited runtime privileges. They
 cannot read migration ledgers or each other's data. Readiness uses narrow
 version functions instead of ledger access or runtime migrations. These return
 an explicit compatibility version; adding an unrelated migration does not change
@@ -79,7 +79,8 @@ Do not include connection URLs, credentials or internal queries in public errors
 ## Verification
 
 `cargo make ci` checks format, denies Clippy warnings, builds and runs the entire
-workspace. A running Docker daemon is the only infrastructure prerequisite.
+workspace. Git and Python 3.9 or newer run the rename-script tests; Docker is the only
+infrastructure prerequisite.
 `cargo test --locked --workspace --all-features` runs every integration suite.
 
 Each suite launcher owns one Testcontainers PostgreSQL instance. It launches its
