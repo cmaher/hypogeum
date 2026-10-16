@@ -13,5 +13,8 @@ serde_json.workspace = true
 anyhow = "1"
 dotenvy = "0.15"
 
+[dev-dependencies]
+test-support = { path = "../test-support" }
+
 [lints]
 workspace = true
