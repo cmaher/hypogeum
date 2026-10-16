@@ -77,9 +77,16 @@ async fn fixture_worker_process() {
     };
     let pool = pool("TASKS_FIXTURE_DATABASE_URL").await;
     let queue = Queue::<Effect>::new(pool.clone(), "fixture-recovery", config()).unwrap();
-    let context = WorkerContext::new(&format!("fixture-process-{}", std::process::id()));
+    let lifecycle = tasks::worker::Lifecycle::new(
+        &format!("fixture-process-{}", std::process::id()),
+        sqlx::postgres::PgPoolOptions::new().max_connections(2),
+        std::env::var("TASKS_FIXTURE_DATABASE_URL")
+            .unwrap()
+            .parse()
+            .unwrap(),
+    );
     let worker = queue
-        .worker(&context)
+        .worker(&lifecycle)
         .await
         .unwrap()
         .build(move |effect: Effect| {
@@ -87,7 +94,14 @@ async fn fixture_worker_process() {
             let hold = mode == "hold";
             execute_recovery(effect, pool, hold)
         });
-    worker.run().await.unwrap();
+    lifecycle
+        .run_until(
+            worker.run(),
+            std::future::pending(),
+            config().shutdown_timeout,
+        )
+        .await
+        .unwrap();
 }
 
 async fn atomicity(pool: &PgPool, admin: &PgPool, url: &str) {

@@ -1,7 +1,19 @@
 use crate::WorkerConfig;
 use apalis::prelude::*;
 use errors::TasksError;
-use std::{future::Future, time::Duration};
+use sqlx::{
+    PgPool,
+    postgres::{PgConnectOptions, PgPoolOptions},
+};
+use std::{
+    future::Future,
+    pin::Pin,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 use tower::{
     layer::util::{Identity, Stack},
     limit::ConcurrencyLimitLayer,
@@ -81,28 +93,154 @@ impl<Args: Clone, Response> tower::retry::Policy<Task<Args>, Response, BoxDynErr
     }
 }
 
-/// Stop claiming on signal, drain and flush upstream persistence, then drop the
-/// worker future at the deadline. Abandoned claims are recovered by Apalis.
-pub async fn run_until<F, S>(
-    context: &WorkerContext,
-    worker: F,
-    signal: S,
-    timeout: Duration,
-) -> Result<(), TasksError>
-where
-    F: Future<Output = Result<(), WorkerError>>,
-    S: Future<Output = ()>,
-{
-    tokio::pin!(worker);
-    tokio::pin!(signal);
-    tokio::select! {
-        biased;
-        result = &mut worker => result.map_err(TasksError::operation),
-        () = &mut signal => {
-            context.stop().map_err(TasksError::operation)?;
-            tokio::time::timeout(timeout, &mut worker).await
-                .map_err(|_| TasksError::DrainTimeout)?.map_err(TasksError::operation)
+/// A single worker's pool and shutdown state. Never share this pool with producers
+/// or unrelated workers. Construct a fresh lifecycle for every worker restart.
+pub struct Lifecycle {
+    context: WorkerContext,
+    pool: PgPool,
+    retired: Arc<AtomicBool>,
+    closed: bool,
+}
+
+impl Lifecycle {
+    /// Pool sizing is explicit: budget these connections separately from the
+    /// application pool. The after_release callback is reserved for shutdown.
+    pub fn new(name: &str, options: PgPoolOptions, connection: PgConnectOptions) -> Self {
+        let context = WorkerContext::new(name);
+        let retired = Arc::new(AtomicBool::new(false));
+        let state = retired.clone();
+        let worker = context.clone();
+        let pool = options
+            .after_release(move |_, _| {
+                // No SQL or round trip on connection return. Once stopping, discard
+                // physical sessions: SQLx 0.9 can miss rollback if BEGIN is cancelled.
+                if worker.is_shutting_down() {
+                    state.store(true, Ordering::SeqCst);
+                }
+                let reuse = !state.load(Ordering::SeqCst);
+                Box::pin(async move { Ok(reuse) })
+            })
+            .connect_lazy_with(connection);
+        Self {
+            context,
+            pool,
+            retired,
+            closed: false,
         }
+    }
+
+    pub fn context(&self) -> &WorkerContext {
+        &self.context
+    }
+
+    /// Worker infrastructure only; producers and application queries need their
+    /// own pool. This pool is permanently closed when the lifecycle ends.
+    pub fn pool(&self) -> &PgPool {
+        &self.pool
+    }
+
+    async fn close(&mut self) {
+        self.pool.close().await;
+        self.closed = true;
+    }
+
+    fn retire(&self) {
+        self.retired.store(true, Ordering::SeqCst);
+        if !self.context.is_shutting_down() {
+            let _ = self.context.stop();
+        }
+    }
+
+    /// Stop claiming on signal and share one deadline between draining the
+    /// worker and closing its pool. Worker completion/errors without a signal
+    /// start a cleanup-only deadline. Expiry returns DrainTimeout while final
+    /// cleanup continues on Tokio. Cancellation also retires the pool before
+    /// dropping the worker, including cancellation before the first poll.
+    /// Unrepresentable shutdown deadlines return a configuration error.
+    pub fn run_until<F, S>(
+        self,
+        worker: F,
+        signal: S,
+        timeout: Duration,
+    ) -> impl Future<Output = Result<(), TasksError>>
+    where
+        F: Future<Output = Result<(), WorkerError>>,
+        S: Future<Output = ()>,
+    {
+        // Construct synchronously so even an unpolled future owns the drop guard.
+        let mut running = Running {
+            lifecycle: self,
+            worker: Some(Box::pin(worker)),
+        };
+        async move {
+            let new_deadline = || {
+                tokio::time::Instant::now()
+                    .checked_add(timeout)
+                    .ok_or_else(|| {
+                        TasksError::Config(
+                            "Shutdown timeout exceeds the supported clock range".into(),
+                        )
+                    })
+            };
+            let (result, deadline) = {
+                let worker = running
+                    .worker
+                    .as_mut()
+                    .expect("worker present until drain ends");
+                tokio::pin!(signal);
+                tokio::select! {
+                    biased;
+                    result = &mut *worker => (
+                        result.map_err(TasksError::operation),
+                        new_deadline()?,
+                    ),
+                    () = &mut signal => {
+                        let deadline = new_deadline()?;
+                        running.lifecycle.retire();
+                        let result = tokio::time::timeout_at(deadline, worker).await
+                            .map_err(|_| TasksError::DrainTimeout)
+                            .and_then(|result| result.map_err(TasksError::operation));
+                        (result, deadline)
+                    }
+                }
+            };
+            running.lifecycle.retire();
+            drop(running.worker.take());
+            // Mark closure synchronously, even if no cleanup budget remains.
+            // On expiry the drop guard finishes physical cleanup in the background.
+            drop(running.lifecycle.pool.close());
+            tokio::time::timeout_at(deadline, running.lifecycle.close())
+                .await
+                .map_err(|_| TasksError::DrainTimeout)?;
+            result
+        }
+    }
+}
+
+impl Drop for Lifecycle {
+    fn drop(&mut self) {
+        self.retire();
+        if !self.closed {
+            // close() marks the pool closed synchronously; the task finishes
+            // physical session cleanup when the outer future was cancelled.
+            drop(self.pool.close());
+            if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+                let pool = self.pool.clone();
+                runtime.spawn(async move { pool.close().await });
+            }
+        }
+    }
+}
+
+struct Running<F> {
+    lifecycle: Lifecycle,
+    worker: Option<Pin<Box<F>>>,
+}
+
+impl<F> Drop for Running<F> {
+    fn drop(&mut self) {
+        self.lifecycle.retire();
+        drop(self.worker.take());
     }
 }
 

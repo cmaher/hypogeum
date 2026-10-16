@@ -4,7 +4,7 @@ pub mod config;
 pub mod worker;
 pub use apalis;
 pub use apalis::prelude::{Status, Task, TaskId};
-use apalis::prelude::{TaskBuilder, WorkerBuilder, WorkerBuilderExt, WorkerContext};
+use apalis::prelude::{TaskBuilder, WorkerBuilder, WorkerBuilderExt};
 pub use apalis_postgres::{self, PgTask, PgTaskId, PostgresStorage};
 pub use config::WorkerConfig;
 use errors::TasksError;
@@ -48,14 +48,17 @@ impl<Args> Queue<Args> {
             .max_attempts(self.config.max_attempts)
             .build()
     }
-    /// Call check_ready before running. Register a typed handler with build().
+    /// Check worker readiness and register a typed handler with build().
+    /// Run it with lifecycle.run_until so cancellation retires its pool safely.
     pub async fn worker(
         &self,
-        context: &WorkerContext,
+        lifecycle: &worker::Lifecycle,
     ) -> Result<worker::Builder<Args>, TasksError> {
-        self.check_ready().await?;
-        Ok(WorkerBuilder::new(context)
-            .backend(self.storage())
+        check_ready(lifecycle.pool()).await?;
+        Ok(WorkerBuilder::new(lifecycle.context())
+            .backend(
+                PostgresStorage::new(lifecycle.pool()).with_config(self.storage.config().clone()),
+            )
             .concurrency(self.config.concurrency)
             .retry(worker::policy(&self.config)))
     }
