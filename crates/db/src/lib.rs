@@ -1,5 +1,6 @@
 //! Explicit SQLx migrations; runtime processes never migrate.
 mod apalis;
+pub mod infra;
 mod verify;
 use errors::MigrationError;
 use sqlx::{Connection, PgConnection, Row, migrate::Migrator, postgres::PgConnectOptions};
