@@ -14,8 +14,10 @@ transaction depth, returning a connection with an open transaction to the pool.
 This caused the intermittent retry integration timeout investigated in fnd-50sct.
 
 The regression in `crates/tasks/tests/cases/worker.rs` stops a real PostgreSQL
-backend after `BEGIN` reaches the server but before its reply is read. It checks
-both empty and nonempty fetches: no transaction leaks and no stranded claims.
+backend after `BEGIN` reaches the server but before its reply is read. A test-only
+protocol proxy holds the reply while the test drives the fetch through earlier
+suspensions, including an exhausted Tokio cooperative budget. It checks both
+empty and nonempty fetches: no transaction leaks and no stranded claims.
 It runs through the ordinary suite-owned Testcontainers launcher.
 
 Remove the patch and this directory when upgrading to an upstream release that

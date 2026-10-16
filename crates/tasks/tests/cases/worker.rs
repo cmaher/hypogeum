@@ -192,9 +192,8 @@ async fn wait_completed(queue: &Queue<Effect>, id: &TaskId, status: Status, expe
     }
 }
 
-// Poll BEGIN only until it is sent, then shut down before its reply is read.
-// This makes the cancellation window deterministic instead of relying on timing
-// between the worker's next fetch and the completion signal.
+// Hold the BEGIN reply at a protocol barrier, then initiate shutdown.
+// Keep driving the fetch through earlier suspensions until it reaches the barrier.
 #[sqlx::test(migrations = false)]
 #[ignore = "run by integration_suite"]
 async fn shutdown_finishes_pending_fetch_without_leaking_transactions(
@@ -205,10 +204,16 @@ async fn shutdown_finishes_pending_fetch_without_leaking_transactions(
 
     let db = test_support::TestDatabase::provision(options).await;
     db.migrate().await;
+    let options: sqlx::postgres::PgConnectOptions = db.tasks_url.parse().unwrap();
+    let mut barrier =
+        super::begin_barrier::BeginBarrier::start(options.get_host(), options.get_port()).await;
+    let options = options
+        .host("127.0.0.1")
+        .port(barrier.port())
+        .ssl_mode(sqlx::postgres::PgSslMode::Disable);
     let pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(1)
-        .test_before_acquire(false)
-        .connect(&db.tasks_url)
+        .connect_with(options)
         .await
         .unwrap();
     let admin = PgPool::connect(&db.admin_url).await.unwrap();
@@ -227,25 +232,30 @@ async fn shutdown_finishes_pending_fetch_without_leaking_transactions(
         poll_fn(|cx| storage.poll_ready(cx, &context))
             .await
             .unwrap();
-        // Pool return is asynchronous. An idle connection lets the next poll
-        // reach BEGIN immediately, without suspending on acquisition or ping.
+        barrier.arm();
+        let mut exhaust_budget = true;
         tokio::time::timeout(Duration::from_secs(5), async {
-            while pool.num_idle() != 1 {
-                tokio::task::yield_now().await;
+            tokio::select! {
+                biased;
+                () = barrier.reached() => {},
+                result = poll_fn(|cx| {
+                    // Ensure an early Pending cannot strand the fetch. Exhaust
+                    // the budget only once, so subsequent polls can proceed.
+                    if exhaust_budget {
+                        exhaust_budget = false;
+                        while let Poll::Ready(guard) = tokio::task::coop::poll_proceed(cx) {
+                            guard.made_progress();
+                        }
+                    }
+                    storage.poll_next(cx, &context)
+                }) => panic!("fetch passed the BEGIN barrier: {result:?}"),
             }
         })
         .await
         .unwrap();
-        assert!(poll_fn(|cx| Poll::Ready(storage.poll_next(cx, &context).is_pending())).await);
-        tokio::time::timeout(Duration::from_secs(5), async {
-            loop {
-                let begun: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND usename='foundation_tasks' AND state='idle in transaction' AND query='BEGIN')").fetch_one(&admin).await.unwrap();
-                if begun { break; }
-                tokio::task::yield_now().await;
-            }
-        }).await.unwrap();
 
         context.stop().unwrap();
+        barrier.release();
         tokio::time::timeout(
             Duration::from_secs(5),
             poll_fn(|cx| storage.poll_close(cx, &context)),
@@ -271,5 +281,8 @@ async fn shutdown_finishes_pending_fetch_without_leaking_transactions(
         }
     }
     pool.close().await;
+    tokio::time::timeout(Duration::from_secs(5), barrier.finish())
+        .await
+        .unwrap();
     admin.close().await;
 }
