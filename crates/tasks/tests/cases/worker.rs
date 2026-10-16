@@ -191,3 +191,85 @@ async fn wait_completed(queue: &Queue<Effect>, id: &TaskId, status: Status, expe
         );
     }
 }
+
+// Poll BEGIN only until it is sent, then shut down before its reply is read.
+// This makes the cancellation window deterministic instead of relying on timing
+// between the worker's next fetch and the completion signal.
+#[sqlx::test(migrations = false)]
+#[ignore = "run by integration_suite"]
+async fn shutdown_finishes_pending_fetch_without_leaking_transactions(
+    _options: sqlx::postgres::PgPoolOptions,
+    options: sqlx::postgres::PgConnectOptions,
+) {
+    use std::{future::poll_fn, task::Poll};
+
+    let db = test_support::TestDatabase::provision(options).await;
+    db.migrate().await;
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .test_before_acquire(false)
+        .connect(&db.tasks_url)
+        .await
+        .unwrap();
+    let admin = PgPool::connect(&db.admin_url).await.unwrap();
+
+    for submit in [false, true] {
+        let queue =
+            Queue::<u32>::new(pool.clone(), "shutdown-fetch", WorkerConfig::default()).unwrap();
+        let mut storage = queue.storage();
+        let task = queue.task(42);
+        let id = task.task_id().unwrap().clone();
+        if submit {
+            storage.push_task(task).await.unwrap();
+        }
+        let mut context = WorkerContext::new("shutdown-fetch");
+        context.start().unwrap();
+        poll_fn(|cx| storage.poll_ready(cx, &context))
+            .await
+            .unwrap();
+        // Pool return is asynchronous. An idle connection lets the next poll
+        // reach BEGIN immediately, without suspending on acquisition or ping.
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while pool.num_idle() != 1 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(poll_fn(|cx| Poll::Ready(storage.poll_next(cx, &context).is_pending())).await);
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let begun: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND usename='foundation_tasks' AND state='idle in transaction' AND query='BEGIN')").fetch_one(&admin).await.unwrap();
+                if begun { break; }
+                tokio::task::yield_now().await;
+            }
+        }).await.unwrap();
+
+        context.stop().unwrap();
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            poll_fn(|cx| storage.poll_close(cx, &context)),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        // Reacquiring waits for SQLx's return-to-pool cleanup to finish.
+        let connection = pool.acquire().await.unwrap();
+        let leaked: i64 = sqlx::query_scalar("SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND usename='foundation_tasks' AND state='idle in transaction'").fetch_one(&admin).await.unwrap();
+        assert_eq!(
+            leaked, 0,
+            "shutdown returned a connection with an open transaction"
+        );
+        drop(connection);
+        if submit {
+            let task = storage.fetch_by_id(&id).await.unwrap().unwrap();
+            assert_eq!(
+                task.status(),
+                Status::Pending,
+                "shutdown must release fetched claims"
+            );
+        }
+    }
+    pool.close().await;
+    admin.close().await;
+}
