@@ -1,0 +1,21 @@
+[package]
+name = "postgres"
+version = "0.1.0"
+edition = "2024"
+rust-version.workspace = true
+
+[dependencies]
+sqlx.workspace = true
+serde = { version = "1.0", features = ["derive"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
+sea-query.workspace = true
+sea-query-sqlx.workspace = true
+chrono = "0.4"
+serde_json = "1.0"
+uuid = "1"
+
+[lints.clippy]
+too_many_lines = "allow"
+excessive_nesting = "allow"
