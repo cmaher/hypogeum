@@ -4,11 +4,18 @@ use errors::MigrationError;
 use sqlx::PgConnection;
 
 pub(crate) async fn migrate(connection: &mut PgConnection) -> Result<()> {
-    sqlx::raw_sql("CREATE SCHEMA IF NOT EXISTS apalis AUTHORIZATION foundation_owner;
-        REVOKE ALL ON SCHEMA apalis FROM PUBLIC; SET search_path=apalis,pg_catalog;")
-        .execute(&mut *connection).await.map_err(MigrationError::database)?;
+    sqlx::raw_sql(
+        "CREATE SCHEMA IF NOT EXISTS apalis AUTHORIZATION foundation_owner;
+        REVOKE ALL ON SCHEMA apalis FROM PUBLIC; SET search_path=apalis,pg_catalog;",
+    )
+    .execute(&mut *connection)
+    .await
+    .map_err(MigrationError::database)?;
     // Upstream SQL is applied unchanged, with a separate schema and ledger.
-    PostgresStorage::migrations().run(&mut *connection).await.map_err(MigrationError::database)?;
+    PostgresStorage::migrations()
+        .run(&mut *connection)
+        .await
+        .map_err(MigrationError::database)?;
     sqlx::raw_sql("BEGIN;
         REVOKE ALL ON SCHEMA apalis FROM PUBLIC,foundation_users,foundation_tasks;
         REVOKE ALL ON ALL TABLES IN SCHEMA apalis FROM PUBLIC,foundation_users,foundation_tasks;
@@ -36,6 +43,8 @@ pub(crate) async fn verify(connection: &mut PgConnection) -> Result<()> {
         .fetch_one(&mut *connection).await.map_err(MigrationError::database)?;
     require(extensions == 2, "Apalis extension namespace drift")?;
     let version: i64 = sqlx::query_scalar("SELECT apalis.schema_version()")
-        .fetch_one(&mut *connection).await.map_err(MigrationError::database)?;
+        .fetch_one(&mut *connection)
+        .await
+        .map_err(MigrationError::database)?;
     require(version == 20260902075949, "Apalis schema contract drift")
 }

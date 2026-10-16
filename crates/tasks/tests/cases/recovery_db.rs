@@ -59,7 +59,10 @@ fn worker_process(hold: bool, url: &str) -> Process {
                 "recovery::fixture_worker_process",
                 "--nocapture",
             ])
-            .env("FOUNDATION_TASK_FIXTURE_CHILD", if hold { "hold" } else { "run" })
+            .env(
+                "FOUNDATION_TASK_FIXTURE_CHILD",
+                if hold { "hold" } else { "run" },
+            )
             .env("TASKS_FIXTURE_DATABASE_URL", url)
             .spawn()
             .unwrap(),
@@ -90,10 +93,7 @@ async fn fixture_worker_process() {
 async fn atomicity(pool: &PgPool, admin: &PgPool, url: &str) {
     let queue = Queue::<Effect>::new(pool.clone(), "fixture-atomic", config()).unwrap();
     for outcome in ["commit", "rollback", "disconnect"] {
-        let mut connection =
-            PgConnection::connect(url)
-                .await
-                .unwrap();
+        let mut connection = PgConnection::connect(url).await.unwrap();
         let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
             .fetch_one(&mut connection)
             .await
@@ -174,7 +174,10 @@ async fn board_inspection(queue: &Queue<Effect>, id: &TaskId) {
 
 #[sqlx::test(migrations = false)]
 #[ignore = "run by integration_suite"]
-async fn recovery_acceptance(_options: sqlx::postgres::PgPoolOptions, options: sqlx::postgres::PgConnectOptions) {
+async fn recovery_acceptance(
+    _options: sqlx::postgres::PgPoolOptions,
+    options: sqlx::postgres::PgConnectOptions,
+) {
     let db = test_support::TestDatabase::provision(options).await;
     db.migrate().await;
     let pool = PgPool::connect(&db.tasks_url).await.unwrap();

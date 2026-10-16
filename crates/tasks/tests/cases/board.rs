@@ -43,7 +43,10 @@ struct Fixture {
 
 #[sqlx::test(migrations = false)]
 #[ignore = "run by integration_suite"]
-async fn submissions_keep_each_registered_queue_attempt_budget(_options: sqlx::postgres::PgPoolOptions, options: sqlx::postgres::PgConnectOptions) {
+async fn submissions_keep_each_registered_queue_attempt_budget(
+    _options: sqlx::postgres::PgPoolOptions,
+    options: sqlx::postgres::PgConnectOptions,
+) {
     let db = test_support::TestDatabase::provision(options).await;
     db.migrate().await;
     let pool = sqlx::PgPool::connect(&db.tasks_url).await.unwrap();

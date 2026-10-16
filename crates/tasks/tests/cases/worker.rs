@@ -49,7 +49,10 @@ struct Effect {
 
 #[sqlx::test(migrations = false)]
 #[ignore = "run by integration_suite"]
-async fn typed_handler_executes_retries_and_exhausts(_options: sqlx::postgres::PgPoolOptions, options: sqlx::postgres::PgConnectOptions) {
+async fn typed_handler_executes_retries_and_exhausts(
+    _options: sqlx::postgres::PgPoolOptions,
+    options: sqlx::postgres::PgConnectOptions,
+) {
     let db = test_support::TestDatabase::provision(options).await;
     db.migrate().await;
     let pool = PgPool::connect(&db.tasks_url).await.unwrap();
