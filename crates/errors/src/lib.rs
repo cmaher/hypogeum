@@ -36,6 +36,8 @@ impl RepoError {
 
 #[derive(Debug, Error)]
 pub enum ServiceError {
+    #[error("Invalid service response: {0}")]
+    InvalidResponse(&'static str),
     #[error("Validation failed: {0}")]
     Validation(String),
     #[error(transparent)]
@@ -66,6 +68,7 @@ impl From<ServiceError> for tonic::Status {
             ServiceError::Validation(message) => Self::invalid_argument(message),
             ServiceError::Repo(error) => error.into(),
             ServiceError::Remote(_) => Self::internal("Remote service failed"),
+            ServiceError::InvalidResponse(_) => Self::internal("Invalid service response"),
         }
     }
 }
@@ -135,4 +138,3 @@ impl StorageError {
         }
     }
 }
-

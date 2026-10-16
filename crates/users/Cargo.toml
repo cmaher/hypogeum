@@ -15,10 +15,17 @@ chrono.workspace = true
 serde.workspace = true
 async-trait.workspace = true
 tokio.workspace = true
+rpc = { path = "../rpc" }
+tonic.workspace = true
+prost-types.workspace = true
+anyhow = "1"
+dotenvy = "0.15"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
 foundation-db = { path = "../db" }
 test-support = { path = "../test-support" }
+tokio-stream = { version = "0.1", features = ["net"] }
 
 [lints]
 workspace = true

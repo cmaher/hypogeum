@@ -1,16 +1,25 @@
 use errors::RepoError;
 use sqlx::{Connection, PgConnection, postgres::PgConnectOptions};
 use test_support::TestDatabase;
-use users::{models::PageRequest, repo::{PgUserRepo, UserRepo}};
+use users::{
+    models::PageRequest,
+    repo::{PgUserRepo, UserRepo},
+};
 use uuid::Uuid;
 
 #[sqlx::test(migrations = false)]
 #[ignore = "run by integration_suite"]
-async fn user_repository_connects_and_persists_under_runtime_privileges(_pool_options: sqlx::postgres::PgPoolOptions, options: PgConnectOptions) {
+async fn user_repository_connects_and_persists_under_runtime_privileges(
+    _pool_options: sqlx::postgres::PgPoolOptions,
+    options: PgConnectOptions,
+) {
     let db = TestDatabase::provision(options).await;
     let migration_url = db.migration_url.clone();
     // Concurrent runners must serialize and remain repeatable.
-    let (first, second) = tokio::join!(foundation_db::migrate(&migration_url), foundation_db::migrate(&migration_url));
+    let (first, second) = tokio::join!(
+        foundation_db::migrate(&migration_url),
+        foundation_db::migrate(&migration_url)
+    );
     first.unwrap();
     second.unwrap();
     foundation_db::verify(&migration_url).await.unwrap();
@@ -28,10 +37,19 @@ async fn user_repository_connects_and_persists_under_runtime_privileges(_pool_op
     assert!(updated.updated_at >= created.updated_at);
     assert_eq!(repo.get(id).await.unwrap(), updated);
     for bad in ["", " ", " padded ", "bad\0name"] {
-        assert!(matches!(repo.create(Uuid::new_v4(), bad).await, Err(RepoError::InvalidInput(_))));
+        assert!(matches!(
+            repo.create(Uuid::new_v4(), bad).await,
+            Err(RepoError::InvalidInput(_))
+        ));
     }
-    assert!(matches!(repo.create(Uuid::new_v4(), &"界".repeat(201)).await, Err(RepoError::InvalidInput(_))));
-    let unicode = repo.create(Uuid::new_v4(), &"界".repeat(200)).await.unwrap();
+    assert!(matches!(
+        repo.create(Uuid::new_v4(), &"界".repeat(201)).await,
+        Err(RepoError::InvalidInput(_))
+    ));
+    let unicode = repo
+        .create(Uuid::new_v4(), &"界".repeat(200))
+        .await
+        .unwrap();
     let mut seen = Vec::new();
     let mut page = PageRequest::new(None, 1).unwrap();
     loop {
@@ -47,7 +65,10 @@ async fn user_repository_connects_and_persists_under_runtime_privileges(_pool_op
     repo.delete(id).await.unwrap();
     repo.delete(unicode.id).await.unwrap();
     assert!(matches!(repo.get(id).await, Err(RepoError::NotFound)));
-    assert!(matches!(repo.update_name(id, "Missing").await, Err(RepoError::NotFound)));
+    assert!(matches!(
+        repo.update_name(id, "Missing").await,
+        Err(RepoError::NotFound)
+    ));
     assert!(matches!(repo.delete(id).await, Err(RepoError::NotFound)));
     for forbidden in [
         "CREATE TABLE app.forbidden(id integer)",
@@ -57,11 +78,23 @@ async fn user_repository_connects_and_persists_under_runtime_privileges(_pool_op
         "SET ROLE foundation_owner",
         "CREATE TEMP TABLE forbidden(id integer)",
     ] {
-        assert!(sqlx::raw_sql(forbidden).execute(&pool).await.is_err(), "allowed {forbidden}");
+        assert!(
+            sqlx::raw_sql(forbidden).execute(&pool).await.is_err(),
+            "allowed {forbidden}"
+        );
     }
     let tasks = sqlx::PgPool::connect(&db.tasks_url).await.unwrap();
-    for forbidden in ["SELECT * FROM app.users", "SELECT * FROM infra._sqlx_migrations", "SELECT * FROM apalis._sqlx_migrations", "CREATE TABLE apalis.forbidden(id integer)", "SET ROLE foundation_owner"] {
-        assert!(sqlx::raw_sql(forbidden).execute(&tasks).await.is_err(), "allowed {forbidden}");
+    for forbidden in [
+        "SELECT * FROM app.users",
+        "SELECT * FROM infra._sqlx_migrations",
+        "SELECT * FROM apalis._sqlx_migrations",
+        "CREATE TABLE apalis.forbidden(id integer)",
+        "SET ROLE foundation_owner",
+    ] {
+        assert!(
+            sqlx::raw_sql(forbidden).execute(&tasks).await.is_err(),
+            "allowed {forbidden}"
+        );
     }
     // Readiness must reject the wrong role and an altered schema contract.
     assert!(users::repo::check_ready(&tasks).await.is_err());

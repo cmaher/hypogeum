@@ -1,8 +1,8 @@
 mod postgres;
-pub use postgres::{PgUserRepo, check_ready};
 use crate::models::{PageRequest, User, UserPage};
 use async_trait::async_trait;
 use errors::RepoError;
+pub use postgres::{PgUserRepo, check_ready};
 use uuid::Uuid;
 
 #[async_trait]

@@ -23,11 +23,20 @@ impl PageRequest {
         }
         Ok(Self { after, limit })
     }
-    pub fn after(&self) -> Option<Uuid> { self.after }
-    pub fn limit(&self) -> u32 { self.limit }
+    pub fn after(&self) -> Option<Uuid> {
+        self.after
+    }
+    pub fn limit(&self) -> u32 {
+        self.limit
+    }
 }
 impl Default for PageRequest {
-    fn default() -> Self { Self { after: None, limit: 50 } }
+    fn default() -> Self {
+        Self {
+            after: None,
+            limit: 50,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -38,7 +47,9 @@ pub struct UserPage {
 
 pub(crate) fn validate_name(name: &str) -> Result<(), RepoError> {
     if name.is_empty() || name.trim() != name || name.chars().count() > 200 || name.contains('\0') {
-        return Err(RepoError::InvalidInput("Display name must be trimmed and contain 1..200 characters without NUL".into()));
+        return Err(RepoError::InvalidInput(
+            "Display name must be trimmed and contain 1..200 characters without NUL".into(),
+        ));
     }
     Ok(())
 }
