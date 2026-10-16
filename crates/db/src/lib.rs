@@ -17,6 +17,8 @@ pub(crate) fn require(condition: bool, message: &str) -> Result<()> {
     }
 }
 
+const ADMIN_LOCK: i64 = 0x464e_445f_4442;
+
 async fn owner(url: &str) -> Result<PgConnection> {
     let options = PgConnectOptions::from_str(url).map_err(MigrationError::database)?;
     require(
@@ -28,7 +30,7 @@ async fn owner(url: &str) -> Result<PgConnection> {
     let options = options.options([
         ("role", "foundation_owner"),
         ("statement_timeout", "30s"),
-        ("search_path", "fndapp,apalis,pg_catalog"),
+        ("search_path", "apalis,pg_catalog"),
     ]);
     PgConnection::connect_with(&options)
         .await
@@ -44,7 +46,7 @@ async fn owner_pool(url: &str) -> Result<sqlx::PgPool> {
     let options = options.options([
         ("role", "foundation_owner"),
         ("statement_timeout", "30s"),
-        ("search_path", "fndapp,apalis,pg_catalog"),
+        ("search_path", "fndapp,pg_catalog"),
     ]);
     sqlx::PgPool::connect_with(options)
         .await
@@ -53,6 +55,12 @@ async fn owner_pool(url: &str) -> Result<sqlx::PgPool> {
 
 pub async fn migrate(url: &str) -> Result<()> {
     let mut connection = owner(url).await?;
+    sqlx::query("SELECT pg_catalog.pg_advisory_lock($1)")
+        .bind(ADMIN_LOCK)
+        .execute(&mut connection)
+        .await
+        .map_err(MigrationError::database)?;
+
     // Each SQLx migrator locks and validates its own unchanged migration history.
     apalis::migrations()
         .run(&mut connection)
@@ -66,15 +74,20 @@ pub async fn migrate(url: &str) -> Result<()> {
     .execute(&mut connection)
     .await
     .map_err(MigrationError::database)?;
-    connection.close().await.map_err(MigrationError::database)?;
 
     // Domain SeaORM migrators
     let pool = owner_pool(url).await?;
     let db = sea_orm::SqlxPostgresConnector::from_sqlx_postgres_pool(pool.clone());
-    users::pg::migrations::Migrator::up(&db, None)
-        .await
-        .map_err(|e| MigrationError::InvalidState(e.to_string()))?;
+    let sea_result = users::pg::migrations::Migrator::up(&db, None).await;
     pool.close().await;
+
+    let _ = sqlx::query("SELECT pg_catalog.pg_advisory_unlock($1)")
+        .bind(ADMIN_LOCK)
+        .execute(&mut connection)
+        .await;
+    connection.close().await.map_err(MigrationError::database)?;
+
+    sea_result.map_err(|e| MigrationError::InvalidState(e.to_string()))?;
 
     Ok(())
 }
