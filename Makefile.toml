@@ -9,7 +9,7 @@ script = ['exec "$@"']
 [tasks.test-db]
 description = "Run self-contained PostgreSQL integration suites with Testcontainers and SQLx"
 command = "cargo"
-args = ["test", "--locked", "-p", "users", "-p", "tasks", "-p", "hypogeum-db", "--test", "integration"]
+args = ["test", "--locked", "-p", "users", "-p", "tasks", "-p", "hypogeum-db", "-p", "hypogeum-db-cli", "--test", "integration"]
 
 [tasks.fmt]
 command = "cargo"
@@ -61,16 +61,21 @@ script = ['set --; if [ -n "${HYPOGEUM_ENV_FILE+x}" ]; then [ -z "$HYPOGEUM_ENV_
 
 [tasks.db-migrate]
 command = "cargo"
-args = ["run", "--locked", "-p", "hypogeum-db", "--", "migrate"]
+args = ["run", "--locked", "-p", "hypogeum-db-cli", "--bin", "hypogeum-db", "--", "migrate"]
 
 [tasks.db-verify]
 command = "cargo"
-args = ["run", "--locked", "-p", "hypogeum-db", "--", "verify"]
+args = ["run", "--locked", "-p", "hypogeum-db-cli", "--bin", "hypogeum-db", "--", "verify"]
 
 [tasks.users]
 command = "cargo"
 args = ["run", "--locked", "-p", "users"]
 
-[tasks.tasks-board]
+[tasks.apalis-dashboard]
 command = "cargo"
-args = ["run", "--locked", "-p", "tasks"]
+args = ["run", "--locked", "-p", "apalis-dashboard"]
+
+[tasks.web-server]
+description = "Run public HTTP, native gRPC and gRPC-Web without a database"
+command = "cargo"
+args = ["run", "--locked", "-p", "web-server-cli", "--bin", "web-server"]

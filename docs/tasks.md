@@ -45,10 +45,11 @@ Provision deliberate grants when a future service needs that capability.
 ## Board
 
 ```sh
-cargo make tasks-board
+cargo make apalis-dashboard
 ```
 
-The standalone binary starts with no queues or handlers and binds
+The standalone `apalis-dashboard` binary in `cmd/apalis-dashboard` uses the
+reusable `crates/tasks` Board router. It starts with no queues or handlers and binds
 `127.0.0.1:8082` by default. Configure `HYPOGEUM_TASKS_DATABASE_URL`, `HYPOGEUM_TASKS_BOARD_BIND`
 and `HYPOGEUM_TASKS_SHUTDOWN_SECONDS` at the composition root. It requires explicit
 migrations and `hypogeum_tasks` credentials. Its readiness function exposes

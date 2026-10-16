@@ -1,0 +1,22 @@
+[package]
+name = "web-server-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "web-server"
+path = "src/main.rs"
+
+[dependencies]
+web-server = { path = "../../crates/web-server" }
+hello-world = { path = "../../crates/domain/hello-world" }
+axum = { version = "0.8", features = ["http2"] }
+tokio.workspace = true
+anyhow = "1"
+env-config = { path = "../../crates/env-config" }
+serde.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[lints]
+workspace = true

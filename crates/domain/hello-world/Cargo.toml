@@ -1,0 +1,17 @@
+[package]
+name = "hello-world"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+errors = { path = "../../errors" }
+async-trait.workspace = true
+rpc = { path = "../../rpc" }
+tonic.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
+
+[lints]
+workspace = true
