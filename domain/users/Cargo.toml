@@ -19,7 +19,7 @@ rpc = { path = "../../crates/rpc" }
 tonic.workspace = true
 prost-types.workspace = true
 anyhow = "1"
-dotenvy = "0.15"
+env-config = { path = "../../crates/env-config" }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]

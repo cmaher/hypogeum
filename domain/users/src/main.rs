@@ -1,4 +1,6 @@
 use anyhow::{Context, Result};
+use env_config::{EnvSource, LogConfig};
+use serde::Deserialize;
 use std::{net::SocketAddr, sync::Arc};
 use users::{
     repo::{PgUserRepo, check_ready},
@@ -6,36 +8,48 @@ use users::{
     service::DefaultUserService,
 };
 
+fn default_bind() -> SocketAddr {
+    "127.0.0.1:50051"
+        .parse()
+        .expect("valid default bind address")
+}
+
+#[derive(Deserialize)]
+struct Config {
+    database_url: env_config::Secret,
+    #[serde(default = "default_bind")]
+    bind: SocketAddr,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
-    let path =
-        std::env::var("FOUNDATION_LOCAL_CONFIG").unwrap_or_else(|_| "env/local.secrets".into());
-    if let Err(error) = dotenvy::from_path(path)
-        && !error.not_found()
-    {
-        anyhow::bail!("Cannot load local configuration");
-    }
-    let url = std::env::var("USERS_DATABASE_URL").context("USERS_DATABASE_URL required")?;
-    let bind: SocketAddr = std::env::var("USERS_BIND")
-        .unwrap_or_else(|_| "127.0.0.1:50051".into())
-        .parse()
-        .context("Invalid USERS_BIND")?;
+    let env = EnvSource::load()?;
+    let config: Config = env.deserialize("APP_USERS_")?;
+    let log: LogConfig = env.deserialize("APP_")?;
+
     tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_env_filter(tracing_subscriber::EnvFilter::try_new(&log.log)?)
         .init();
-    let pool = postgres::create_pool(&postgres::PostgresConfig::new(url))
-        .map_err(|_| anyhow::anyhow!("Invalid database configuration"))?;
+
+    let pool = postgres::create_pool(&postgres::PostgresConfig::new(
+        config.database_url.expose(),
+    ))
+    .map_err(|_| anyhow::anyhow!("Invalid database configuration"))?;
+
     check_ready(&pool)
         .await
         .context("Users database is not ready; run explicit migrations")?;
+
     let service = Arc::new(DefaultUserService::new(Arc::new(PgUserRepo::new(
         pool.clone(),
     ))));
+
     tonic::transport::Server::builder()
         .add_service(GrpcUserServer::new(service).into_service())
-        .serve_with_shutdown(bind, shutdown())
+        .serve_with_shutdown(config.bind, shutdown())
         .await
         .context("Users server failed")?;
+
     pool.close().await;
     Ok(())
 }
@@ -51,5 +65,59 @@ async fn shutdown() {
     #[cfg(not(unix))]
     {
         let _ = tokio::signal::ctrl_c().await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use env_config::EnvSource;
+
+    #[test]
+    fn test_config_defaults() {
+        let env = EnvSource::from_pairs([(
+            "APP_USERS_DATABASE_URL",
+            "postgres://user:pass@localhost/db",
+        )]);
+        let config: Config = env.deserialize("APP_USERS_").unwrap();
+        assert_eq!(
+            config.database_url.expose(),
+            "postgres://user:pass@localhost/db"
+        );
+        assert_eq!(
+            config.bind,
+            "127.0.0.1:50051".parse::<SocketAddr>().unwrap()
+        );
+    }
+
+    #[test]
+    fn test_config_missing_url() {
+        let env = EnvSource::from_pairs(Vec::<(&str, &str)>::new());
+        let err = env.deserialize::<Config>("APP_USERS_").unwrap_err();
+        assert!(err.to_string().contains("APP_USERS_DATABASE_URL"));
+    }
+
+    #[test]
+    fn test_config_invalid_bind() {
+        let env = EnvSource::from_pairs([
+            (
+                "APP_USERS_DATABASE_URL",
+                "postgres://user:pass@localhost/db",
+            ),
+            ("APP_USERS_BIND", "not_a_valid_socket_addr"),
+        ]);
+        let err = env.deserialize::<Config>("APP_USERS_").unwrap_err();
+        assert!(err.to_string().to_lowercase().contains("bind"));
+    }
+
+    #[test]
+    fn test_log_config_app_log() {
+        let env = EnvSource::from_pairs(Vec::<(&str, &str)>::new());
+        let log: LogConfig = env.deserialize("APP_").unwrap();
+        assert_eq!(log.log, "info");
+
+        let env = EnvSource::from_pairs([("APP_LOG", "debug")]);
+        let log: LogConfig = env.deserialize("APP_").unwrap();
+        assert_eq!(log.log, "debug");
     }
 }
