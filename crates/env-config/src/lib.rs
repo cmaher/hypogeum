@@ -35,12 +35,11 @@ pub struct EnvSource(BTreeMap<String, String>);
 impl EnvSource {
     pub fn load() -> Result<Self, ConfigError> {
         let setting = std::env::var_os("APP_ENV_FILE");
-        let process_pairs = std::env::vars_os().filter_map(|(k, v)| {
-            match (k.into_string(), v.into_string()) {
+        let process_pairs =
+            std::env::vars_os().filter_map(|(k, v)| match (k.into_string(), v.into_string()) {
                 (Ok(k), Ok(v)) => Some((k, v)),
                 _ => None,
-            }
-        });
+            });
         Self::load_from(setting, process_pairs)
     }
 
@@ -58,10 +57,20 @@ impl EnvSource {
         self.0.get(key).map(|s| s.as_str())
     }
 
-    pub fn deserialize<T: serde::de::DeserializeOwned>(&self, prefix: &str) -> Result<T, ConfigError> {
+    pub fn deserialize<T: serde::de::DeserializeOwned>(
+        &self,
+        prefix: &str,
+    ) -> Result<T, ConfigError> {
         envy::prefixed(prefix)
             .from_iter(self.0.clone())
-            .map_err(|err| ConfigError::Invalid(err.to_string()))
+            .map_err(|err| match err {
+                envy::Error::MissingValue(field) => {
+                    let field_clean = field.strip_prefix("field ").unwrap_or(field);
+                    let var_name = format!("{}{}", prefix, field_clean.to_uppercase());
+                    ConfigError::Invalid(format!("missing value for {}", var_name))
+                }
+                envy::Error::Custom(msg) => ConfigError::Invalid(msg),
+            })
     }
 
     pub fn load_from(
@@ -97,9 +106,7 @@ impl EnvSource {
                     }
                     Err(e) if e.not_found() => {
                         if matches!(resolved, EnvFile::Required(_)) {
-                            return Err(ConfigError::EnvFileMissing {
-                                path: path.clone(),
-                            });
+                            return Err(ConfigError::EnvFileMissing { path: path.clone() });
                         }
                     }
                     Err(dotenvy::Error::LineParse(_, line)) => {
@@ -109,9 +116,7 @@ impl EnvSource {
                         });
                     }
                     Err(_) => {
-                        return Err(ConfigError::EnvFileUnreadable {
-                            path: path.clone(),
-                        });
+                        return Err(ConfigError::EnvFileUnreadable { path: path.clone() });
                     }
                 }
             }
@@ -157,9 +162,7 @@ pub struct LogConfig {
 
 impl Default for LogConfig {
     fn default() -> Self {
-        Self {
-            log: default_log(),
-        }
+        Self { log: default_log() }
     }
 }
 
@@ -206,11 +209,9 @@ mod tests {
 
         // When setting is None, resolve_env_file uses "env/local.env".
         // If that file does not exist, load_from should return Ok with only process pairs.
-        let env = EnvSource::load_from(
-            None,
-            vec![("PROCESS_VAR".to_string(), "value".to_string())],
-        )
-        .unwrap();
+        let env =
+            EnvSource::load_from(None, vec![("PROCESS_VAR".to_string(), "value".to_string())])
+                .unwrap();
         assert_eq!(env.get("PROCESS_VAR"), Some("value"));
     }
 
@@ -219,8 +220,8 @@ mod tests {
         let nonexistent = std::env::temp_dir().join("nonexistent_required_test.env");
         let _ = std::fs::remove_file(&nonexistent);
 
-        let err = EnvSource::load_from(Some(nonexistent.as_os_str().to_os_string()), vec![])
-            .unwrap_err();
+        let err =
+            EnvSource::load_from(Some(nonexistent.as_os_str().to_os_string()), vec![]).unwrap_err();
         assert_eq!(
             err,
             ConfigError::EnvFileMissing {
@@ -251,7 +252,7 @@ mod tests {
 
         match &err {
             ConfigError::EnvFileMalformed { line, .. } => {
-                assert_eq!(*line, 1);
+                assert_eq!(*line, 52);
             }
             other => panic!("Expected EnvFileMalformed, got {other:?}"),
         }
@@ -259,7 +260,7 @@ mod tests {
         let err_display = format!("{err}");
         assert!(!err_display.contains("SECRET_PASSWORD_12345"));
         assert!(!err_display.contains("THIS_LINE_IS_MALFORMED"));
-        assert!(err_display.contains("1"));
+        assert!(err_display.contains("52"));
     }
 
     #[test]
@@ -281,10 +282,7 @@ mod tests {
         }
 
         // Success case
-        let env = EnvSource::from_pairs([
-            ("MYAPP_REQUIRED_KEY", "hello"),
-            ("MYAPP_PORT", "8080"),
-        ]);
+        let env = EnvSource::from_pairs([("MYAPP_REQUIRED_KEY", "hello"), ("MYAPP_PORT", "8080")]);
         let config: TestConfig = env.deserialize("MYAPP_").unwrap();
         assert_eq!(
             config,

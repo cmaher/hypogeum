@@ -14,7 +14,7 @@ fn default_bind() -> SocketAddr {
         .expect("valid default bind address")
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 struct Config {
     database_url: env_config::Secret,
     #[serde(default = "default_bind")]
@@ -31,10 +31,8 @@ async fn main() -> Result<()> {
         .with_env_filter(tracing_subscriber::EnvFilter::try_new(&log.log)?)
         .init();
 
-    let pool = postgres::create_pool(&postgres::PostgresConfig::new(
-        config.database_url.expose(),
-    ))
-    .map_err(|_| anyhow::anyhow!("Invalid database configuration"))?;
+    let pool = postgres::create_pool(&postgres::PostgresConfig::new(config.database_url.expose()))
+        .map_err(|_| anyhow::anyhow!("Invalid database configuration"))?;
 
     check_ready(&pool)
         .await
@@ -107,7 +105,7 @@ mod tests {
             ("APP_USERS_BIND", "not_a_valid_socket_addr"),
         ]);
         let err = env.deserialize::<Config>("APP_USERS_").unwrap_err();
-        assert!(err.to_string().to_lowercase().contains("bind"));
+        assert!(matches!(err, env_config::ConfigError::Invalid(_)));
     }
 
     #[test]

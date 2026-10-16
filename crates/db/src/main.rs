@@ -3,7 +3,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use std::process::ExitCode;
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 struct Config {
     database_url: env_config::Secret,
 }
@@ -58,9 +58,7 @@ async fn run() -> Result<Value, String> {
                 .map_err(|e| e.to_string())?;
             Ok(json!({"verified":true}))
         }
-        "inspect" => foundation_db::inspect(url)
-            .await
-            .map_err(|e| e.to_string()),
+        "inspect" => foundation_db::inspect(url).await.map_err(|e| e.to_string()),
         _ => unreachable!(),
     }
 }

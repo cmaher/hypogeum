@@ -14,7 +14,7 @@ fn default_shutdown_seconds() -> u64 {
     30
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 struct Config {
     database_url: env_config::Secret,
     #[serde(default = "default_board_bind")]
