@@ -156,6 +156,7 @@ impl Lifecycle {
     /// start a cleanup-only deadline. Expiry returns DrainTimeout while final
     /// cleanup continues on Tokio. Cancellation also retires the pool before
     /// dropping the worker, including cancellation before the first poll.
+    /// Unrepresentable shutdown deadlines return a configuration error.
     pub fn run_until<F, S>(
         self,
         worker: F,
@@ -172,6 +173,15 @@ impl Lifecycle {
             worker: Some(Box::pin(worker)),
         };
         async move {
+            let new_deadline = || {
+                tokio::time::Instant::now()
+                    .checked_add(timeout)
+                    .ok_or_else(|| {
+                        TasksError::Config(
+                            "Shutdown timeout exceeds the supported clock range".into(),
+                        )
+                    })
+            };
             let (result, deadline) = {
                 let worker = running
                     .worker
@@ -182,10 +192,10 @@ impl Lifecycle {
                     biased;
                     result = &mut *worker => (
                         result.map_err(TasksError::operation),
-                        tokio::time::Instant::now() + timeout,
+                        new_deadline()?,
                     ),
                     () = &mut signal => {
-                        let deadline = tokio::time::Instant::now() + timeout;
+                        let deadline = new_deadline()?;
                         running.lifecycle.retire();
                         let result = tokio::time::timeout_at(deadline, worker).await
                             .map_err(|_| TasksError::DrainTimeout)

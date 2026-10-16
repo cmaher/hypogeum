@@ -645,3 +645,32 @@ async fn stopped_backend_discards_cancelled_begin_before_pool_closure(
         .unwrap();
     admin.close().await;
 }
+
+#[tokio::test]
+async fn overflowing_shutdown_deadline_returns_config_error_and_retires_pool() {
+    for signal_ready in [false, true] {
+        let lifecycle = tasks::worker::Lifecycle::new(
+            "deadline-overflow",
+            sqlx::postgres::PgPoolOptions::new(),
+            "postgres://unused:unused@localhost/unused".parse().unwrap(),
+        );
+        let mut context = lifecycle.context().clone();
+        context.start().unwrap();
+        let pool = lifecycle.pool().clone();
+        let worker = async {
+            if signal_ready {
+                std::future::pending::<()>().await;
+            }
+            Ok(())
+        };
+        let signal = async {
+            if !signal_ready {
+                std::future::pending::<()>().await;
+            }
+        };
+        let result = lifecycle.run_until(worker, signal, Duration::MAX).await;
+        assert!(matches!(result, Err(errors::TasksError::Config(_))));
+        assert!(context.is_shutting_down());
+        assert!(pool.is_closed());
+    }
+}
