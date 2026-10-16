@@ -8,8 +8,7 @@ rust-version.workspace = true
 errors = { path = "../../errors" }
 postgres = { path = "../../postgres" }
 sqlx = { workspace = true, features = ["macros"] }
-sea-query.workspace = true
-sea-query-sqlx.workspace = true
+sea-orm.workspace = true
 uuid.workspace = true
 chrono.workspace = true
 serde.workspace = true
