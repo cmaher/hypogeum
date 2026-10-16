@@ -3,6 +3,120 @@
 A Rust workspace for starting services with PostgreSQL, gRPC, typed background
 tasks, and streamed byte storage. A small User service demonstrates the layers.
 
+## Project customization
+
+Start with a fresh Git checkout and customize it **before provisioning a database
+or applying migrations**. Run the commands below from the repository root,
+replacing `acme_tools` with your project's lowercase identifier. The rename script
+needs Git and Python 3.9 or newer, with no extra Python packages. Install the
+[development tools](#development) and start Docker before running CI.
+
+1. Create a branch and preview the affected files and replacement counts. Preview
+   makes no changes:
+
+   ```sh
+   git switch -c customize-project
+   python3 scripts/rename-project.py acme_tools --dry-run
+   ```
+
+2. Apply the rename, format Rust sources, and review the resulting diff:
+
+   ```sh
+   python3 scripts/rename-project.py acme_tools
+   cargo make fmt-fix
+   git diff
+   ```
+
+3. Verify the customized workspace:
+
+   ```sh
+   cargo make ci
+   ```
+
+4. Copy the renamed configuration example, then follow [Run locally](#run-locally)
+   to provision a fresh database and start the services:
+
+   ```sh
+   cp env/local.env.example env/local.env
+   ```
+
+Hypogeum uses three literal, searchable forms: `hypogeum`, `HYPOGEUM`, and
+`Hypogeum`. The script replaces them throughout tracked source, configuration,
+tests and documentation. It also updates itself to use your new project identity.
+Repository hosting and tracker project renames are separate steps.
+
+For automation, preview with JSON output or inspect the command schema:
+
+```sh
+python3 scripts/rename-project.py acme_tools --dry-run --output json
+python3 scripts/rename-project.py --describe
+```
+
+The script works from any current directory when invoked by its path.
+`cargo make test-rename` runs its isolated behavioral tests.
+
+### Naming and replacement scope
+
+Choose lowercase ASCII words separated by single underscores. The input
+`acme_tools` produces `acme_tools`, `ACME_TOOLS`, and `AcmeTools`; for example:
+
+| Template name | Customized name |
+| --- | --- |
+| `hypogeum-db` Cargo package / CLI | `acme_tools-db` |
+| `hypogeum_db` Rust library | `acme_tools_db` |
+| `hypogeum.users.v1` protobuf namespace | `acme_tools.users.v1` |
+| `hypogeum` application schema / local database | `acme_tools` |
+| `hypogeum_migrator` database role | `acme_tools_migrator` |
+| `HYPOGEUM_ENV_FILE` environment selector | `ACME_TOOLS_ENV_FILE` |
+| `Hypogeum` display name | `AcmeTools` |
+
+Names must produce three distinct case forms and cannot contain the current
+project identity. Reserved language keywords, infrastructure schema names, and
+PostgreSQL's `pg_` prefix are rejected. Project-prefixed database identifiers,
+including their suffixes, must fit PostgreSQL's 63-byte identifier limit.
+
+The script previews or updates **Git-tracked UTF-8 file contents**, including
+hidden configuration, tests, `Cargo.lock`, documentation, and itself. It replaces
+occurrences within longer identifiers and preserves line endings and file
+permissions. The customized script uses the new identity for future renames.
+File/directory names, Git history and remotes are outside its scope.
+
+All input and file checks finish before writes begin. Unsupported casing,
+matching binary content, matching symlink targets, changed file types, and
+missing tracked files cause preflight failure with no writes. Symlinks are never
+followed. An operating-system error during application may leave earlier files
+updated; review the Git diff before retrying. Output contains paths and counts,
+without printing file contents or credentials.
+
+Ignored and untracked files are excluded. Recreate `env/local.env` from the
+updated example, or update your local overrides separately. Rust formatting can
+change with identifier length, so run `cargo make fmt-fix` before CI. Review the
+resulting diff.
+
+### Database schemas
+
+| Schema | Purpose |
+| --- | --- |
+| `hypogeum` | Application tables (`hypogeum.users`), readiness function, and domain migration history |
+| `infra` | Infrastructure contracts, platform privilege hardening, and extensions |
+| `apalis` | Upstream task tables, functions, extensions and a separate migration ledger |
+| `public` | PostgreSQL's default schema; unused for application data |
+| `pg_catalog`, `pg_temp` | PostgreSQL system schemas used in controlled search paths |
+
+The script renames the application schema along with database names, roles,
+configuration and code. Infrastructure schemas retain their names. In particular,
+the pinned Apalis implementation uses schema-qualified `apalis` references.
+Schemas are explicit in code and SQL; changing a connection URL or `search_path`
+does not rename them. The database name in the connection URL and PostgreSQL
+roles are distinct from schema names, even when they share the project prefix.
+
+For an existing database, preserve applied migration source and checksums. Schema,
+role and migration-ledger renames need a coordinated forward migration and code
+change; this script does not migrate deployed databases. Pointing a migrator at
+an empty ledger would make existing migrations appear unapplied.
+
+## Workspace overview
+
 Reusable infrastructure lives in `crates/`. Domain crates live in `crates/domain/`,
 starting with the generic User example in `crates/domain/users/`.
 
@@ -96,82 +210,6 @@ cargo run --locked -p hypogeum-db -- inspect --output json
 The administration CLI returns JSON and exits nonzero on failure. Errors redact
 connection details. Migration and runtime accounts are separate; runtime roles
 cannot perform DDL, inspect migration ledgers, or access each other's data.
-
-## Project customization
-
-Hypogeum is a runnable template. Its project-specific names use three literal,
-searchable forms: `hypogeum`, `HYPOGEUM`, and `Hypogeum`. Customize a fresh checkout
-**before provisioning a database or applying migrations**:
-
-```sh
-python3 scripts/rename-project.py acme_tools --dry-run
-python3 scripts/rename-project.py acme_tools
-cargo make fmt-fix
-cargo make ci
-```
-
-The script requires Git and Python 3.9 or newer, with no extra Python packages.
-It works from any current directory when invoked by its path. Use `--output json`
-for structured results or errors, and `--describe` for its command schema.
-`cargo make test-rename` runs its isolated behavioral tests.
-
-Choose lowercase ASCII words separated by single underscores. The input
-`acme_tools` produces `acme_tools`, `ACME_TOOLS`, and `AcmeTools`; for example:
-
-| Template name | Customized name |
-| --- | --- |
-| `hypogeum-db` Cargo package / CLI | `acme_tools-db` |
-| `hypogeum_db` Rust library | `acme_tools_db` |
-| `hypogeum.users.v1` protobuf namespace | `acme_tools.users.v1` |
-| `hypogeum` application schema / local database | `acme_tools` |
-| `hypogeum_migrator` database role | `acme_tools_migrator` |
-| `HYPOGEUM_ENV_FILE` environment selector | `ACME_TOOLS_ENV_FILE` |
-| `Hypogeum` display name | `AcmeTools` |
-
-Names must produce three distinct case forms and cannot contain the current
-project identity. Reserved language keywords, infrastructure schema names, and
-PostgreSQL's `pg_` prefix are rejected. Project-prefixed database identifiers,
-including their suffixes, must fit PostgreSQL's 63-byte identifier limit.
-
-The script previews or updates **Git-tracked UTF-8 file contents**, including
-hidden configuration, tests, `Cargo.lock`, documentation, and itself. It replaces
-occurrences within longer identifiers and preserves line endings and file
-permissions. The customized script uses the new identity for future renames.
-File/directory names, Git history and remotes are outside its scope.
-
-All input and file checks finish before writes begin. Unsupported casing,
-matching binary content, matching symlink targets, changed file types, and
-missing tracked files cause preflight failure with no writes. Symlinks are never
-followed. An operating-system error during application may leave earlier files
-updated; review the Git diff before retrying. Output contains paths and counts,
-without printing file contents or credentials.
-
-Ignored and untracked files are excluded. Recreate `env/local.env` from the
-updated example, or update your local overrides separately. Rust formatting can
-change with identifier length, so run `cargo make fmt-fix` before CI. Review the
-resulting diff. Repository hosting and tracker project renames are separate steps.
-
-### Database schemas
-
-| Schema | Purpose |
-| --- | --- |
-| `hypogeum` | Application tables (`hypogeum.users`), readiness function, and domain migration history |
-| `infra` | Infrastructure contracts, platform privilege hardening, and extensions |
-| `apalis` | Upstream task tables, functions, extensions and a separate migration ledger |
-| `public` | PostgreSQL's default schema; unused for application data |
-| `pg_catalog`, `pg_temp` | PostgreSQL system schemas used in controlled search paths |
-
-The script renames the application schema along with database names, roles,
-configuration and code. Infrastructure schemas retain their names. In particular,
-the pinned Apalis implementation uses schema-qualified `apalis` references.
-Schemas are explicit in code and SQL; changing a connection URL or `search_path`
-does not rename them. The database name in the connection URL and PostgreSQL
-roles are distinct from schema names, even when they share the project prefix.
-
-For an existing database, preserve applied migration source and checksums. Schema,
-role and migration-ledger renames need a coordinated forward migration and code
-change; this script does not migrate deployed databases. Pointing a migrator at
-an empty ledger would make existing migrations appear unapplied.
 
 ## User example
 
