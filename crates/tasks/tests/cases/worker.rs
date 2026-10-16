@@ -165,7 +165,7 @@ async fn execute_effect(effect: Effect, pool: PgPool, suffix: &str) -> Result<()
 
 async fn wait_completed(queue: &Queue<Effect>, id: &TaskId, status: Status, expected: usize) {
     let mut storage = queue.storage();
-    tokio::time::timeout(Duration::from_secs(15), async {
+    let completed = tokio::time::timeout(Duration::from_secs(15), async {
         loop {
             if storage
                 .fetch_by_id(id)
@@ -178,6 +178,16 @@ async fn wait_completed(queue: &Queue<Effect>, id: &TaskId, status: Status, expe
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })
-    .await
-    .unwrap();
+    .await;
+    if completed.is_err() {
+        let actual = storage
+            .fetch_by_id(id)
+            .await
+            .unwrap()
+            .map(|task| (task.status(), task.attempt(), task.max_attempts()));
+        panic!(
+            "queue {} expected {status:?} after {expected} attempts, got {actual:?}",
+            queue.storage().config().queue
+        );
+    }
 }
