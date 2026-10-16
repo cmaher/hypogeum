@@ -9,6 +9,7 @@ errors = { path = "../../errors" }
 postgres = { path = "../../postgres" }
 sqlx = { workspace = true, features = ["macros"] }
 sea-orm.workspace = true
+sea-orm-migration.workspace = true
 uuid.workspace = true
 chrono.workspace = true
 serde.workspace = true

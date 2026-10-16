@@ -5,7 +5,7 @@ use uuid::Uuid;
 use crate::models::User;
 
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
-#[sea_orm(schema_name = "app", table_name = "users")]
+#[sea_orm(schema_name = "fndapp", table_name = "users")]
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: Uuid,
