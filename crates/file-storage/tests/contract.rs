@@ -31,7 +31,7 @@ async fn round_trip_contract(storage: Arc<dyn FileStorage>) {
             .collect();
         let expected = ExpectedIntegrity {
             size_bytes: Some(all.len() as u64),
-            sha256: Some(format!("{:x}", Sha256::digest(&all))),
+            sha256: Some(hex::encode(Sha256::digest(&all))),
         };
         let stored = storage
             .write(input(chunks), expected.clone())

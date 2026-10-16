@@ -147,7 +147,7 @@ async fn prepare(
     }
     let info = ObjectInfo {
         size_bytes: size,
-        sha256: format!("{:x}", hasher.finalize()),
+        sha256: hex::encode(hasher.finalize()),
     };
     expected.verify(&info)?;
     file.flush()
