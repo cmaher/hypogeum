@@ -151,9 +151,11 @@ impl Lifecycle {
         }
     }
 
-    /// Stop claiming on signal, drain handlers and persistence, then drop the
-    /// worker before awaiting pool closure. Cancellation also retires the pool
-    /// before dropping the worker, including cancellation before the first poll.
+    /// Stop claiming on signal and share one deadline between draining the
+    /// worker and closing its pool. Worker completion/errors without a signal
+    /// start a cleanup-only deadline. Expiry returns DrainTimeout while final
+    /// cleanup continues on Tokio. Cancellation also retires the pool before
+    /// dropping the worker, including cancellation before the first poll.
     pub fn run_until<F, S>(
         self,
         worker: F,
@@ -170,7 +172,7 @@ impl Lifecycle {
             worker: Some(Box::pin(worker)),
         };
         async move {
-            let result = {
+            let (result, deadline) = {
                 let worker = running
                     .worker
                     .as_mut()
@@ -178,18 +180,28 @@ impl Lifecycle {
                 tokio::pin!(signal);
                 tokio::select! {
                     biased;
-                    result = &mut *worker => result.map_err(TasksError::operation),
+                    result = &mut *worker => (
+                        result.map_err(TasksError::operation),
+                        tokio::time::Instant::now() + timeout,
+                    ),
                     () = &mut signal => {
+                        let deadline = tokio::time::Instant::now() + timeout;
                         running.lifecycle.retire();
-                        tokio::time::timeout(timeout, worker).await
+                        let result = tokio::time::timeout_at(deadline, worker).await
                             .map_err(|_| TasksError::DrainTimeout)
-                            .and_then(|result| result.map_err(TasksError::operation))
+                            .and_then(|result| result.map_err(TasksError::operation));
+                        (result, deadline)
                     }
                 }
             };
             running.lifecycle.retire();
             drop(running.worker.take());
-            running.lifecycle.close().await;
+            // Mark closure synchronously, even if no cleanup budget remains.
+            // On expiry the drop guard finishes physical cleanup in the background.
+            drop(running.lifecycle.pool.close());
+            tokio::time::timeout_at(deadline, running.lifecycle.close())
+                .await
+                .map_err(|_| TasksError::DrainTimeout)?;
             result
         }
     }

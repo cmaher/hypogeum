@@ -12,7 +12,7 @@ use tokio::{
     task::JoinHandle,
 };
 
-/// Test-only PostgreSQL proxy that holds the next BEGIN's ReadyForQuery reply.
+/// Test-only PostgreSQL proxy that holds a ReadyForQuery reply.
 /// Clients must disable TLS so backend protocol messages remain visible.
 pub(super) struct BeginBarrier {
     port: u16,
@@ -24,6 +24,15 @@ pub(super) struct BeginBarrier {
 
 impl BeginBarrier {
     pub(super) async fn start(host: &str, port: u16) -> Self {
+        Self::start_for_status(host, port, b'T').await
+    }
+
+    /// Hold the idle reply to SQLx's connection-return ping instead of BEGIN.
+    pub(super) async fn start_idle(host: &str, port: u16) -> Self {
+        Self::start_for_status(host, port, b'I').await
+    }
+
+    async fn start_for_status(host: &str, port: u16, status: u8) -> Self {
         let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
         let proxy_port = listener.local_addr().unwrap().port();
         let upstream = TcpStream::connect((host, port)).await.unwrap();
@@ -53,9 +62,11 @@ impl BeginBarrier {
                         .ok_or_else(|| io::Error::other("invalid PostgreSQL message length"))?;
                     let mut body = vec![0; length as usize];
                     upstream_read.read_exact(&mut body).await?;
-                    // ReadyForQuery with status T confirms the server has opened
-                    // the transaction. Hold it before SQLx can read the reply.
-                    if header[0] == b'Z' && body == b"T" && control.0.swap(false, Ordering::SeqCst)
+                    // T marks an open transaction, I an idle session. Hold the
+                    // selected reply before SQLx can read it.
+                    if header[0] == b'Z'
+                        && body == [status]
+                        && control.0.swap(false, Ordering::SeqCst)
                     {
                         control.1.notify_one();
                         control.2.notified().await;

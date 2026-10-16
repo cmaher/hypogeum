@@ -19,12 +19,15 @@ Policy validates concurrency and duration bounds, respects the smaller task and
 worker attempt limits, supports upstream retry-after/deferred/abort semantics,
 and stops retrying when the worker shuts down.
 `worker::Lifecycle::run_until` stops claiming on a signal, drains handlers and
-persistence, and bounds the drain deadline.
+persistence, and shares one deadline between worker drain and pool closure.
 It retires returned worker connections during shutdown, drops the worker, and
-awaits final pool closure. External cancellation retires the pool before dropping
-the worker and schedules final closure on the active Tokio runtime. Keep that
-runtime alive for cleanup. Producers and handler application queries must use
-their own pool. Normal worker connection returns reuse the session without
+marks the pool closed before awaiting physical cleanup for the remaining time.
+If cleanup exceeds the deadline, it returns `DrainTimeout` and continues cleanup
+on the active Tokio runtime. Worker completion or errors without a shutdown
+signal start a bounded cleanup window of the same duration. External cancellation
+also retires the pool before dropping the worker and schedules final closure.
+Keep the runtime alive for background cleanup. Producers and handler application
+queries must use their own pool. Normal worker connection returns reuse the session without
 additional SQL or round trips.
 
 This lifecycle mitigates an Apalis 1.0 / SQLx 0.9 cancellation defect: dropping a
