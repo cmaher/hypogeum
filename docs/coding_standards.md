@@ -66,7 +66,9 @@ missing entities to NotFound and internal/database failures to redacted Internal
 responses. `ServiceError::Remote` represents downstream gRPC client failures;
 `RepoError::Database` covers PostgreSQL regardless of its location.
 
-Only binary composition roots load environment configuration. Libraries accept
+Only binary composition roots load environment configuration. Binaries load environment
+once via `env-config` (`EnvSource::load`), deserialize a per-binary `Config` with `envy`,
+use `Secret` for credentials, and never mutate process environment. Libraries accept
 explicit values and injected dependencies. Use `anyhow` for binary-level context.
 Do not include connection URLs, credentials or internal queries in public errors.
 

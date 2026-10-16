@@ -8,8 +8,9 @@ Read [the coding standards](docs/coding_standards.md) before changing code.
   and execute/map them with SQLx. Keep tables schema-qualified.
 - Define shared errors in `crates/errors`; use `anyhow` at binary boundaries.
   Database and internal details must not enter gRPC responses.
-- Read environment/configuration only in binary composition roots. Libraries
-  receive configuration, pools and dependencies explicitly.
+- Binaries load environment once via `env-config` (`EnvSource::load`), deserialize
+  per-binary `Config` with `envy`, use `Secret` for credentials, and never mutate
+  process env. Libraries receive typed values, pools and dependencies explicitly.
 - Run migrations explicitly through `foundation-db`; service startup checks
   readiness using restricted runtime credentials.
 - Keep schema DDL, grants and readiness functions in versioned SQL migrations.
