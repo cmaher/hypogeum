@@ -9,7 +9,7 @@ use testcontainers_modules::{
 /// harness executes them. Child failures fail the enclosing suite.
 pub fn run_suite() {
     assert!(
-        std::env::var_os("FOUNDATION_TEST_CHILD").is_none(),
+        std::env::var_os("HYPOGEUM_TEST_CHILD").is_none(),
         "suite launcher must not run in child"
     );
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -35,9 +35,9 @@ pub fn run_suite() {
                 include_str!("../../../infra/postgres/database.sql"),
             );
         let container = Postgres::default()
-            .with_user("foundation_admin")
+            .with_user("hypogeum_admin")
             .with_password("test-admin")
-            .with_db_name("foundation_test")
+            .with_db_name("hypogeum_test")
             .with_init_sql(init.into_bytes())
             .with_tag("18.3-bookworm")
             .start()
@@ -45,13 +45,13 @@ pub fn run_suite() {
             .expect("Start PostgreSQL testcontainer (Docker must be running)");
         let host = container.get_host().await.unwrap();
         let port = container.get_host_port_ipv4(5432).await.unwrap();
-        let url = format!("postgres://foundation_admin:test-admin@{host}:{port}/foundation_test");
+        let url = format!("postgres://hypogeum_admin:test-admin@{host}:{port}/hypogeum_test");
         // Child environment is fixed before its test threads start; never set_var.
         let mut child = tokio::process::Command::new(std::env::current_exe().unwrap());
         child
             .args(["--ignored", "--nocapture"])
             .env("DATABASE_URL", url)
-            .env("FOUNDATION_TEST_CHILD", "1");
+            .env("HYPOGEUM_TEST_CHILD", "1");
         let status = child.status().await.expect("Launch SQLx integration cases");
         container
             .rm()
@@ -86,13 +86,13 @@ impl TestDatabase {
                 .to_string()
         };
         Self {
-            migration_url: url("foundation_migrator", "test-migration"),
-            users_url: url("foundation_users", "test-users"),
-            tasks_url: url("foundation_tasks", "test-tasks"),
+            migration_url: url("hypogeum_migrator", "test-migration"),
+            users_url: url("hypogeum_users", "test-users"),
+            tasks_url: url("hypogeum_tasks", "test-tasks"),
             admin_url: options.to_url_lossy().to_string(),
         }
     }
     pub async fn migrate(&self) {
-        foundation_db::migrate(&self.migration_url).await.unwrap();
+        hypogeum_db::migrate(&self.migration_url).await.unwrap();
     }
 }

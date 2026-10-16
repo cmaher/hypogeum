@@ -21,8 +21,8 @@ impl MigratorTrait for Migrator {
         C: ConnectionTrait,
     {
         db.execute_unprepared(
-            "CREATE SCHEMA IF NOT EXISTS fndapp AUTHORIZATION foundation_owner;\
-             REVOKE ALL ON SCHEMA fndapp FROM PUBLIC;",
+            "CREATE SCHEMA IF NOT EXISTS hypogeum AUTHORIZATION hypogeum_owner;\
+             REVOKE ALL ON SCHEMA hypogeum FROM PUBLIC;",
         )
         .await?;
         let builder = db.get_database_backend();

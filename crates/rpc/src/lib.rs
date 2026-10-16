@@ -1,3 +1,3 @@
 pub mod users {
-    tonic::include_proto!("foundation.users.v1");
+    tonic::include_proto!("hypogeum.users.v1");
 }

@@ -12,7 +12,7 @@ async fn repeated_migrations_do_not_rewrite_objects_and_corrupt_history_is_rejec
     let db = test_support::TestDatabase::provision(options).await;
     db.migrate().await;
     let admin = sqlx::PgPool::connect(&db.admin_url).await.unwrap();
-    let versions = "SELECT xmin::text FROM pg_catalog.pg_proc WHERE oid IN ('fndapp.schema_version()'::regprocedure,'apalis.schema_version()'::regprocedure) ORDER BY oid";
+    let versions = "SELECT xmin::text FROM pg_catalog.pg_proc WHERE oid IN ('hypogeum.schema_version()'::regprocedure,'apalis.schema_version()'::regprocedure) ORDER BY oid";
     let before: Vec<String> = sqlx::query_scalar(versions)
         .fetch_all(&admin)
         .await
@@ -32,8 +32,8 @@ async fn repeated_migrations_do_not_rewrite_objects_and_corrupt_history_is_rejec
         .execute(&admin)
         .await
         .unwrap();
-    assert!(foundation_db::migrate(&db.migration_url).await.is_err());
-    assert!(foundation_db::verify(&db.migration_url).await.is_err());
+    assert!(hypogeum_db::migrate(&db.migration_url).await.is_err());
+    assert!(hypogeum_db::verify(&db.migration_url).await.is_err());
     admin.close().await;
 }
 
@@ -45,10 +45,10 @@ async fn explicit_cli_migrates_verifies_and_inspects(
 ) {
     let db = test_support::TestDatabase::provision(options).await;
     for command in ["migrate", "migrate", "verify", "inspect"] {
-        let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_foundation-db"))
+        let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_hypogeum-db"))
             .args([command, "--output", "json"])
-            .env("APP_MIGRATION_DATABASE_URL", &db.migration_url)
-            .env("APP_ENV_FILE", "")
+            .env("HYPOGEUM_MIGRATION_DATABASE_URL", &db.migration_url)
+            .env("HYPOGEUM_ENV_FILE", "")
             .output()
             .await
             .unwrap();
@@ -65,12 +65,12 @@ async fn explicit_cli_migrates_verifies_and_inspects(
             assert!(
                 tables
                     .iter()
-                    .any(|t| t["schema"] == "fndapp" && t["table"] == "users")
+                    .any(|t| t["schema"] == "hypogeum" && t["table"] == "users")
             );
             assert!(
                 tables
                     .iter()
-                    .any(|t| t["schema"] == "fndapp" && t["table"] == "seaql_migrations")
+                    .any(|t| t["schema"] == "hypogeum" && t["table"] == "seaql_migrations")
             );
             assert!(
                 tables
@@ -84,13 +84,13 @@ async fn explicit_cli_migrates_verifies_and_inspects(
 #[test]
 fn cli_rejects_unknown_input_and_redacts_connection_errors() {
     for args in [vec!["bad"], vec!["migrate"]] {
-        let output = std::process::Command::new(env!("CARGO_BIN_EXE_foundation-db"))
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_hypogeum-db"))
             .args(args)
             .env(
-                "APP_MIGRATION_DATABASE_URL",
+                "HYPOGEUM_MIGRATION_DATABASE_URL",
                 "postgres://private-credential@127.0.0.1:1/missing",
             )
-            .env("APP_ENV_FILE", "")
+            .env("HYPOGEUM_ENV_FILE", "")
             .output()
             .unwrap();
         assert!(!output.status.success());

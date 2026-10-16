@@ -9,22 +9,22 @@ SET LOCAL log_min_duration_statement = -1;
 SET LOCAL log_min_error_statement = 'panic';
 SET LOCAL password_encryption = 'scram-sha-256';
 DO $$ DECLARE r text; BEGIN
-  FOREACH r IN ARRAY ARRAY['foundation_owner','foundation_migrator','foundation_users','foundation_tasks'] LOOP
+  FOREACH r IN ARRAY ARRAY['hypogeum_owner','hypogeum_migrator','hypogeum_users','hypogeum_tasks'] LOOP
     IF NOT EXISTS(SELECT FROM pg_catalog.pg_roles WHERE rolname=r) THEN
       EXECUTE format('CREATE ROLE %I',r);
     END IF;
     EXECUTE format('ALTER ROLE %I NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT',r);
   END LOOP;
 END $$;
-ALTER ROLE foundation_owner NOLOGIN PASSWORD NULL;
-ALTER ROLE foundation_migrator LOGIN PASSWORD :'migration_password';
-ALTER ROLE foundation_users LOGIN PASSWORD :'users_password';
-ALTER ROLE foundation_tasks LOGIN PASSWORD :'tasks_password';
+ALTER ROLE hypogeum_owner NOLOGIN PASSWORD NULL;
+ALTER ROLE hypogeum_migrator LOGIN PASSWORD :'migration_password';
+ALTER ROLE hypogeum_users LOGIN PASSWORD :'users_password';
+ALTER ROLE hypogeum_tasks LOGIN PASSWORD :'tasks_password';
 SELECT format('REVOKE %I FROM %I', parent.rolname, member.rolname)
   FROM pg_catalog.pg_auth_members m
   JOIN pg_catalog.pg_roles parent ON parent.oid=m.roleid
   JOIN pg_catalog.pg_roles member ON member.oid=m.member
-  WHERE member.rolname IN ('foundation_owner','foundation_migrator','foundation_users','foundation_tasks') \gexec
-GRANT foundation_owner TO foundation_migrator WITH INHERIT FALSE, SET TRUE;
+  WHERE member.rolname IN ('hypogeum_owner','hypogeum_migrator','hypogeum_users','hypogeum_tasks') \gexec
+GRANT hypogeum_owner TO hypogeum_migrator WITH INHERIT FALSE, SET TRUE;
 COMMIT;
 \ir database.sql

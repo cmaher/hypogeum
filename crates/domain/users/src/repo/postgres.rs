@@ -105,12 +105,12 @@ pub async fn check_ready(pool: &PgPool) -> Result<(), RepoError> {
         .fetch_one(pool)
         .await
         .map_err(RepoError::database)?;
-    if role != "foundation_users" {
+    if role != "hypogeum_users" {
         return Err(RepoError::InvalidInput(
-            "Use foundation_users runtime credentials".into(),
+            "Use hypogeum_users runtime credentials".into(),
         ));
     }
-    let version: i64 = sqlx::query_scalar("SELECT fndapp.schema_version()")
+    let version: i64 = sqlx::query_scalar("SELECT hypogeum.schema_version()")
         .fetch_one(pool)
         .await
         .map_err(RepoError::database)?;

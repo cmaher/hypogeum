@@ -19,8 +19,8 @@ async fn existing_user_survives_migration_upgrade(
     let owner = PgConnectOptions::from_str(&db.migration_url)
         .unwrap()
         .options([
-            ("role", "foundation_owner"),
-            ("search_path", "fndapp,pg_catalog"),
+            ("role", "hypogeum_owner"),
+            ("search_path", "hypogeum,pg_catalog"),
         ]);
     let migrator_pool = sqlx::PgPool::connect_with(owner).await.unwrap();
     let sea_db = sea_orm::SqlxPostgresConnector::from_sqlx_postgres_pool(migrator_pool.clone());
@@ -34,7 +34,7 @@ async fn existing_user_survives_migration_upgrade(
     db.migrate().await;
     assert_eq!(repo.get(before.id).await.unwrap(), before);
     users::repo::check_ready(&pool).await.unwrap();
-    foundation_db::verify(&db.migration_url).await.unwrap();
+    hypogeum_db::verify(&db.migration_url).await.unwrap();
     pool.close().await;
 }
 
@@ -48,12 +48,12 @@ async fn user_repository_connects_and_persists_under_runtime_privileges(
     let migration_url = db.migration_url.clone();
     // Concurrent runners must serialize and remain repeatable.
     let (first, second) = tokio::join!(
-        foundation_db::migrate(&migration_url),
-        foundation_db::migrate(&migration_url)
+        hypogeum_db::migrate(&migration_url),
+        hypogeum_db::migrate(&migration_url)
     );
     first.unwrap();
     second.unwrap();
-    foundation_db::verify(&migration_url).await.unwrap();
+    hypogeum_db::verify(&migration_url).await.unwrap();
     let pool = postgres::create_pool(&postgres::PostgresConfig::new(db.users_url.clone())).unwrap();
     users::repo::check_ready(&pool).await.unwrap();
     let repo = PgUserRepo::new(pool.clone());
@@ -102,11 +102,11 @@ async fn user_repository_connects_and_persists_under_runtime_privileges(
     ));
     assert!(matches!(repo.delete(id).await, Err(RepoError::NotFound)));
     for forbidden in [
-        "CREATE TABLE fndapp.forbidden(id integer)",
+        "CREATE TABLE hypogeum.forbidden(id integer)",
         "SELECT * FROM infra._sqlx_migrations",
         "SELECT * FROM apalis._sqlx_migrations",
         "SELECT * FROM apalis.jobs",
-        "SET ROLE foundation_owner",
+        "SET ROLE hypogeum_owner",
         "CREATE TEMP TABLE forbidden(id integer)",
     ] {
         assert!(
@@ -116,11 +116,11 @@ async fn user_repository_connects_and_persists_under_runtime_privileges(
     }
     let tasks = sqlx::PgPool::connect(&db.tasks_url).await.unwrap();
     for forbidden in [
-        "SELECT * FROM fndapp.users",
+        "SELECT * FROM hypogeum.users",
         "SELECT * FROM infra._sqlx_migrations",
         "SELECT * FROM apalis._sqlx_migrations",
         "CREATE TABLE apalis.forbidden(id integer)",
-        "SET ROLE foundation_owner",
+        "SET ROLE hypogeum_owner",
     ] {
         assert!(
             sqlx::raw_sql(forbidden).execute(&tasks).await.is_err(),
@@ -130,12 +130,12 @@ async fn user_repository_connects_and_persists_under_runtime_privileges(
     // Readiness must reject the wrong role and an altered schema contract.
     assert!(users::repo::check_ready(&tasks).await.is_err());
     let mut admin = PgConnection::connect(&db.admin_url).await.unwrap();
-    sqlx::raw_sql("CREATE OR REPLACE FUNCTION fndapp.schema_version() RETURNS bigint LANGUAGE sql AS 'SELECT 0::bigint'").execute(&mut admin).await.unwrap();
+    sqlx::raw_sql("CREATE OR REPLACE FUNCTION hypogeum.schema_version() RETURNS bigint LANGUAGE sql AS 'SELECT 0::bigint'").execute(&mut admin).await.unwrap();
     assert!(users::repo::check_ready(&pool).await.is_err());
     // Applied migrations do not silently rewrite objects after manual tampering.
-    foundation_db::migrate(&migration_url).await.unwrap();
+    hypogeum_db::migrate(&migration_url).await.unwrap();
     assert!(users::repo::check_ready(&pool).await.is_err());
-    assert!(foundation_db::verify(&migration_url).await.is_err());
+    assert!(hypogeum_db::verify(&migration_url).await.is_err());
     pool.close().await;
     tasks.close().await;
 }

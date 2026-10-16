@@ -3,18 +3,18 @@ services:
     image: postgres:18.3-bookworm
     environment:
       POSTGRES_USER: admin
-      POSTGRES_DB: foundation
-      POSTGRES_PASSWORD: ${APP_POSTGRES_PASSWORD:-password}
-      MIGRATION_PASSWORD: ${APP_MIGRATION_PASSWORD:-password}
-      USERS_PASSWORD: ${APP_USERS_PASSWORD:-password}
-      TASKS_PASSWORD: ${APP_TASKS_PASSWORD:-password}
+      POSTGRES_DB: hypogeum
+      POSTGRES_PASSWORD: ${HYPOGEUM_POSTGRES_PASSWORD:-password}
+      MIGRATION_PASSWORD: ${HYPOGEUM_MIGRATION_PASSWORD:-password}
+      USERS_PASSWORD: ${HYPOGEUM_USERS_PASSWORD:-password}
+      TASKS_PASSWORD: ${HYPOGEUM_TASKS_PASSWORD:-password}
     ports:
-      - "127.0.0.1:${APP_POSTGRES_PORT:-5432}:5432"
+      - "127.0.0.1:${HYPOGEUM_POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql
       - ./infra/postgres:/provision:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U admin -d foundation"]
+      test: ["CMD-SHELL", "pg_isready -U admin -d hypogeum"]
       interval: 2s
       timeout: 5s
       retries: 30

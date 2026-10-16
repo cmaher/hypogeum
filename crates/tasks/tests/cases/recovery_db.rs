@@ -60,7 +60,7 @@ fn worker_process(hold: bool, url: &str) -> Process {
                 "--nocapture",
             ])
             .env(
-                "FOUNDATION_TASK_FIXTURE_CHILD",
+                "HYPOGEUM_TASK_FIXTURE_CHILD",
                 if hold { "hold" } else { "run" },
             )
             .env("TASKS_FIXTURE_DATABASE_URL", url)
@@ -72,7 +72,7 @@ fn worker_process(hold: bool, url: &str) -> Process {
 #[tokio::test]
 #[ignore = "child fixture, launched by recovery_acceptance"]
 async fn fixture_worker_process() {
-    let Ok(mode) = std::env::var("FOUNDATION_TASK_FIXTURE_CHILD") else {
+    let Ok(mode) = std::env::var("HYPOGEUM_TASK_FIXTURE_CHILD") else {
         return;
     };
     let pool = pool("TASKS_FIXTURE_DATABASE_URL").await;
@@ -196,7 +196,7 @@ async fn recovery_acceptance(
     db.migrate().await;
     let pool = PgPool::connect(&db.tasks_url).await.unwrap();
     let admin = PgPool::connect(&db.admin_url).await.unwrap();
-    sqlx::raw_sql("CREATE SCHEMA task_fixture; CREATE TABLE task_fixture.submissions(key text PRIMARY KEY); CREATE TABLE task_fixture.recovery(key text PRIMARY KEY,executions integer NOT NULL); GRANT USAGE ON SCHEMA task_fixture TO foundation_tasks; GRANT SELECT,INSERT,UPDATE ON ALL TABLES IN SCHEMA task_fixture TO foundation_tasks;").execute(&admin).await.unwrap();
+    sqlx::raw_sql("CREATE SCHEMA task_fixture; CREATE TABLE task_fixture.submissions(key text PRIMARY KEY); CREATE TABLE task_fixture.recovery(key text PRIMARY KEY,executions integer NOT NULL); GRANT USAGE ON SCHEMA task_fixture TO hypogeum_tasks; GRANT SELECT,INSERT,UPDATE ON ALL TABLES IN SCHEMA task_fixture TO hypogeum_tasks;").execute(&admin).await.unwrap();
     atomicity(&pool, &admin, &db.tasks_url).await;
     let queue = Queue::<Effect>::new(pool.clone(), "fixture-recovery", config()).unwrap();
     let task = queue.task(Effect {

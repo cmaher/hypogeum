@@ -36,7 +36,7 @@ impl Config {
 #[tokio::main]
 async fn main() -> Result<()> {
     let env = EnvSource::load()?;
-    let config: Config = env.deserialize("APP_TASKS_")?;
+    let config: Config = env.deserialize("HYPOGEUM_TASKS_")?;
     config.validate()?;
 
     let pool = sqlx::PgPool::connect(config.database_url.expose())
@@ -86,10 +86,10 @@ mod tests {
     #[test]
     fn test_config_defaults() {
         let env = EnvSource::from_pairs([(
-            "APP_TASKS_DATABASE_URL",
+            "HYPOGEUM_TASKS_DATABASE_URL",
             "postgres://user:pass@localhost/db",
         )]);
-        let config: Config = env.deserialize("APP_TASKS_").unwrap();
+        let config: Config = env.deserialize("HYPOGEUM_TASKS_").unwrap();
         config.validate().unwrap();
         assert_eq!(
             config.database_url.expose(),
@@ -103,10 +103,10 @@ mod tests {
     }
 
     #[test]
-    fn test_config_missing_url_names_app_tasks_database_url() {
+    fn test_config_missing_url_names_hypogeum_tasks_database_url() {
         let env = EnvSource::from_pairs(Vec::<(&str, &str)>::new());
-        let err = env.deserialize::<Config>("APP_TASKS_").unwrap_err();
-        assert!(err.to_string().contains("APP_TASKS_DATABASE_URL"));
+        let err = env.deserialize::<Config>("HYPOGEUM_TASKS_").unwrap_err();
+        assert!(err.to_string().contains("HYPOGEUM_TASKS_DATABASE_URL"));
     }
 
     #[test]
@@ -114,12 +114,12 @@ mod tests {
         for invalid_val in [0, 3601] {
             let env = EnvSource::from_pairs([
                 (
-                    "APP_TASKS_DATABASE_URL",
+                    "HYPOGEUM_TASKS_DATABASE_URL",
                     "postgres://user:pass@localhost/db",
                 ),
-                ("APP_TASKS_SHUTDOWN_SECONDS", &invalid_val.to_string()),
+                ("HYPOGEUM_TASKS_SHUTDOWN_SECONDS", &invalid_val.to_string()),
             ]);
-            let config: Config = env.deserialize("APP_TASKS_").unwrap();
+            let config: Config = env.deserialize("HYPOGEUM_TASKS_").unwrap();
             let err = config.validate().unwrap_err();
             assert_eq!(err.to_string(), "Shutdown must be 1..3600 seconds");
         }
@@ -127,12 +127,12 @@ mod tests {
         for valid_val in [1, 3600] {
             let env = EnvSource::from_pairs([
                 (
-                    "APP_TASKS_DATABASE_URL",
+                    "HYPOGEUM_TASKS_DATABASE_URL",
                     "postgres://user:pass@localhost/db",
                 ),
-                ("APP_TASKS_SHUTDOWN_SECONDS", &valid_val.to_string()),
+                ("HYPOGEUM_TASKS_SHUTDOWN_SECONDS", &valid_val.to_string()),
             ]);
-            let config: Config = env.deserialize("APP_TASKS_").unwrap();
+            let config: Config = env.deserialize("HYPOGEUM_TASKS_").unwrap();
             assert!(config.validate().is_ok());
         }
     }
