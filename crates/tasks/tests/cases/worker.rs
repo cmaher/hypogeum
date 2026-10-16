@@ -306,13 +306,25 @@ async fn shutdown_retires_pending_fetch_connections(
             tokio::time::timeout(Duration::from_secs(5), worker_pool.close())
                 .await
                 .unwrap();
-            let alive: bool =
-                sqlx::query_scalar("SELECT EXISTS(SELECT FROM pg_stat_activity WHERE pid=$1)")
+            // SQLx closes the client socket before the proxy and PostgreSQL
+            // necessarily process its disconnect. Await server-side removal.
+            tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    let alive: bool = sqlx::query_scalar(
+                        "SELECT EXISTS(SELECT FROM pg_stat_activity WHERE pid=$1)",
+                    )
                     .bind(pid)
                     .fetch_one(&admin)
                     .await
                     .unwrap();
-            assert!(!alive, "cancelled BEGIN session survived shutdown ({mode})");
+                    if !alive {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .unwrap_or_else(|_| panic!("cancelled BEGIN session survived shutdown ({mode})"));
             if submit {
                 let task = queue.storage().fetch_by_id(&id).await.unwrap().unwrap();
                 assert_eq!(task.status(), Status::Pending);
