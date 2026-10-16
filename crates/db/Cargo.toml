@@ -9,9 +9,10 @@ apalis-postgres = { workspace = true, features = ["migrate"] }
 errors = { path = "../errors", default-features = false }
 sqlx = { workspace = true, features = ["migrate", "macros"] }
 tokio.workspace = true
+serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 anyhow = "1"
-dotenvy = "0.15"
+env-config = { path = "../env-config" }
 
 [dev-dependencies]
 test-support = { path = "../test-support" }

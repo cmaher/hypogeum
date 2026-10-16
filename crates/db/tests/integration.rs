@@ -47,8 +47,8 @@ async fn explicit_cli_migrates_verifies_and_inspects(
     for command in ["migrate", "migrate", "verify", "inspect"] {
         let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_foundation-db"))
             .args([command, "--output", "json"])
-            .env("MIGRATION_DATABASE_URL", &db.migration_url)
-            .env("FOUNDATION_LOCAL_CONFIG", "missing-test-config")
+            .env("APP_MIGRATION_DATABASE_URL", &db.migration_url)
+            .env("APP_ENV_FILE", "")
             .output()
             .await
             .unwrap();
@@ -71,10 +71,10 @@ fn cli_rejects_unknown_input_and_redacts_connection_errors() {
         let output = std::process::Command::new(env!("CARGO_BIN_EXE_foundation-db"))
             .args(args)
             .env(
-                "MIGRATION_DATABASE_URL",
+                "APP_MIGRATION_DATABASE_URL",
                 "postgres://private-credential@127.0.0.1:1/missing",
             )
-            .env("FOUNDATION_LOCAL_CONFIG", "missing-test-config")
+            .env("APP_ENV_FILE", "")
             .output()
             .unwrap();
         assert!(!output.status.success());
