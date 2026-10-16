@@ -60,8 +60,19 @@ class Change:
     replacements: int
 
 
+@dataclass(frozen=True)
+class NamingForms:
+    lowercase: str
+    uppercase: str
+    pascal_case: str
+
+
 def naming_forms(name):
-    return name, name.upper(), "".join(part.capitalize() for part in name.split("_"))
+    return NamingForms(
+        lowercase=name,
+        uppercase=name.upper(),
+        pascal_case="".join(part.capitalize() for part in name.split("_")),
+    )
 
 
 def validate_name(name):
@@ -69,12 +80,13 @@ def validate_name(name):
         raise RenameError(
             "invalid_name", "Use lowercase ASCII words separated by single underscores."
         )
+    forms = naming_forms(name)
     if (
         name in RESERVED
         or name.startswith("pg_")
         or len(name) > 63
         or any(form.casefold() in name for form in (SOURCE, DISPLAY))
-        or len(set(naming_forms(name))) != 3
+        or len({forms.lowercase, forms.uppercase, forms.pascal_case}) != 3
     ):
         raise RenameError(
             "invalid_name",
@@ -113,10 +125,15 @@ def tracked_files(root):
 
 
 def plan_changes(root, name):
-    forms = (SOURCE, SOURCE.upper(), DISPLAY)
-    replacements = dict(zip(forms, naming_forms(name)))
+    source = NamingForms(lowercase=SOURCE, uppercase=SOURCE.upper(), pascal_case=DISPLAY)
+    target = naming_forms(name)
+    replacements = {
+        source.lowercase: target.lowercase,
+        source.uppercase: target.uppercase,
+        source.pascal_case: target.pascal_case,
+    }
     pattern = re.compile(
-        "|".join(re.escape(form) for form in sorted(set(forms), key=len, reverse=True)),
+        "|".join(re.escape(form) for form in sorted(replacements, key=len, reverse=True)),
         re.IGNORECASE | re.ASCII,
     )
     binary_pattern = re.compile(pattern.pattern.encode("ascii"), re.IGNORECASE | re.ASCII)
