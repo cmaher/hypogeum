@@ -1,30 +1,49 @@
 use anyhow::{Context, Result};
+use env_config::EnvSource;
+use serde::Deserialize;
 use std::{net::SocketAddr, time::Duration};
 use tasks::board::Board;
 
+fn default_board_bind() -> SocketAddr {
+    "127.0.0.1:8082"
+        .parse()
+        .expect("valid default board bind address")
+}
+
+fn default_shutdown_seconds() -> u64 {
+    30
+}
+
+#[derive(Deserialize)]
+struct Config {
+    database_url: env_config::Secret,
+    #[serde(default = "default_board_bind")]
+    board_bind: SocketAddr,
+    #[serde(default = "default_shutdown_seconds")]
+    shutdown_seconds: u64,
+}
+
+impl Config {
+    fn validate(&self) -> Result<()> {
+        anyhow::ensure!(
+            (1..=3600).contains(&self.shutdown_seconds),
+            "Shutdown must be 1..3600 seconds"
+        );
+        Ok(())
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
-    let path =
-        std::env::var("FOUNDATION_LOCAL_CONFIG").unwrap_or_else(|_| "env/local.secrets".into());
-    let _ = dotenvy::from_path(path);
-    let url = std::env::var("TASKS_DATABASE_URL").context("TASKS_DATABASE_URL required")?;
-    let bind: SocketAddr = std::env::var("TASKS_BOARD_BIND")
-        .unwrap_or_else(|_| "127.0.0.1:8082".into())
-        .parse()
-        .context("Invalid TASKS_BOARD_BIND")?;
-    let drain: u64 = std::env::var("TASKS_SHUTDOWN_SECONDS")
-        .unwrap_or_else(|_| "30".into())
-        .parse()
-        .context("Invalid TASKS_SHUTDOWN_SECONDS")?;
-    anyhow::ensure!(
-        drain > 0 && drain <= 3600,
-        "Shutdown must be 1..3600 seconds"
-    );
-    let pool = sqlx::PgPool::connect(&url)
+    let env = EnvSource::load()?;
+    let config: Config = env.deserialize("APP_TASKS_")?;
+    config.validate()?;
+
+    let pool = sqlx::PgPool::connect(config.database_url.expose())
         .await
         .map_err(|_| anyhow::anyhow!("Tasks connection failed (URL redacted)"))?;
     tasks::check_ready(&pool).await?;
-    let listener = tokio::net::TcpListener::bind(bind)
+    let listener = tokio::net::TcpListener::bind(config.board_bind)
         .await
         .context("Cannot bind Board")?;
     // No production queues or handlers are registered by this infrastructure host.
@@ -38,7 +57,7 @@ async fn main() -> Result<()> {
         result = &mut serving => { result.context("Board server failed")?; }
         () = shutdown_signal() => {
             let _ = stop.send(());
-            tokio::time::timeout(Duration::from_secs(drain), &mut serving).await.context("Board drain deadline exceeded")??;
+            tokio::time::timeout(Duration::from_secs(config.shutdown_seconds), &mut serving).await.context("Board drain deadline exceeded")??;
         }
     }
     pool.close().await;
@@ -56,5 +75,65 @@ async fn shutdown_signal() {
     #[cfg(not(unix))]
     {
         let _ = tokio::signal::ctrl_c().await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use env_config::EnvSource;
+
+    #[test]
+    fn test_config_defaults() {
+        let env = EnvSource::from_pairs([(
+            "APP_TASKS_DATABASE_URL",
+            "postgres://user:pass@localhost/db",
+        )]);
+        let config: Config = env.deserialize("APP_TASKS_").unwrap();
+        config.validate().unwrap();
+        assert_eq!(
+            config.database_url.expose(),
+            "postgres://user:pass@localhost/db"
+        );
+        assert_eq!(
+            config.board_bind,
+            "127.0.0.1:8082".parse::<SocketAddr>().unwrap()
+        );
+        assert_eq!(config.shutdown_seconds, 30);
+    }
+
+    #[test]
+    fn test_config_missing_url_names_app_tasks_database_url() {
+        let env = EnvSource::from_pairs(Vec::<(&str, &str)>::new());
+        let err = env.deserialize::<Config>("APP_TASKS_").unwrap_err();
+        assert!(err.to_string().contains("APP_TASKS_DATABASE_URL"));
+    }
+
+    #[test]
+    fn test_shutdown_seconds_validation() {
+        for invalid_val in [0, 3601] {
+            let env = EnvSource::from_pairs([
+                (
+                    "APP_TASKS_DATABASE_URL",
+                    "postgres://user:pass@localhost/db",
+                ),
+                ("APP_TASKS_SHUTDOWN_SECONDS", &invalid_val.to_string()),
+            ]);
+            let config: Config = env.deserialize("APP_TASKS_").unwrap();
+            let err = config.validate().unwrap_err();
+            assert_eq!(err.to_string(), "Shutdown must be 1..3600 seconds");
+        }
+
+        for valid_val in [1, 3600] {
+            let env = EnvSource::from_pairs([
+                (
+                    "APP_TASKS_DATABASE_URL",
+                    "postgres://user:pass@localhost/db",
+                ),
+                ("APP_TASKS_SHUTDOWN_SECONDS", &valid_val.to_string()),
+            ]);
+            let config: Config = env.deserialize("APP_TASKS_").unwrap();
+            assert!(config.validate().is_ok());
+        }
     }
 }

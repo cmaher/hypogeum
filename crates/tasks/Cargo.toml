@@ -9,7 +9,7 @@ apalis.workspace = true
 apalis-board.workspace = true
 axum = "0.8"
 anyhow = "1"
-dotenvy = "0.15"
+env-config = { path = "../env-config" }
 apalis-postgres.workspace = true
 errors = { path = "../errors", default-features = false }
 sqlx = { workspace = true, features = ["macros"] }
