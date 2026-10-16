@@ -3,8 +3,8 @@
 A Rust workspace for starting services with PostgreSQL, gRPC, typed background
 tasks, and streamed byte storage. A small User service demonstrates the layers.
 
-Reusable infrastructure lives in `crates/`. Domain crates live in `domain/`,
-starting with the generic User example in `domain/users/`.
+Reusable infrastructure lives in `crates/`. Domain crates live in `crates/domain/`,
+starting with the generic User example in `crates/domain/users/`.
 
 | Crate | Responsibility |
 | --- | --- |
@@ -116,7 +116,7 @@ When customizing a **fresh project before applying any migrations**:
 - To rename `app`, update the application migration SQL in
   [`crates/db/resources/migrations/`](crates/db/resources/migrations/), the
   SeaQuery table references and readiness check in
-  [`domain/users/src/repo/postgres.rs`](domain/users/src/repo/postgres.rs), and
+  [`crates/domain/users/src/repo/postgres.rs`](crates/domain/users/src/repo/postgres.rs), and
   database verification/inspection in [`crates/db/src/`](crates/db/src/).
   Update the integration tests and documentation to match.
 - To rename `infra`, update `create_schema` and `dangerous_set_table_name` in
@@ -153,7 +153,7 @@ supports create, get, list, rename and delete. Names are trimmed and accept
 1–200 Unicode characters. Lists use UUID ordering, an exclusive cursor, a
 default page size of 50, and a maximum of 100. The server generates IDs and
 PostgreSQL supplies timestamps. See `proto/users.proto` and the integration tests
-in `domain/users/tests/cases/` for the complete contract.
+in `crates/domain/users/tests/cases/` for the complete contract.
 
 The example leaves authentication and application-specific permissions to the
 project built from it. Keep development endpoints bound to loopback until a

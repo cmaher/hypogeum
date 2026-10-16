@@ -16,8 +16,8 @@ Read [the coding standards](docs/coding_standards.md) before changing code.
 - Keep schema DDL, grants and readiness functions in versioned SQL migrations.
   The Rust runner orchestrates SQLx migrators; SQLx owns locking and checksums.
 - Keep this workspace generic. Add product behavior in the consuming project.
-- Keep reusable infrastructure in `crates/` and domain crates in `domain/`.
-  The generic User example lives in `domain/users/`.
+- Keep reusable infrastructure in `crates/` and domain crates in `crates/domain/`.
+  The generic User example lives in `crates/domain/users/`.
 - Use Cargo Make for local Docker/Compose operations. Database integration tests
   own their containers through Testcontainers and isolate databases with SQLx.
 - Run `cargo make ci` before committing. Docker must be running. No pre-test
