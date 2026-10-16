@@ -1,30 +1,33 @@
 use super::UserRepo;
+use super::entity::{ActiveModel, Column, Entity};
 use crate::models::{PageRequest, User, UserPage, validate_name};
 use async_trait::async_trait;
 use errors::RepoError;
-use sea_query::{Expr, ExprTrait, Order, PostgresQueryBuilder, Query};
-use sea_query_sqlx::{SqlxBinder, SqlxValues};
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder,
+    QuerySelect, SqlxPostgresConnector,
+};
 use sqlx::PgPool;
 use uuid::Uuid;
-
-const COLUMNS: [&str; 4] = ["id", "display_name", "created_at", "updated_at"];
 
 pub struct PgUserRepo {
     pool: PgPool,
 }
+
 impl PgUserRepo {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
 
-    async fn one(&self, statement: (String, SqlxValues)) -> Result<User, RepoError> {
-        let (sql, values) = statement;
-        // Audited SeaQuery output, with all caller data bound as parameters.
-        sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(RepoError::database)?
-            .ok_or(RepoError::NotFound)
+    fn db(&self) -> DatabaseConnection {
+        SqlxPostgresConnector::from_sqlx_postgres_pool(self.pool.clone())
+    }
+}
+
+fn map_db_err(err: sea_orm::DbErr) -> RepoError {
+    match err {
+        sea_orm::DbErr::RecordNotFound(_) | sea_orm::DbErr::RecordNotUpdated => RepoError::NotFound,
+        other => RepoError::database(other),
     }
 }
 
@@ -32,41 +35,34 @@ impl PgUserRepo {
 impl UserRepo for PgUserRepo {
     async fn create(&self, id: Uuid, name: &str) -> Result<User, RepoError> {
         validate_name(name)?;
-        let statement = Query::insert()
-            .into_table(("app", "users"))
-            .columns(["id", "display_name"])
-            .values_panic([id.into(), name.into()])
-            .returning(Query::returning().columns(COLUMNS))
-            .build_sqlx(PostgresQueryBuilder);
-        self.one(statement).await
+        let active = ActiveModel {
+            id: sea_orm::ActiveValue::Set(id),
+            display_name: sea_orm::ActiveValue::Set(name.to_string()),
+            created_at: sea_orm::ActiveValue::NotSet,
+            updated_at: sea_orm::ActiveValue::NotSet,
+        };
+        let model = active.insert(&self.db()).await.map_err(map_db_err)?;
+        Ok(model.into())
     }
 
     async fn get(&self, id: Uuid) -> Result<User, RepoError> {
-        self.one(
-            Query::select()
-                .columns(COLUMNS)
-                .from(("app", "users"))
-                .and_where(Expr::col("id").eq(id))
-                .build_sqlx(PostgresQueryBuilder),
-        )
-        .await
+        let model = Entity::find_by_id(id)
+            .one(&self.db())
+            .await
+            .map_err(map_db_err)?
+            .ok_or(RepoError::NotFound)?;
+        Ok(model.into())
     }
 
     async fn list(&self, page: PageRequest) -> Result<UserPage, RepoError> {
-        let mut query = Query::select();
-        query
-            .columns(COLUMNS)
-            .from(("app", "users"))
-            .order_by("id", Order::Asc)
+        let mut select = Entity::find()
+            .order_by_asc(Column::Id)
             .limit(u64::from(page.limit()) + 1);
         if let Some(after) = page.after() {
-            query.and_where(Expr::col("id").gt(after));
+            select = select.filter(Column::Id.gt(after));
         }
-        let (sql, values) = query.build_sqlx(PostgresQueryBuilder);
-        let mut users: Vec<User> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(RepoError::database)?;
+        let models = select.all(&self.db()).await.map_err(map_db_err)?;
+        let mut users: Vec<User> = models.into_iter().map(User::from).collect();
         let more = users.len() > page.limit() as usize;
         users.truncate(page.limit() as usize);
         let next_after = if more {
@@ -79,28 +75,22 @@ impl UserRepo for PgUserRepo {
 
     async fn update_name(&self, id: Uuid, name: &str) -> Result<User, RepoError> {
         validate_name(name)?;
-        self.one(
-            Query::update()
-                .table(("app", "users"))
-                .value("display_name", name)
-                .value("updated_at", Expr::current_timestamp())
-                .and_where(Expr::col("id").eq(id))
-                .returning(Query::returning().columns(COLUMNS))
-                .build_sqlx(PostgresQueryBuilder),
-        )
-        .await
+        let active = ActiveModel {
+            id: sea_orm::ActiveValue::Unchanged(id),
+            display_name: sea_orm::ActiveValue::Set(name.to_string()),
+            updated_at: sea_orm::ActiveValue::Set(chrono::Utc::now()),
+            created_at: sea_orm::ActiveValue::NotSet,
+        };
+        let model = active.update(&self.db()).await.map_err(map_db_err)?;
+        Ok(model.into())
     }
 
     async fn delete(&self, id: Uuid) -> Result<(), RepoError> {
-        let (sql, values) = Query::delete()
-            .from_table(("app", "users"))
-            .and_where(Expr::col("id").eq(id))
-            .build_sqlx(PostgresQueryBuilder);
-        let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
-            .execute(&self.pool)
+        let res = Entity::delete_by_id(id)
+            .exec(&self.db())
             .await
-            .map_err(RepoError::database)?;
-        if result.rows_affected() == 0 {
+            .map_err(map_db_err)?;
+        if res.rows_affected == 0 {
             Err(RepoError::NotFound)
         } else {
             Ok(())
