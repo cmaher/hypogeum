@@ -9,13 +9,13 @@ impl MigrationTrait for Migration {
         manager
             .get_connection()
             .execute_unprepared(
-                "CREATE SCHEMA IF NOT EXISTS fndapp AUTHORIZATION foundation_owner;\
-                 REVOKE ALL ON SCHEMA fndapp FROM PUBLIC;",
+                "CREATE SCHEMA IF NOT EXISTS hypogeum AUTHORIZATION hypogeum_owner;\
+                 REVOKE ALL ON SCHEMA hypogeum FROM PUBLIC;",
             )
             .await?;
 
         let table = Table::create()
-            .table((Alias::new("fndapp"), Alias::new("users")))
+            .table((Alias::new("hypogeum"), Alias::new("users")))
             .if_not_exists()
             .col(
                 ColumnDef::new(Alias::new("id"))
@@ -50,13 +50,13 @@ impl MigrationTrait for Migration {
         manager
             .get_connection()
             .execute_unprepared(
-                "GRANT USAGE ON SCHEMA fndapp TO foundation_users;\
-                 GRANT SELECT, INSERT, UPDATE, DELETE ON fndapp.users TO foundation_users;\
-                 CREATE OR REPLACE FUNCTION fndapp.schema_version() RETURNS bigint \
+                "GRANT USAGE ON SCHEMA hypogeum TO hypogeum_users;\
+                 GRANT SELECT, INSERT, UPDATE, DELETE ON hypogeum.users TO hypogeum_users;\
+                 CREATE OR REPLACE FUNCTION hypogeum.schema_version() RETURNS bigint \
                  LANGUAGE sql IMMUTABLE SECURITY INVOKER SET search_path = pg_catalog, pg_temp \
                  AS $$ SELECT 1::bigint $$;\
-                 REVOKE ALL ON FUNCTION fndapp.schema_version() FROM PUBLIC;\
-                 GRANT EXECUTE ON FUNCTION fndapp.schema_version() TO foundation_users;",
+                 REVOKE ALL ON FUNCTION hypogeum.schema_version() FROM PUBLIC;\
+                 GRANT EXECUTE ON FUNCTION hypogeum.schema_version() TO hypogeum_users;",
             )
             .await?;
 
@@ -66,7 +66,7 @@ impl MigrationTrait for Migration {
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         manager
             .get_connection()
-            .execute_unprepared("DROP SCHEMA IF EXISTS fndapp CASCADE;")
+            .execute_unprepared("DROP SCHEMA IF EXISTS hypogeum CASCADE;")
             .await?;
         Ok(())
     }

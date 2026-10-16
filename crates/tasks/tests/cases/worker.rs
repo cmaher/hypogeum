@@ -58,7 +58,7 @@ async fn typed_handler_executes_retries_and_exhausts(
     db.migrate().await;
     let pool = PgPool::connect(&db.tasks_url).await.unwrap();
     let admin = PgPool::connect(&db.admin_url).await.unwrap();
-    sqlx::raw_sql("CREATE SCHEMA task_fixture; CREATE TABLE task_fixture.effects(key text PRIMARY KEY, attempts integer NOT NULL); GRANT USAGE ON SCHEMA task_fixture TO foundation_tasks; GRANT SELECT,INSERT,UPDATE ON task_fixture.effects TO foundation_tasks;").execute(&admin).await.unwrap();
+    sqlx::raw_sql("CREATE SCHEMA task_fixture; CREATE TABLE task_fixture.effects(key text PRIMARY KEY, attempts integer NOT NULL); GRANT USAGE ON SCHEMA task_fixture TO hypogeum_tasks; GRANT SELECT,INSERT,UPDATE ON task_fixture.effects TO hypogeum_tasks;").execute(&admin).await.unwrap();
     for (suffix, fail_until, expected, status) in [
         ("retry", 2, 3, Status::Done),
         ("exhaust", 10, 5, Status::Failed),

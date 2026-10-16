@@ -73,7 +73,7 @@ pub async fn check_ready(pool: &PgPool) -> Result<(), TasksError> {
         .fetch_one(pool)
         .await
         .map_err(|_| TasksError::NotReady)?;
-    if user != "foundation_tasks" {
+    if user != "hypogeum_tasks" {
         return Err(TasksError::NotReady);
     }
     let version: i64 = sqlx::query_scalar("SELECT apalis.schema_version()")

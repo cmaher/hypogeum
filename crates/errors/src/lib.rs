@@ -78,7 +78,7 @@ impl From<ServiceError> for tonic::Status {
 pub enum TasksError {
     #[error("Invalid task framework configuration: {0}")]
     Config(String),
-    #[error("Tasks runtime requires migrated Apalis schema and foundation_tasks credentials")]
+    #[error("Tasks runtime requires migrated Apalis schema and hypogeum_tasks credentials")]
     NotReady,
     #[error("Task framework operation failed: {0}")]
     Operation(#[source] Box<dyn std::error::Error + Send + Sync>),

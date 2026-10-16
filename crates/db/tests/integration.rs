@@ -12,7 +12,7 @@ async fn repeated_migrations_do_not_rewrite_objects_and_corrupt_history_is_rejec
     let db = test_support::TestDatabase::provision(options).await;
     db.migrate().await;
     let admin = sqlx::PgPool::connect(&db.admin_url).await.unwrap();
-    let versions = "SELECT xmin::text FROM pg_catalog.pg_proc WHERE oid IN ('fndapp.schema_version()'::regprocedure,'apalis.schema_version()'::regprocedure) ORDER BY oid";
+    let versions = "SELECT xmin::text FROM pg_catalog.pg_proc WHERE oid IN ('hypogeum.schema_version()'::regprocedure,'apalis.schema_version()'::regprocedure) ORDER BY oid";
     let before: Vec<String> = sqlx::query_scalar(versions)
         .fetch_all(&admin)
         .await
@@ -65,12 +65,12 @@ async fn explicit_cli_migrates_verifies_and_inspects(
             assert!(
                 tables
                     .iter()
-                    .any(|t| t["schema"] == "fndapp" && t["table"] == "users")
+                    .any(|t| t["schema"] == "hypogeum" && t["table"] == "users")
             );
             assert!(
                 tables
                     .iter()
-                    .any(|t| t["schema"] == "fndapp" && t["table"] == "seaql_migrations")
+                    .any(|t| t["schema"] == "hypogeum" && t["table"] == "seaql_migrations")
             );
             assert!(
                 tables
