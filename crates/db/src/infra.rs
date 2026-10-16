@@ -4,7 +4,8 @@ use sqlx::{Executor, PgConnection};
 
 pub async fn apply_contracts(conn: &mut PgConnection) -> Result<()> {
     conn.execute(
-        "REVOKE ALL ON SCHEMA infra FROM PUBLIC;\
+        "CREATE SCHEMA IF NOT EXISTS infra AUTHORIZATION foundation_owner;\
+         REVOKE ALL ON SCHEMA infra FROM PUBLIC;\
          REVOKE ALL ON SCHEMA apalis FROM PUBLIC, foundation_users, foundation_tasks;\
          REVOKE ALL ON ALL TABLES IN SCHEMA apalis FROM PUBLIC, foundation_users, foundation_tasks;\
          REVOKE ALL ON ALL SEQUENCES IN SCHEMA apalis FROM PUBLIC, foundation_users, foundation_tasks;\
