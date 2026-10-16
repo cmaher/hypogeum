@@ -14,9 +14,18 @@ async fn existing_user_survives_migration_upgrade(
     _pool_options: sqlx::postgres::PgPoolOptions,
     options: PgConnectOptions,
 ) {
+    use std::str::FromStr;
     let db = TestDatabase::provision(options).await;
-    let sea_db = sea_orm::Database::connect(&db.migration_url).await.unwrap();
+    let owner = PgConnectOptions::from_str(&db.migration_url)
+        .unwrap()
+        .options([
+            ("role", "foundation_owner"),
+            ("search_path", "fndapp,pg_catalog"),
+        ]);
+    let migrator_pool = sqlx::PgPool::connect_with(owner).await.unwrap();
+    let sea_db = sea_orm::SqlxPostgresConnector::from_sqlx_postgres_pool(migrator_pool.clone());
     users::pg::migrations::Migrator::up(&sea_db, Some(1)).await.unwrap();
+    migrator_pool.close().await;
     let pool = sqlx::PgPool::connect(&db.users_url).await.unwrap();
     let repo = PgUserRepo::new(pool.clone());
     let before = repo.create(Uuid::new_v4(), "Existing User").await.unwrap();
