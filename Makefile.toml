@@ -32,11 +32,16 @@ description = "All tests; Docker must be running for self-contained integration 
 command = "cargo"
 args = ["test", "--locked", "--workspace", "--all-features"]
 
+[tasks.test-rename]
+description = "Test project customization in disposable Git repositories"
+command = "python3"
+args = ["-m", "unittest", "discover", "-s", "scripts/tests", "-v"]
+
 [tasks.ci]
-dependencies = ["fmt", "clippy", "build", "test"]
+dependencies = ["fmt", "clippy", "build", "test", "test-rename"]
 
 [tasks.ci-fmt-fix]
-dependencies = ["fmt-fix", "clippy", "build", "test"]
+dependencies = ["fmt-fix", "clippy", "build", "test", "test-rename"]
 
 [tasks.db-up]
 script_runner = "@shell"

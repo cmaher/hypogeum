@@ -17,7 +17,8 @@ pub(crate) fn require(condition: bool, message: &str) -> Result<()> {
     }
 }
 
-const ADMIN_LOCK: i64 = 0x464e_445f_4442;
+// Stable database administration lock, independent of project customization.
+const ADMIN_LOCK: i64 = 0x4442_5f41_444d_494e;
 
 async fn owner(url: &str) -> Result<PgConnection> {
     let options = PgConnectOptions::from_str(url).map_err(MigrationError::database)?;
