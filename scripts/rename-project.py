@@ -17,6 +17,7 @@ DISPLAY = "Hypogeum"
 NAME_PATTERN = r"[a-z][a-z0-9]*(?:_[a-z0-9]+)*"
 # PostgreSQL reserved keywords, Rust strict/reserved keywords, and protobuf
 # declaration/scalar keywords. Keep this local: customization needs no network.
+# PostgreSQL 18: https://www.postgresql.org/docs/18/sql-keywords-appendix.html
 RESERVED = set("""
 all analyse analyze and any array as asc asymmetric authorization binary both
 case cast check collate collation column concurrently constraint create cross
@@ -26,7 +27,7 @@ except false fetch for foreign freeze from full grant group having ilike in
 initially inner intersect into is isnull join lateral leading left like limit
 localtime localtimestamp natural not notnull null offset on only or order outer
 overlaps placing primary references returning right select session_user similar
-some symmetric table tablesample then to trailing true union unique user using
+some symmetric system_user table tablesample then to trailing true union unique user using
 variadic verbose when where window with
 abstract async await become box break const continue crate dyn enum extern final
 fn gen if impl let loop macro match mod move mut override priv pub ref return

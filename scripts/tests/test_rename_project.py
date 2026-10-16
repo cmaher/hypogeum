@@ -109,6 +109,12 @@ class RenameProjectTests(unittest.TestCase):
                 self.assertEqual(result["error"]["code"], "invalid_name")
                 self.assertEqual(self.snapshot(), before)
 
+    def test_postgresql_system_user_is_rejected(self):
+        before = self.snapshot()
+        result = self.run_script("system_user", success=False)
+        self.assertEqual(result["error"]["code"], "invalid_name")
+        self.assertEqual(self.snapshot(), before)
+
     def test_identifier_length_accounts_for_existing_suffixes(self):
         self.fixture.write_text(SOURCE + "_long_existing_suffix")
         before = self.snapshot()
