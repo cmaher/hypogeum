@@ -1192,11 +1192,14 @@ dependencies = [
  "apalis-postgres",
  "env-config",
  "errors",
+ "sea-orm",
+ "sea-orm-migration",
  "serde",
  "serde_json",
  "sqlx",
  "test-support",
  "tokio",
+ "users",
 ]
 
 [[package]]

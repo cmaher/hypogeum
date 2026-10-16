@@ -12,7 +12,7 @@ async fn repeated_migrations_do_not_rewrite_objects_and_corrupt_history_is_rejec
     let db = test_support::TestDatabase::provision(options).await;
     db.migrate().await;
     let admin = sqlx::PgPool::connect(&db.admin_url).await.unwrap();
-    let versions = "SELECT xmin::text FROM pg_catalog.pg_proc WHERE oid IN ('app.schema_version()'::regprocedure,'apalis.schema_version()'::regprocedure) ORDER BY oid";
+    let versions = "SELECT xmin::text FROM pg_catalog.pg_proc WHERE oid IN ('fndapp.schema_version()'::regprocedure,'apalis.schema_version()'::regprocedure) ORDER BY oid";
     let before: Vec<String> = sqlx::query_scalar(versions)
         .fetch_all(&admin)
         .await
@@ -27,7 +27,7 @@ async fn repeated_migrations_do_not_rewrite_objects_and_corrupt_history_is_rejec
         before, after,
         "a repeat run must not replace already-applied schema functions"
     );
-    sqlx::query("UPDATE infra._sqlx_migrations SET checksum=$1 WHERE version=1")
+    sqlx::query("UPDATE apalis._sqlx_migrations SET checksum=$1 WHERE version=(SELECT min(version) FROM apalis._sqlx_migrations)")
         .bind(vec![0_u8])
         .execute(&admin)
         .await
@@ -60,7 +60,9 @@ async fn explicit_cli_migrates_verifies_and_inspects(
         let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
         assert_eq!(result["ok"], true);
         if command == "inspect" {
-            assert!(result["data"]["tables"].as_array().unwrap().len() >= 4);
+            let tables = result["data"]["tables"].as_array().unwrap();
+            assert!(tables.len() >= 4);
+            assert!(tables.iter().any(|t| t["schema"] == "fndapp" && t["table"] == "users"));
         }
     }
 }
