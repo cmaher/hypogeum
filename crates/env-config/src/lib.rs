@@ -23,7 +23,7 @@ pub enum ConfigError {
     EnvFileMissing { path: PathBuf },
     #[error("Environment configuration file is unreadable: {}", path.display())]
     EnvFileUnreadable { path: PathBuf },
-    #[error("Environment configuration file is malformed at {}:{}", path.display(), line)]
+    #[error("Environment configuration file is malformed at {} (line index {})", path.display(), line)]
     EnvFileMalformed { path: PathBuf, line: usize },
     #[error("Invalid configuration: {0}")]
     Invalid(String),
@@ -108,12 +108,6 @@ impl EnvSource {
                         if matches!(resolved, EnvFile::Required(_)) {
                             return Err(ConfigError::EnvFileMissing { path: path.clone() });
                         }
-                    }
-                    Err(dotenvy::Error::LineParse(_, line)) => {
-                        return Err(ConfigError::EnvFileMalformed {
-                            path: path.clone(),
-                            line,
-                        });
                     }
                     Err(_) => {
                         return Err(ConfigError::EnvFileUnreadable { path: path.clone() });
