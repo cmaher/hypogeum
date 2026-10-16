@@ -62,9 +62,21 @@ async fn explicit_cli_migrates_verifies_and_inspects(
         if command == "inspect" {
             let tables = result["data"]["tables"].as_array().unwrap();
             assert!(tables.len() >= 4);
-            assert!(tables.iter().any(|t| t["schema"] == "fndapp" && t["table"] == "users"));
-            assert!(tables.iter().any(|t| t["schema"] == "fndapp" && t["table"] == "seaql_migrations"));
-            assert!(tables.iter().any(|t| t["schema"] == "apalis" && t["table"] == "_sqlx_migrations"));
+            assert!(
+                tables
+                    .iter()
+                    .any(|t| t["schema"] == "fndapp" && t["table"] == "users")
+            );
+            assert!(
+                tables
+                    .iter()
+                    .any(|t| t["schema"] == "fndapp" && t["table"] == "seaql_migrations")
+            );
+            assert!(
+                tables
+                    .iter()
+                    .any(|t| t["schema"] == "apalis" && t["table"] == "_sqlx_migrations")
+            );
         }
     }
 }

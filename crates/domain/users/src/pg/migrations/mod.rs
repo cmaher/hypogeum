@@ -11,7 +11,9 @@ impl MigratorTrait for Migrator {
     }
 
     fn migration_table_name() -> DynIden {
-        sea_orm_migration::prelude::SeaRc::new(sea_orm_migration::prelude::Alias::new("seaql_migrations"))
+        sea_orm_migration::prelude::SeaRc::new(sea_orm_migration::prelude::Alias::new(
+            "seaql_migrations",
+        ))
     }
 
     async fn install<C>(db: &C) -> Result<(), DbErr>

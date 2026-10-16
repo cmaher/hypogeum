@@ -1,6 +1,6 @@
 use errors::RepoError;
-use sqlx::{Connection, PgConnection, postgres::PgConnectOptions};
 use sea_orm_migration::MigratorTrait;
+use sqlx::{Connection, PgConnection, postgres::PgConnectOptions};
 use test_support::TestDatabase;
 use users::{
     models::PageRequest,
@@ -24,7 +24,9 @@ async fn existing_user_survives_migration_upgrade(
         ]);
     let migrator_pool = sqlx::PgPool::connect_with(owner).await.unwrap();
     let sea_db = sea_orm::SqlxPostgresConnector::from_sqlx_postgres_pool(migrator_pool.clone());
-    users::pg::migrations::Migrator::up(&sea_db, Some(1)).await.unwrap();
+    users::pg::migrations::Migrator::up(&sea_db, Some(1))
+        .await
+        .unwrap();
     migrator_pool.close().await;
     let pool = sqlx::PgPool::connect(&db.users_url).await.unwrap();
     let repo = PgUserRepo::new(pool.clone());

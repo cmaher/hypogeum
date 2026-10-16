@@ -19,7 +19,10 @@ pub(crate) async fn connection(connection: &mut PgConnection) -> Result<()> {
     .fetch_optional(&mut *connection)
     .await
     .map_err(MigrationError::database)?;
-    require(migration_recorded.is_some(), "Users migration history drift")?;
+    require(
+        migration_recorded.is_some(),
+        "Users migration history drift",
+    )?;
     for (role, schema, other_table) in [
         ("foundation_users", "fndapp", "apalis.jobs"),
         ("foundation_tasks", "apalis", "fndapp.users"),
