@@ -110,7 +110,7 @@ pub async fn check_ready(pool: &PgPool) -> Result<(), RepoError> {
             "Use foundation_users runtime credentials".into(),
         ));
     }
-    let version: i64 = sqlx::query_scalar("SELECT app.schema_version()")
+    let version: i64 = sqlx::query_scalar("SELECT fndapp.schema_version()")
         .fetch_one(pool)
         .await
         .map_err(RepoError::database)?;

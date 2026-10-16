@@ -13,8 +13,9 @@ Read [the coding standards](docs/coding_standards.md) before changing code.
   process env. Libraries receive typed values, pools and dependencies explicitly.
 - Run migrations explicitly through `foundation-db`; service startup checks
   readiness using restricted runtime credentials.
-- Keep schema DDL, grants and readiness functions in versioned SQL migrations.
-  The Rust runner orchestrates SQLx migrators; SQLx owns locking and checksums.
+- Domain crates own their schema DDL, grants and readiness functions in collocated
+  SeaORM migrations under `src/pg/migrations/`. `foundation-db` orchestrates upstream
+  Apalis SQLx migrations, infrastructure contracts, and domain SeaORM migrators.
 - Keep this workspace generic. Add product behavior in the consuming project.
 - Keep reusable infrastructure in `crates/` and domain crates in `crates/domain/`.
   The generic User example lives in `crates/domain/users/`.

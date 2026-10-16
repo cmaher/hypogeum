@@ -25,6 +25,7 @@ sqlx = { version = "=0.9.0", default-features = false, features = ["postgres", "
 sea-query = { version = "=1.0.2", default-features = false, features = ["backend-postgres", "with-chrono", "with-json", "with-uuid", "thread-safe"] }
 sea-query-sqlx = { version = "=0.9.1", default-features = false, features = ["sqlx-postgres", "with-chrono", "with-json", "with-uuid"] }
 sea-orm = { version = "2.0", default-features = false, features = ["sqlx-postgres", "runtime-tokio-rustls", "macros", "with-chrono", "with-uuid", "with-json"] }
+sea-orm-migration = { version = "2.0", default-features = false, features = ["runtime-tokio-rustls", "sqlx-postgres"] }
 tokio = { version = "1", features = ["full"] }
 tonic = "0.14"
 prost = "0.14"

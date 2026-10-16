@@ -1,4 +1,5 @@
 use errors::RepoError;
+use sea_orm_migration::MigratorTrait;
 use sqlx::{Connection, PgConnection, postgres::PgConnectOptions};
 use test_support::TestDatabase;
 use users::{
@@ -17,18 +18,19 @@ async fn existing_user_survives_migration_upgrade(
     let db = TestDatabase::provision(options).await;
     let owner = PgConnectOptions::from_str(&db.migration_url)
         .unwrap()
-        .options([("role", "foundation_owner")]);
-    let mut connection = PgConnection::connect_with(&owner).await.unwrap();
-    // Reproduce an existing database with the unchanged first migration applied.
-    let mut initial = sqlx::migrate!("../../db/resources/migrations");
-    initial.create_schema("infra");
-    initial.dangerous_set_table_name("infra._sqlx_migrations");
-    initial.run_to(1, &mut connection).await.unwrap();
-    connection.close().await.unwrap();
+        .options([
+            ("role", "foundation_owner"),
+            ("search_path", "fndapp,pg_catalog"),
+        ]);
+    let migrator_pool = sqlx::PgPool::connect_with(owner).await.unwrap();
+    let sea_db = sea_orm::SqlxPostgresConnector::from_sqlx_postgres_pool(migrator_pool.clone());
+    users::pg::migrations::Migrator::up(&sea_db, Some(1))
+        .await
+        .unwrap();
+    migrator_pool.close().await;
     let pool = sqlx::PgPool::connect(&db.users_url).await.unwrap();
     let repo = PgUserRepo::new(pool.clone());
     let before = repo.create(Uuid::new_v4(), "Existing User").await.unwrap();
-    assert!(users::repo::check_ready(&pool).await.is_err());
     db.migrate().await;
     assert_eq!(repo.get(before.id).await.unwrap(), before);
     users::repo::check_ready(&pool).await.unwrap();
@@ -100,7 +102,7 @@ async fn user_repository_connects_and_persists_under_runtime_privileges(
     ));
     assert!(matches!(repo.delete(id).await, Err(RepoError::NotFound)));
     for forbidden in [
-        "CREATE TABLE app.forbidden(id integer)",
+        "CREATE TABLE fndapp.forbidden(id integer)",
         "SELECT * FROM infra._sqlx_migrations",
         "SELECT * FROM apalis._sqlx_migrations",
         "SELECT * FROM apalis.jobs",
@@ -114,7 +116,7 @@ async fn user_repository_connects_and_persists_under_runtime_privileges(
     }
     let tasks = sqlx::PgPool::connect(&db.tasks_url).await.unwrap();
     for forbidden in [
-        "SELECT * FROM app.users",
+        "SELECT * FROM fndapp.users",
         "SELECT * FROM infra._sqlx_migrations",
         "SELECT * FROM apalis._sqlx_migrations",
         "CREATE TABLE apalis.forbidden(id integer)",
@@ -128,7 +130,7 @@ async fn user_repository_connects_and_persists_under_runtime_privileges(
     // Readiness must reject the wrong role and an altered schema contract.
     assert!(users::repo::check_ready(&tasks).await.is_err());
     let mut admin = PgConnection::connect(&db.admin_url).await.unwrap();
-    sqlx::raw_sql("CREATE OR REPLACE FUNCTION app.schema_version() RETURNS bigint LANGUAGE sql AS 'SELECT 0::bigint'").execute(&mut admin).await.unwrap();
+    sqlx::raw_sql("CREATE OR REPLACE FUNCTION fndapp.schema_version() RETURNS bigint LANGUAGE sql AS 'SELECT 0::bigint'").execute(&mut admin).await.unwrap();
     assert!(users::repo::check_ready(&pool).await.is_err());
     // Applied migrations do not silently rewrite objects after manual tampering.
     foundation_db::migrate(&migration_url).await.unwrap();

@@ -101,28 +101,29 @@ cannot perform DDL, inspect migration ledgers, or access each other's data.
 
 | Schema | Purpose | Can a new project rename it? |
 | --- | --- | --- |
-| `app` | Application tables (`app.users`) and User readiness function | Yes. This is the application-owned example schema; replace it with your domain name if useful. |
-| `infra` | Application SQLx migration ledger (`infra._sqlx_migrations`) | Yes, but keeping it is recommended. Update both the migrator's schema and its qualified ledger table name together. |
+| `fndapp` | Application tables (`fndapp.users`), readiness function, and domain migration history | Yes. This is the application-owned example schema; `fndapp` is a search-and-replace template name designed for easy customization. |
+| `infra` | Infrastructure contracts, platform privilege hardening, and extensions | Yes, but keeping it is recommended. |
 | `apalis` | Upstream task tables, functions, extensions and a separate migration ledger | Keep this name. The pinned Apalis implementation and migrations use schema-qualified `apalis` references. Changing our settings alone cannot rename it. |
 | `public` | PostgreSQL's default schema; unused for application data | Leave it in place. Application tables belong in explicitly owned schemas. |
 | `pg_catalog`, `pg_temp` | PostgreSQL system schemas used in controlled search paths | Leave these names unchanged. |
 
 Schema names are currently fixed in code and SQL; there is no schema environment
 variable. Changing a connection URL or `search_path` does not rename them:
-SeaQuery repository statements use explicit schema names.
+SeaQuery repository statements and SeaORM migrations use explicit schema names.
 
 When customizing a **fresh project before applying any migrations**:
 
-- To rename `app`, update the application migration SQL in
-  [`crates/db/resources/migrations/`](crates/db/resources/migrations/), the
+- To rename `fndapp`, update the domain migrations in
+  [`crates/domain/users/src/pg/migrations/`](crates/domain/users/src/pg/migrations/), the
+  SeaORM entity in [`crates/domain/users/src/repo/entity.rs`](crates/domain/users/src/repo/entity.rs), the
   SeaQuery table references and readiness check in
   [`crates/domain/users/src/repo/postgres.rs`](crates/domain/users/src/repo/postgres.rs), and
   database verification/inspection in [`crates/db/src/`](crates/db/src/).
   Update the integration tests and documentation to match.
-- To rename `infra`, update `create_schema` and `dangerous_set_table_name` in
-  [`crates/db/src/lib.rs`](crates/db/src/lib.rs), plus qualified references in
-  migrations, verification, inspection and integration tests. Retain a separate
-  application ledger and upstream Apalis ledger.
+- To rename `infra`, update references in
+  [`crates/db/src/infra.rs`](crates/db/src/infra.rs), plus qualified references in
+  verification, inspection and integration tests. Retain a separate
+  application domain ledger and upstream Apalis ledger.
 - Keep provisioning grants and role search paths in
   [`infra/postgres/`](infra/postgres/) consistent with any schema changes. Run
   `cargo make ci` to check migrations, User CRUD and runtime privilege boundaries.
@@ -131,7 +132,7 @@ For a database that **already has migrations applied**, preserve existing
 migration files and checksums. Rename application schemas through a new forward
 migration and coordinate the code change. Renaming the ledger schema also needs
 a coordinated move of the existing ledger before switching the migrator's
-configured location. Pointing SQLx at a new, empty ledger would make existing
+configured location. Pointing SQLx or SeaORM at a new, empty ledger would make existing
 migrations appear unapplied.
 
 The database name (`foundation` in local Compose) is separate from these schemas;
@@ -140,10 +141,10 @@ the path in a PostgreSQL URL selects the database. Names such as
 are roles, also separate from schema names. Renaming roles requires matching
 changes to provisioning, grants, credential checks, connection URLs and tests.
 
-The `APP_` environment prefix is a rename point alongside schema names. Variable
-names are written out literally in each binary composition root and configuration file,
-so a consuming project can rename the prefix with a workspace-wide search and replace of
-`APP_` across Rust sources, `env/local.env.example`, `docker-compose.yml`, `Makefile.toml`,
+The `APP_` environment prefix and `fndapp` schema name are template customization
+points. Variable names and schema identifiers are written out literally, so a consuming
+project can customize them with a workspace-wide search and replace of `APP_` and `fndapp`
+across Rust sources, `env/local.env.example`, `docker-compose.yml`, `Makefile.toml`,
 and documentation.
 
 ## User example
