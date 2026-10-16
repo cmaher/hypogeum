@@ -59,6 +59,13 @@ pub async fn migrate(url: &str) -> Result<()> {
         .await
         .map_err(MigrationError::database)?;
     infra::apply_contracts(&mut connection).await?;
+    sqlx::raw_sql(
+        "CREATE SCHEMA IF NOT EXISTS fndapp AUTHORIZATION foundation_owner;\
+         REVOKE ALL ON SCHEMA fndapp FROM PUBLIC;",
+    )
+    .execute(&mut connection)
+    .await
+    .map_err(MigrationError::database)?;
     connection.close().await.map_err(MigrationError::database)?;
 
     // Domain SeaORM migrators
