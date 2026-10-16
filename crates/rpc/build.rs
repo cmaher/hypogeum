@@ -5,6 +5,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         root.join("users.proto").display()
     );
     let descriptors = protox::compile([root.join("users.proto")], [&root])?;
-    tonic_build::configure().compile_fds(descriptors)?;
+    tonic_prost_build::configure().compile_fds(descriptors)?;
     Ok(())
 }

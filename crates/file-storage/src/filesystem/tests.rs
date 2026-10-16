@@ -289,7 +289,7 @@ async fn independent_clients_see_only_completed_immutable_objects() {
     assert_eq!(actual.size_bytes, 9);
     assert_eq!(
         actual.sha256,
-        format!("{:x}", <sha2::Sha256 as sha2::Digest>::digest(b"corrupted"))
+        hex::encode(<sha2::Sha256 as sha2::Digest>::digest(b"corrupted"))
     );
 }
 

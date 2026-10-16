@@ -146,7 +146,7 @@ impl Reader {
     fn info(&self) -> ObjectInfo {
         ObjectInfo {
             size_bytes: self.size,
-            sha256: format!("{:x}", self.hash.clone().finalize()),
+            sha256: hex::encode(self.hash.clone().finalize()),
         }
     }
 
