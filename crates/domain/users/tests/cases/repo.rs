@@ -34,7 +34,7 @@ async fn existing_user_survives_migration_upgrade(
     db.migrate().await;
     assert_eq!(repo.get(before.id).await.unwrap(), before);
     users::repo::check_ready(&pool).await.unwrap();
-    foundation_db::verify(&db.migration_url).await.unwrap();
+    hypogeum_db::verify(&db.migration_url).await.unwrap();
     pool.close().await;
 }
 
@@ -48,12 +48,12 @@ async fn user_repository_connects_and_persists_under_runtime_privileges(
     let migration_url = db.migration_url.clone();
     // Concurrent runners must serialize and remain repeatable.
     let (first, second) = tokio::join!(
-        foundation_db::migrate(&migration_url),
-        foundation_db::migrate(&migration_url)
+        hypogeum_db::migrate(&migration_url),
+        hypogeum_db::migrate(&migration_url)
     );
     first.unwrap();
     second.unwrap();
-    foundation_db::verify(&migration_url).await.unwrap();
+    hypogeum_db::verify(&migration_url).await.unwrap();
     let pool = postgres::create_pool(&postgres::PostgresConfig::new(db.users_url.clone())).unwrap();
     users::repo::check_ready(&pool).await.unwrap();
     let repo = PgUserRepo::new(pool.clone());
@@ -133,9 +133,9 @@ async fn user_repository_connects_and_persists_under_runtime_privileges(
     sqlx::raw_sql("CREATE OR REPLACE FUNCTION hypogeum.schema_version() RETURNS bigint LANGUAGE sql AS 'SELECT 0::bigint'").execute(&mut admin).await.unwrap();
     assert!(users::repo::check_ready(&pool).await.is_err());
     // Applied migrations do not silently rewrite objects after manual tampering.
-    foundation_db::migrate(&migration_url).await.unwrap();
+    hypogeum_db::migrate(&migration_url).await.unwrap();
     assert!(users::repo::check_ready(&pool).await.is_err());
-    assert!(foundation_db::verify(&migration_url).await.is_err());
+    assert!(hypogeum_db::verify(&migration_url).await.is_err());
     pool.close().await;
     tasks.close().await;
 }

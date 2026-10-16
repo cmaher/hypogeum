@@ -29,36 +29,32 @@ async fn run() -> Result<Value, String> {
     }
     if args == ["--describe"] || args == ["--help"] || args == ["-h"] {
         return Ok(
-            json!({"commands":["migrate","verify","inspect"],"output":"json","configuration":"APP_MIGRATION_DATABASE_URL","migrations":"Explicit only; dedicated migrator credentials required"}),
+            json!({"commands":["migrate","verify","inspect"],"output":"json","configuration":"HYPOGEUM_MIGRATION_DATABASE_URL","migrations":"Explicit only; dedicated migrator credentials required"}),
         );
     }
     if args.len() != 1 || !matches!(args[0].as_str(), "migrate" | "verify" | "inspect") {
         return Err(
-            "Usage: foundation-db migrate|verify|inspect [--output json]; --describe for schema"
+            "Usage: hypogeum-db migrate|verify|inspect [--output json]; --describe for schema"
                 .into(),
         );
     }
 
     let env = EnvSource::load().map_err(|e| e.to_string())?;
     let config: Config = env
-        .deserialize("APP_MIGRATION_")
+        .deserialize("HYPOGEUM_MIGRATION_")
         .map_err(|e| e.to_string())?;
     let url = config.database_url.expose();
 
     match args[0].as_str() {
         "migrate" => {
-            foundation_db::migrate(url)
-                .await
-                .map_err(|e| e.to_string())?;
+            hypogeum_db::migrate(url).await.map_err(|e| e.to_string())?;
             Ok(json!({"migrated":true}))
         }
         "verify" => {
-            foundation_db::verify(url)
-                .await
-                .map_err(|e| e.to_string())?;
+            hypogeum_db::verify(url).await.map_err(|e| e.to_string())?;
             Ok(json!({"verified":true}))
         }
-        "inspect" => foundation_db::inspect(url).await.map_err(|e| e.to_string()),
+        "inspect" => hypogeum_db::inspect(url).await.map_err(|e| e.to_string()),
         _ => unreachable!(),
     }
 }
@@ -71,10 +67,10 @@ mod tests {
     #[test]
     fn test_config_loads_with_url() {
         let env = EnvSource::from_pairs([(
-            "APP_MIGRATION_DATABASE_URL",
+            "HYPOGEUM_MIGRATION_DATABASE_URL",
             "postgres://user:pass@localhost/db",
         )]);
-        let config: Config = env.deserialize("APP_MIGRATION_").unwrap();
+        let config: Config = env.deserialize("HYPOGEUM_MIGRATION_").unwrap();
         assert_eq!(
             config.database_url.expose(),
             "postgres://user:pass@localhost/db"
@@ -82,10 +78,12 @@ mod tests {
     }
 
     #[test]
-    fn test_config_missing_url_error_names_app_migration_database_url() {
+    fn test_config_missing_url_error_names_hypogeum_migration_database_url() {
         let env = EnvSource::from_pairs(Vec::<(&str, &str)>::new());
-        let err = env.deserialize::<Config>("APP_MIGRATION_").unwrap_err();
+        let err = env
+            .deserialize::<Config>("HYPOGEUM_MIGRATION_")
+            .unwrap_err();
         let err_msg = err.to_string();
-        assert!(err_msg.contains("APP_MIGRATION_DATABASE_URL"));
+        assert!(err_msg.contains("HYPOGEUM_MIGRATION_DATABASE_URL"));
     }
 }

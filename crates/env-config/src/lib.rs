@@ -34,7 +34,7 @@ pub struct EnvSource(BTreeMap<String, String>);
 
 impl EnvSource {
     pub fn load() -> Result<Self, ConfigError> {
-        let setting = std::env::var_os("APP_ENV_FILE");
+        let setting = std::env::var_os("HYPOGEUM_ENV_FILE");
         let process_pairs =
             std::env::vars_os().filter_map(|(k, v)| match (k.into_string(), v.into_string()) {
                 (Ok(k), Ok(v)) => Some((k, v)),
@@ -184,16 +184,16 @@ mod tests {
     #[test]
     fn test_load_from_tempfile_and_process_override() {
         let mut tmp = tempfile::NamedTempFile::new().unwrap();
-        writeln!(tmp, "APP_FOO=file_value").unwrap();
-        writeln!(tmp, "APP_BAR=file_bar").unwrap();
+        writeln!(tmp, "HYPOGEUM_FOO=file_value").unwrap();
+        writeln!(tmp, "HYPOGEUM_BAR=file_bar").unwrap();
         tmp.flush().unwrap();
 
         let path = tmp.path().as_os_str().to_os_string();
-        let process_pairs = vec![("APP_BAR".to_string(), "process_bar".to_string())];
+        let process_pairs = vec![("HYPOGEUM_BAR".to_string(), "process_bar".to_string())];
 
         let env = EnvSource::load_from(Some(path), process_pairs).unwrap();
-        assert_eq!(env.get("APP_FOO"), Some("file_value"));
-        assert_eq!(env.get("APP_BAR"), Some("process_bar"));
+        assert_eq!(env.get("HYPOGEUM_FOO"), Some("file_value"));
+        assert_eq!(env.get("HYPOGEUM_BAR"), Some("process_bar"));
     }
 
     #[test]
@@ -276,8 +276,9 @@ mod tests {
         }
 
         // Success case
-        let env = EnvSource::from_pairs([("MYAPP_REQUIRED_KEY", "hello"), ("MYAPP_PORT", "8080")]);
-        let config: TestConfig = env.deserialize("MYAPP_").unwrap();
+        let env =
+            EnvSource::from_pairs([("EXAMPLE_REQUIRED_KEY", "hello"), ("EXAMPLE_PORT", "8080")]);
+        let config: TestConfig = env.deserialize("EXAMPLE_").unwrap();
         assert_eq!(
             config,
             TestConfig {
@@ -287,8 +288,8 @@ mod tests {
         );
 
         // Missing field
-        let env = EnvSource::from_pairs([("MYAPP_PORT", "8080")]);
-        let err = env.deserialize::<TestConfig>("MYAPP_").unwrap_err();
+        let env = EnvSource::from_pairs([("EXAMPLE_PORT", "8080")]);
+        let err = env.deserialize::<TestConfig>("EXAMPLE_").unwrap_err();
         match err {
             ConfigError::Invalid(msg) => {
                 assert!(msg.to_lowercase().contains("required_key"));
@@ -298,10 +299,10 @@ mod tests {
 
         // Invalid value
         let env = EnvSource::from_pairs([
-            ("MYAPP_REQUIRED_KEY", "hello"),
-            ("MYAPP_PORT", "not_a_number"),
+            ("EXAMPLE_REQUIRED_KEY", "hello"),
+            ("EXAMPLE_PORT", "not_a_number"),
         ]);
-        let err = env.deserialize::<TestConfig>("MYAPP_").unwrap_err();
+        let err = env.deserialize::<TestConfig>("EXAMPLE_").unwrap_err();
         match err {
             ConfigError::Invalid(msg) => {
                 assert!(msg.to_lowercase().contains("port"));
@@ -312,14 +313,14 @@ mod tests {
 
     #[test]
     fn test_log_config() {
-        // Default when APP_LOG is absent
+        // Default when HYPOGEUM_LOG is absent
         let env = EnvSource::from_pairs(Vec::<(&str, &str)>::new());
-        let log_config: LogConfig = env.deserialize("APP_").unwrap();
+        let log_config: LogConfig = env.deserialize("HYPOGEUM_").unwrap();
         assert_eq!(log_config.log, "info");
 
-        // Overridden when APP_LOG is present
-        let env = EnvSource::from_pairs([("APP_LOG", "debug")]);
-        let log_config: LogConfig = env.deserialize("APP_").unwrap();
+        // Overridden when HYPOGEUM_LOG is present
+        let env = EnvSource::from_pairs([("HYPOGEUM_LOG", "debug")]);
+        let log_config: LogConfig = env.deserialize("HYPOGEUM_").unwrap();
         assert_eq!(log_config.log, "debug");
     }
 }

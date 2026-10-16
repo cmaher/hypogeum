@@ -9,7 +9,7 @@ use testcontainers_modules::{
 /// harness executes them. Child failures fail the enclosing suite.
 pub fn run_suite() {
     assert!(
-        std::env::var_os("FOUNDATION_TEST_CHILD").is_none(),
+        std::env::var_os("HYPOGEUM_TEST_CHILD").is_none(),
         "suite launcher must not run in child"
     );
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -51,7 +51,7 @@ pub fn run_suite() {
         child
             .args(["--ignored", "--nocapture"])
             .env("DATABASE_URL", url)
-            .env("FOUNDATION_TEST_CHILD", "1");
+            .env("HYPOGEUM_TEST_CHILD", "1");
         let status = child.status().await.expect("Launch SQLx integration cases");
         container
             .rm()
@@ -93,6 +93,6 @@ impl TestDatabase {
         }
     }
     pub async fn migrate(&self) {
-        foundation_db::migrate(&self.migration_url).await.unwrap();
+        hypogeum_db::migrate(&self.migration_url).await.unwrap();
     }
 }

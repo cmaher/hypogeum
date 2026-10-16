@@ -1185,24 +1185,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "foundation-db"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "apalis-postgres",
- "env-config",
- "errors",
- "sea-orm",
- "sea-orm-migration",
- "serde",
- "serde_json",
- "sqlx",
- "test-support",
- "tokio",
- "users",
-]
-
-[[package]]
 name = "futures"
 version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1627,6 +1609,24 @@ dependencies = [
  "pin-project-lite",
  "tokio",
  "tower-service",
+]
+
+[[package]]
+name = "hypogeum-db"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "apalis-postgres",
+ "env-config",
+ "errors",
+ "sea-orm",
+ "sea-orm-migration",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "test-support",
+ "tokio",
+ "users",
 ]
 
 [[package]]
@@ -3690,7 +3690,7 @@ dependencies = [
 name = "test-support"
 version = "0.1.0"
 dependencies = [
- "foundation-db",
+ "hypogeum-db",
  "sqlx",
  "testcontainers-modules",
  "tokio",
@@ -4252,7 +4252,7 @@ dependencies = [
  "chrono",
  "env-config",
  "errors",
- "foundation-db",
+ "hypogeum-db",
  "postgres",
  "prost-types",
  "rpc",

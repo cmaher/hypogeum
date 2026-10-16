@@ -60,7 +60,7 @@ fn worker_process(hold: bool, url: &str) -> Process {
                 "--nocapture",
             ])
             .env(
-                "FOUNDATION_TASK_FIXTURE_CHILD",
+                "HYPOGEUM_TASK_FIXTURE_CHILD",
                 if hold { "hold" } else { "run" },
             )
             .env("TASKS_FIXTURE_DATABASE_URL", url)
@@ -72,7 +72,7 @@ fn worker_process(hold: bool, url: &str) -> Process {
 #[tokio::test]
 #[ignore = "child fixture, launched by recovery_acceptance"]
 async fn fixture_worker_process() {
-    let Ok(mode) = std::env::var("FOUNDATION_TASK_FIXTURE_CHILD") else {
+    let Ok(mode) = std::env::var("HYPOGEUM_TASK_FIXTURE_CHILD") else {
         return;
     };
     let pool = pool("TASKS_FIXTURE_DATABASE_URL").await;

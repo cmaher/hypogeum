@@ -9,7 +9,7 @@ script = ['exec "$@"']
 [tasks.test-db]
 description = "Run self-contained PostgreSQL integration suites with Testcontainers and SQLx"
 command = "cargo"
-args = ["test", "--locked", "-p", "users", "-p", "tasks", "-p", "foundation-db", "--test", "integration"]
+args = ["test", "--locked", "-p", "users", "-p", "tasks", "-p", "hypogeum-db", "--test", "integration"]
 
 [tasks.fmt]
 command = "cargo"
@@ -40,27 +40,27 @@ dependencies = ["fmt-fix", "clippy", "build", "test"]
 
 [tasks.db-up]
 script_runner = "@shell"
-script = ['set --; if [ -n "${APP_ENV_FILE+x}" ]; then [ -z "$APP_ENV_FILE" ] || set -- --env-file "$APP_ENV_FILE"; elif [ -f env/local.env ]; then set -- --env-file env/local.env; fi; docker compose "$@" up --detach --wait']
+script = ['set --; if [ -n "${HYPOGEUM_ENV_FILE+x}" ]; then [ -z "$HYPOGEUM_ENV_FILE" ] || set -- --env-file "$HYPOGEUM_ENV_FILE"; elif [ -f env/local.env ]; then set -- --env-file env/local.env; fi; docker compose "$@" up --detach --wait']
 
 [tasks.db-down]
 script_runner = "@shell"
-script = ['set --; if [ -n "${APP_ENV_FILE+x}" ]; then [ -z "$APP_ENV_FILE" ] || set -- --env-file "$APP_ENV_FILE"; elif [ -f env/local.env ]; then set -- --env-file env/local.env; fi; docker compose "$@" down']
+script = ['set --; if [ -n "${HYPOGEUM_ENV_FILE+x}" ]; then [ -z "$HYPOGEUM_ENV_FILE" ] || set -- --env-file "$HYPOGEUM_ENV_FILE"; elif [ -f env/local.env ]; then set -- --env-file env/local.env; fi; docker compose "$@" down']
 
 [tasks.db-status]
 script_runner = "@shell"
-script = ['set --; if [ -n "${APP_ENV_FILE+x}" ]; then [ -z "$APP_ENV_FILE" ] || set -- --env-file "$APP_ENV_FILE"; elif [ -f env/local.env ]; then set -- --env-file env/local.env; fi; docker compose "$@" ps']
+script = ['set --; if [ -n "${HYPOGEUM_ENV_FILE+x}" ]; then [ -z "$HYPOGEUM_ENV_FILE" ] || set -- --env-file "$HYPOGEUM_ENV_FILE"; elif [ -f env/local.env ]; then set -- --env-file env/local.env; fi; docker compose "$@" ps']
 
 [tasks.db-provision]
 script_runner = "@shell"
-script = ['set --; if [ -n "${APP_ENV_FILE+x}" ]; then [ -z "$APP_ENV_FILE" ] || set -- --env-file "$APP_ENV_FILE"; elif [ -f env/local.env ]; then set -- --env-file env/local.env; fi; docker compose "$@" exec -T postgres psql -X -U admin -d foundation -f /provision/provision.sql']
+script = ['set --; if [ -n "${HYPOGEUM_ENV_FILE+x}" ]; then [ -z "$HYPOGEUM_ENV_FILE" ] || set -- --env-file "$HYPOGEUM_ENV_FILE"; elif [ -f env/local.env ]; then set -- --env-file env/local.env; fi; docker compose "$@" exec -T postgres psql -X -U admin -d hypogeum -f /provision/provision.sql']
 
 [tasks.db-migrate]
 command = "cargo"
-args = ["run", "--locked", "-p", "foundation-db", "--", "migrate"]
+args = ["run", "--locked", "-p", "hypogeum-db", "--", "migrate"]
 
 [tasks.db-verify]
 command = "cargo"
-args = ["run", "--locked", "-p", "foundation-db", "--", "verify"]
+args = ["run", "--locked", "-p", "hypogeum-db", "--", "verify"]
 
 [tasks.users]
 command = "cargo"

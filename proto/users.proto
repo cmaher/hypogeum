@@ -1,5 +1,5 @@
 syntax = "proto3";
-package foundation.users.v1;
+package hypogeum.users.v1;
 import "google/protobuf/timestamp.proto";
 
 message User {
