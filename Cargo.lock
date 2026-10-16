@@ -4487,23 +4487,33 @@ dependencies = [
 name = "web-server"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "axum",
  "base64 0.22.1",
- "env-config",
  "errors",
  "hello-world",
  "prost",
  "reqwest",
  "rpc",
- "serde",
  "tokio",
  "tonic",
  "tonic-prost",
  "tonic-web",
  "tower",
  "tower-http",
+]
+
+[[package]]
+name = "web-server-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "env-config",
+ "hello-world",
+ "serde",
+ "tokio",
  "tracing-subscriber",
+ "web-server",
 ]
 
 [[package]]

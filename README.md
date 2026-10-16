@@ -125,7 +125,8 @@ starting with the generic User example in `crates/domain/users/`.
 | --- | --- |
 | `users` | Plain User objects, repository, service, gRPC server and client |
 | `hello-world` | Database-independent greeting service and public Tonic adapter |
-| `web-server` | One listener for HTTP health, native gRPC and gRPC-Web |
+| `web-server` | Reusable router for HTTP health, native gRPC and gRPC-Web |
+| `web-server-cli` (`cmd/web-server`) | Public web executable configuration and startup |
 | `rpc` | Generated protobuf client/server bindings |
 | `hypogeum-db` | Explicit migrations, verification and database inspection |
 | `postgres` | Constructor-injected pool configuration |
@@ -220,7 +221,9 @@ cannot perform DDL, inspect migration ledgers, or access each other's data.
 cargo make web-server
 ```
 
-This server needs no database, migrations, Docker, or database configuration.
+The executable entry point lives in `cmd/web-server/src/main.rs`; the reusable
+router lives in `crates/web-server`. This server needs no database, migrations,
+Docker, or database configuration.
 `HYPOGEUM_WEB_BIND` defaults to `127.0.0.1:8080`. It uses the same environment-file
 precedence and `HYPOGEUM_ENV_FILE` behavior described above; `HYPOGEUM_ENV_FILE=`
 disables file loading. Ctrl-C and SIGTERM drain active requests before exit.

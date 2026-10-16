@@ -78,4 +78,4 @@ args = ["run", "--locked", "-p", "tasks"]
 [tasks.web-server]
 description = "Run public HTTP, native gRPC and gRPC-Web without a database"
 command = "cargo"
-args = ["run", "--locked", "-p", "web-server"]
+args = ["run", "--locked", "-p", "web-server-cli", "--bin", "web-server"]

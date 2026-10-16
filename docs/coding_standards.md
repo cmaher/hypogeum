@@ -47,7 +47,8 @@ and test its native/browser behavior. CORS allows any origin without credentials
 for this unauthenticated example; it applies only to registered public RPC routes,
 never ordinary health routes or the unknown-service fallback.
 
-Only main loads `EnvSource` once and deserializes `HYPOGEUM_WEB_` configuration
+The executable composition root lives in `cmd/web-server/src/main.rs`; the
+reusable router stays in `crates/web-server`. Only main loads `EnvSource` once and deserializes `HYPOGEUM_WEB_` configuration
 and `HYPOGEUM_` logging. `HYPOGEUM_WEB_BIND` defaults to `127.0.0.1:8080`, using the
 existing `HYPOGEUM_ENV_FILE` semantics. Library constructors receive dependencies
 explicitly. Shutdown drains active requests on Ctrl-C/SIGTERM. Deployment owns

@@ -88,7 +88,7 @@ class RenameProjectTests(unittest.TestCase):
         paths = [
             "proto/public_hello_world.proto",
             "crates/rpc/src/lib.rs",
-            "crates/web-server/src/main.rs",
+            "cmd/web-server/src/main.rs",
             "crates/web-server/tests/transport.rs",
             "env/local.env.example",
         ]

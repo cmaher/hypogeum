@@ -11,13 +11,9 @@ tonic.workspace = true
 tonic-web = "0.14"
 tower = "0.5"
 tower-http = { version = "0.6", features = ["cors"] }
-tokio.workspace = true
-anyhow = "1"
-env-config = { path = "../env-config" }
-serde.workspace = true
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
+tokio.workspace = true
 errors = { path = "../errors" }
 rpc = { path = "../rpc" }
 prost.workspace = true
