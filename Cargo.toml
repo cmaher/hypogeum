@@ -1,0 +1,28 @@
+[workspace]
+members = ["crates/*"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94"
+
+[workspace.dependencies]
+apalis = "=1.0.0"
+apalis-postgres = { version = "=1.0.0", default-features = false, features = ["tokio-comp"] }
+apalis-board = { version = "=1.0.0", default-features = false, features = ["axum", "ui"] }
+sqlx = { version = "=0.9.0", default-features = false, features = ["postgres", "runtime-tokio", "tls-rustls", "chrono", "json", "uuid"] }
+sea-query = { version = "=1.0.0", default-features = false, features = ["backend-postgres", "with-chrono", "with-json", "with-uuid", "thread-safe"] }
+sea-query-sqlx = { version = "=0.9.1", default-features = false, features = ["sqlx-postgres", "with-chrono", "with-json", "with-uuid"] }
+tokio = { version = "1", features = ["full"] }
+tonic = "0.13"
+prost = "0.13"
+prost-types = "0.13"
+async-trait = "0.1"
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
