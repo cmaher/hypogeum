@@ -30,22 +30,26 @@ real adapters and PostgreSQL through the User repository and transport.
 ## SQL and migrations
 
 Repositories build typed database queries with SeaORM entities and active models,
-integrating with SQLx pool ownership via `SqlxPostgresConnector`. SQLx owns pools
-and migrations. Raw SQL is appropriate for migrations, PostgreSQL-specific
-administration/readiness and upstream infrastructure APIs. Audit `AssertSqlSafe`
-boundaries: interpolating caller values into SQL remains forbidden.
+integrating with SQLx pool ownership via `SqlxPostgresConnector`. Strongly typed
+domain migrations are collocated inside each domain crate (`src/pg/migrations/`) using
+SeaORM's `MigratorTrait` and `MigrationTrait`. Raw SQL remains appropriate for
+PostgreSQL-specific administration, readiness functions, and upstream infrastructure APIs.
+Audit `AssertSqlSafe` boundaries: interpolating caller values into SQL remains forbidden.
 
-Use schema-qualified names. `app.users` belongs to the User service; `apalis`
-belongs to upstream task infrastructure. The explicit migration runner uses a
-dedicated connection and SQLx's standard migration locking and checksum validation.
-SQLx creates the ledger schemas and uses schema-qualified ledger table names.
-Application history lives
-in `infra._sqlx_migrations`; upstream history lives in `apalis._sqlx_migrations`.
+Use schema-qualified names. `fndapp.users` belongs to the User service; `apalis`
+belongs to upstream task infrastructure. The explicit migration runner (`foundation-db`)
+uses a dedicated `foundation_migrator` connection (selecting role `foundation_owner`) and
+orchestrates migrations in order:
+1. Upstream Apalis SQLx migrations run first (`apalis._sqlx_migrations`).
+2. Infrastructure runtime contracts and privilege hardening apply to `infra` and `apalis`.
+3. Domain SeaORM migrators (`users::pg::migrations::Migrator::up`) install domain schemas,
+   tables, check constraints, grants, and readiness functions, tracking history under
+   domain-qualified tables (e.g. `fndapp.seaql_migrations`).
+
 Never edit an applied migration. Add a new one and update the matching readiness
-contract. Keep DDL, functions and grants in versioned SQL files rather than
-reconciling them from Rust on each invocation. Upstream Apalis migrations run
-first, then application migrations install their tables and runtime contracts.
-Provisioning owns roles and initial default privileges.
+contract. Keep DDL, functions and grants versioned within migration definitions rather than
+reconciling them from Rust on each service invocation. Provisioning owns roles and initial
+default privileges.
 
 `foundation_migrator` may select `foundation_owner` for DDL. `foundation_users`
 and `foundation_tasks` receive deliberately limited runtime privileges. They
