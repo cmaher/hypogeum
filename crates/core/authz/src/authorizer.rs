@@ -58,6 +58,12 @@ impl<A: AsRef<str>, B: AsRef<str>> AsEntityUid for (A, B) {
     }
 }
 
+impl<A: AsRef<str>, B: AsRef<str>> AsEntityUid for &(A, B) {
+    fn as_entity_uid(&self) -> Result<EntityUid, AuthzError> {
+        (*self).as_entity_uid()
+    }
+}
+
 /// In-memory policy authorization engine wrapping Cedar's authorizer, schema, and policy set.
 #[derive(Clone, Debug)]
 pub struct Authorizer {
@@ -82,7 +88,7 @@ impl Authorizer {
     }
 
     /// Creates a new `Authorizer` with additional preloaded entities.
-    pub fn with_entities(schema: Schema, policies: PolicySet, entities: Entities) -> Self {
+    pub fn new_with_entities(schema: Schema, policies: PolicySet, entities: Entities) -> Self {
         Self {
             schema,
             policies,
@@ -91,6 +97,12 @@ impl Authorizer {
             principal_type: EntityTypeName::from_str("User")
                 .expect("User is a valid Cedar EntityTypeName"),
         }
+    }
+
+    /// Configures preloaded base entities on this `Authorizer`.
+    pub fn with_entities(mut self, entities: Entities) -> Self {
+        self.entities = entities;
+        self
     }
 
     /// Configures the Cedar principal `EntityTypeName` (defaults to `"User"`).

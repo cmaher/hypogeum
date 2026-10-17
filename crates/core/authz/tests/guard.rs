@@ -107,6 +107,15 @@ async fn dynamic_handler(
     ))
 }
 
+async fn deref_handler(perm: RequirePermission<ViewAllowedDocPolicy>) -> impl IntoResponse {
+    let user_id = perm.user_id;
+    let inner = perm.into_inner();
+    Json(serde_json::json!({
+        "user_id": user_id.to_string(),
+        "auth_id": inner.auth_id.to_string(),
+    }))
+}
+
 fn build_test_app() -> (Router, Arc<Authorizer>) {
     let (schema, policies) = load_schema_and_policies(SCHEMA, POLICIES).unwrap();
     let authorizer = Arc::new(Authorizer::new(schema, policies));
@@ -115,6 +124,7 @@ fn build_test_app() -> (Router, Arc<Authorizer>) {
         .route("/view", get(view_handler))
         .route("/delete", get(delete_handler))
         .route("/composed", get(composed_handler))
+        .route("/deref", get(deref_handler))
         .route("/doc/{doc_id}", get(dynamic_handler))
         .with_state(Arc::clone(&authorizer));
 
@@ -363,4 +373,65 @@ fn test_guard_require_permission_with_context() {
         &bad_ctx,
     );
     assert!(matches!(bad_res, Err(AuthzRejection::Authz(_))));
+}
+
+#[tokio::test]
+async fn test_guard_deref_and_into_inner() {
+    let (app, _) = build_test_app();
+    let auth_id = Uuid::new_v4();
+    let user_id = Uuid::new_v4();
+    let principal = Principal::new(auth_id, user_id, AuthMethod::BearerJwt);
+
+    let req = Request::builder()
+        .uri("/deref")
+        .extension(principal)
+        .body(Body::empty())
+        .unwrap();
+
+    let response = app.oneshot(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+    assert_eq!(json["user_id"], user_id.to_string());
+    assert_eq!(json["auth_id"], auth_id.to_string());
+}
+
+#[tokio::test]
+async fn test_guard_request_extension_authorizer_override() {
+    let (app, _) = build_test_app();
+    let principal = Principal::new(Uuid::new_v4(), Uuid::new_v4(), AuthMethod::BearerJwt);
+
+    // Default router authorizer denies Delete on allowed-doc
+    let req_default = Request::builder()
+        .uri("/delete")
+        .extension(principal.clone())
+        .body(Body::empty())
+        .unwrap();
+    let res_default = app.clone().oneshot(req_default).await.unwrap();
+    assert_eq!(res_default.status(), StatusCode::FORBIDDEN);
+
+    // Override authorizer that explicitly permits Delete
+    let override_policy = r#"
+    permit(
+        principal,
+        action == Action::"Delete",
+        resource == Document::"allowed-doc"
+    );
+    "#;
+    let (schema, override_policies) = load_schema_and_policies(SCHEMA, override_policy).unwrap();
+    let override_authorizer = Arc::new(Authorizer::new(schema, override_policies));
+
+    let req_override = Request::builder()
+        .uri("/delete")
+        .extension(principal)
+        .extension(override_authorizer)
+        .body(Body::empty())
+        .unwrap();
+    let res_override = app.oneshot(req_override).await.unwrap();
+    assert_eq!(res_override.status(), StatusCode::OK);
+
+    let body_bytes = res_override.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+    assert_eq!(json["result"], "deleted");
 }

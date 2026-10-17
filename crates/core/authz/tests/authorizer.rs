@@ -253,7 +253,7 @@ fn test_authorizer_with_preloaded_entities() {
         }
     ]);
     let entities = Entities::from_json_value(entities_json, Some(&schema)).unwrap();
-    let authorizer = Authorizer::with_entities(schema, policies, entities);
+    let authorizer = Authorizer::new_with_entities(schema, policies, entities);
 
     let user_id = Uuid::new_v4();
     let auth_id = Uuid::new_v4();
@@ -424,7 +424,7 @@ fn test_authorizer_combines_preloaded_and_runtime_entities() {
         }
     ]);
     let base_entities = Entities::from_json_value(base_entities_json, Some(&schema)).unwrap();
-    let authorizer = Authorizer::with_entities(schema.clone(), policies, base_entities);
+    let authorizer = Authorizer::new(schema.clone(), policies).with_entities(base_entities);
 
     // Runtime entities contain Document resource
     let runtime_entities_json = serde_json::json!([
@@ -576,4 +576,21 @@ fn test_authorizer_tuple_as_entity_uid() {
 
     let dec = authorizer.is_authorized(&principal, ("Action", "View"), ("Document", "doc-123"));
     assert_eq!(dec, Decision::Allow);
+
+    // Borrowed tuple reference with non-Copy owned strings
+    let action_tuple = ("Action".to_string(), "View".to_string());
+    let resource_tuple = ("Document".to_string(), "doc-123".to_string());
+    let dec_ref = authorizer.is_authorized(&principal, &action_tuple, &resource_tuple);
+    assert_eq!(dec_ref, Decision::Allow);
+}
+
+#[test]
+fn test_reexported_cedar_types() {
+    use hypgm_authz::{EntityId, EntityTypeName};
+    use std::str::FromStr;
+
+    let type_name = EntityTypeName::from_str("User").unwrap();
+    let entity_id = EntityId::from_str("123").unwrap();
+    assert_eq!(type_name.to_string(), "User");
+    assert_eq!(AsRef::<str>::as_ref(&entity_id), "123");
 }

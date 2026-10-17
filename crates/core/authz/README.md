@@ -96,7 +96,7 @@ async fn composed_handler(
 // Programmatic helper inside handler with dynamic resource
 async fn dynamic_handler(
     State(authorizer): State<Arc<Authorizer>>,
-    axum::Extension(principal): axum::Extension<Principal>,
+    RequireAuth(principal): RequireAuth,
 ) -> Result<Json<&'static str>, AuthzRejection> {
     require_permission(&authorizer, &principal, "Action::\"View\"", "Document::\"dynamic\"")?;
     Ok(Json("Authorized"))

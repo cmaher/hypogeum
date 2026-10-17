@@ -4,7 +4,9 @@ pub mod guard;
 pub mod loader;
 
 pub use authorizer::{AsEntityUid, Authorizer};
-pub use cedar_policy::{Context, Decision, Entities, EntityUid, PolicySet, Schema};
+pub use cedar_policy::{
+    Context, Decision, Entities, EntityId, EntityTypeName, EntityUid, PolicySet, Schema,
+};
 pub use error::AuthzError;
 pub use guard::{
     AuthzRejection, PermissionPolicy, RequirePermission, require_permission,
