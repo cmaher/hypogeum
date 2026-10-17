@@ -2,7 +2,7 @@
 use apalis::prelude::*;
 use axum::{body::Body, http::Request};
 use http_body_util::BodyExt;
-use hypgm_ext_tasks::{Queue, WorkerConfig, board::Board};
+use hypgmx_tasks::{Queue, WorkerConfig, board::Board};
 use serde::{Deserialize, Serialize};
 use sqlx::{Connection, PgConnection, PgPool};
 use std::{
@@ -77,7 +77,7 @@ async fn fixture_worker_process() {
     };
     let pool = pool("TASKS_FIXTURE_DATABASE_URL").await;
     let queue = Queue::<Effect>::new(pool.clone(), "fixture-recovery", config()).unwrap();
-    let lifecycle = hypgm_ext_tasks::worker::Lifecycle::new(
+    let lifecycle = hypgmx_tasks::worker::Lifecycle::new(
         &format!("fixture-process-{}", std::process::id()),
         sqlx::postgres::PgPoolOptions::new().max_connections(2),
         std::env::var("TASKS_FIXTURE_DATABASE_URL")
@@ -123,7 +123,7 @@ async fn atomicity(pool: &PgPool, admin: &PgPool, url: &str) {
         });
         let id = task.task_id().unwrap().clone();
         let compact = task.try_map_args(|args| serde_json::to_vec(&args)).unwrap();
-        hypgm_ext_tasks::apalis_postgres::queries::push_tasks(
+        hypgmx_tasks::apalis_postgres::queries::push_tasks(
             &mut *tx,
             "fixture-atomic",
             vec![compact],

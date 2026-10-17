@@ -102,20 +102,18 @@ impl TestDatabase {
         self.migrate_with(&test_config()).await;
     }
 
-    pub async fn migrate_with(&self, config: &hypgm_ext_rdbms::DatabaseConfig) {
+    pub async fn migrate_with(&self, config: &hypgmx_rdbms::DatabaseConfig) {
         let migration_url = if config.migrator_role == "exemplum_migrator" {
             &self.exemplum_migration_url
         } else {
             &self.migration_url
         };
-        hypgm_ext_rdbms::migrate(migration_url, config)
-            .await
-            .unwrap();
+        hypgmx_rdbms::migrate(migration_url, config).await.unwrap();
     }
 }
 
-pub fn test_config() -> hypgm_ext_rdbms::DatabaseConfig {
-    hypgm_ext_rdbms::DatabaseConfig {
+pub fn test_config() -> hypgmx_rdbms::DatabaseConfig {
+    hypgmx_rdbms::DatabaseConfig {
         migrator_role: "hypogeum_migrator".into(),
         owner_role: "hypogeum_owner".into(),
         tasks_role: "hypogeum_tasks".into(),

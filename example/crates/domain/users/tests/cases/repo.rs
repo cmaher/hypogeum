@@ -8,13 +8,13 @@ use sea_orm_migration::MigratorTrait;
 use sqlx::{Connection, PgConnection, postgres::PgConnectOptions};
 use uuid::Uuid;
 
-fn exemplum_config() -> hypgm_ext_rdbms::DatabaseConfig {
-    hypgm_ext_rdbms::DatabaseConfig::new("exemplum_migrator", "exemplum_owner", "exemplum_tasks")
+fn exemplum_config() -> hypgmx_rdbms::DatabaseConfig {
+    hypgmx_rdbms::DatabaseConfig::new("exemplum_migrator", "exemplum_owner", "exemplum_tasks")
         .with_app_schema("exemplum")
-        .with_domain_migrator(<dyn hypgm_ext_rdbms::DomainMigrator>::from_sea_orm::<
+        .with_domain_migrator(<dyn hypgmx_rdbms::DomainMigrator>::from_sea_orm::<
             exemplum_dmn_users::pg::migrations::Migrator,
         >())
-        .with_service_contract(hypgm_ext_rdbms::ServiceContract::new(
+        .with_service_contract(hypgmx_rdbms::ServiceContract::new(
             "exemplum",
             "exemplum_users",
             1,
@@ -49,7 +49,7 @@ async fn existing_user_survives_migration_upgrade(
     db.migrate_with(&exemplum_config()).await;
     assert_eq!(repo.get(before.id).await.unwrap(), before);
     exemplum_dmn_users::repo::check_ready(&pool).await.unwrap();
-    hypgm_ext_rdbms::verify(&db.exemplum_migration_url, &exemplum_config())
+    hypgmx_rdbms::verify(&db.exemplum_migration_url, &exemplum_config())
         .await
         .unwrap();
     pool.close().await;
@@ -98,17 +98,14 @@ async fn user_repository_connects_and_persists_under_runtime_privileges(
     let migration_url = db.exemplum_migration_url.clone();
     // Concurrent runners must serialize and remain repeatable.
     let (first, second) = tokio::join!(
-        hypgm_ext_rdbms::migrate(&migration_url, &config),
-        hypgm_ext_rdbms::migrate(&migration_url, &config)
+        hypgmx_rdbms::migrate(&migration_url, &config),
+        hypgmx_rdbms::migrate(&migration_url, &config)
     );
     first.unwrap();
     second.unwrap();
-    hypgm_ext_rdbms::verify(&migration_url, &config)
-        .await
-        .unwrap();
+    hypgmx_rdbms::verify(&migration_url, &config).await.unwrap();
     let pool =
-        hypgm_ext_rdbms::create_pool(&hypgm_ext_rdbms::PoolConfig::new(db.users_url.clone()))
-            .unwrap();
+        hypgmx_rdbms::create_pool(&hypgmx_rdbms::PoolConfig::new(db.users_url.clone())).unwrap();
     exemplum_dmn_users::repo::check_ready(&pool).await.unwrap();
     let repo = PgUserRepo::new(pool.clone());
     let id = Uuid::new_v4();
@@ -187,15 +184,11 @@ async fn user_repository_connects_and_persists_under_runtime_privileges(
     sqlx::raw_sql("CREATE OR REPLACE FUNCTION exemplum.schema_version() RETURNS bigint LANGUAGE sql AS 'SELECT 0::bigint'").execute(&mut admin).await.unwrap();
     assert!(exemplum_dmn_users::repo::check_ready(&pool).await.is_err());
     // Applied migrations do not silently rewrite objects after manual tampering.
-    hypgm_ext_rdbms::migrate(&migration_url, &config)
+    hypgmx_rdbms::migrate(&migration_url, &config)
         .await
         .unwrap();
     assert!(exemplum_dmn_users::repo::check_ready(&pool).await.is_err());
-    assert!(
-        hypgm_ext_rdbms::verify(&migration_url, &config)
-            .await
-            .is_err()
-    );
+    assert!(hypgmx_rdbms::verify(&migration_url, &config).await.is_err());
     pool.close().await;
     tasks.close().await;
 }

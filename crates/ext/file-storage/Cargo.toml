@@ -1,5 +1,5 @@
 [package]
-name = "hypgm-ext-file-storage"
+name = "hypgmx-file-storage"
 version = "0.1.0"
 edition = "2024"
 rust-version.workspace = true

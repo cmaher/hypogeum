@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-hypgm-ext-tasks = { path = "../../crates/ext/tasks" }
+hypgmx-tasks = { path = "../../crates/ext/tasks" }
 axum = "0.8"
 anyhow = "1"
 hypgm-envconfig = { path = "../../crates/core/envconfig" }

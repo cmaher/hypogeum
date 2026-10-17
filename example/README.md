@@ -45,7 +45,7 @@ All tasks can be executed using `cargo make` from within the `example/` director
 
 ### Database Lifecycle
 
-Database operations are executed by `exemplum-db`, which constructs an application-specific `DatabaseConfig` (defining roles `exemplum_migrator`, `exemplum_owner`, `exemplum_tasks`, schema `exemplum`, registered domain migrators, and service contracts) and drives the decoupled framework migration engine `hypgm-ext-rdbms`.
+Database operations are executed by `exemplum-db`, which constructs an application-specific `DatabaseConfig` (defining roles `exemplum_migrator`, `exemplum_owner`, `exemplum_tasks`, schema `exemplum`, registered domain migrators, and service contracts) and drives the decoupled framework migration engine `hypgmx-rdbms`.
 
 ```sh
 cargo make db-up        # Start PostgreSQL container in background

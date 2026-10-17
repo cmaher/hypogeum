@@ -19,15 +19,12 @@ async fn user_client_round_trip_uses_real_repository(
     options: PgConnectOptions,
 ) {
     let db = TestDatabase::provision(options).await;
-    let config = hypgm_ext_rdbms::DatabaseConfig::new(
-        "exemplum_migrator",
-        "exemplum_owner",
-        "exemplum_tasks",
-    )
-    .with_app_schema("exemplum")
-    .with_domain_migrator(<dyn hypgm_ext_rdbms::DomainMigrator>::from_sea_orm::<
-        exemplum_dmn_users::pg::migrations::Migrator,
-    >());
+    let config =
+        hypgmx_rdbms::DatabaseConfig::new("exemplum_migrator", "exemplum_owner", "exemplum_tasks")
+            .with_app_schema("exemplum")
+            .with_domain_migrator(<dyn hypgmx_rdbms::DomainMigrator>::from_sea_orm::<
+                exemplum_dmn_users::pg::migrations::Migrator,
+            >());
     db.migrate_with(&config).await;
     let pool = sqlx::PgPool::connect(&db.users_url).await.unwrap();
     let service = Arc::new(DefaultUserService::new(Arc::new(PgUserRepo::new(

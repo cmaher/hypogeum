@@ -1,6 +1,6 @@
 # Typed background tasks
 
-`crates/ext/tasks` (`hypgm-ext-tasks`) provides typed, explicitly named Apalis queues, worker policy,
+`crates/ext/tasks` (`hypgmx-tasks`) provides typed, explicitly named Apalis queues, worker policy,
 readiness, bounded shutdown, and upstream Board registration. Apalis owns task
 IDs, attempts, scheduling, claims, heartbeats and recovery. Application handlers
 belong in their owning services.

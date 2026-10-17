@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use hypgm_envconfig::EnvSource;
-use hypgm_ext_tasks::board::Board;
+use hypgmx_tasks::board::Board;
 use serde::Deserialize;
 use std::{net::SocketAddr, time::Duration};
 
@@ -42,7 +42,7 @@ async fn main() -> Result<()> {
     let pool = sqlx::PgPool::connect(config.database_url.expose())
         .await
         .map_err(|_| anyhow::anyhow!("Tasks connection failed (URL redacted)"))?;
-    hypgm_ext_tasks::check_ready(&pool).await?;
+    hypgmx_tasks::check_ready(&pool).await?;
     let listener = tokio::net::TcpListener::bind(config.board_bind)
         .await
         .context("Cannot bind Board")?;

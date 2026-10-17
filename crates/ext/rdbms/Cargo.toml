@@ -1,5 +1,5 @@
 [package]
-name = "hypgm-ext-rdbms"
+name = "hypgmx-rdbms"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

@@ -6,7 +6,7 @@ rust-version.workspace = true
 
 [dependencies]
 hypgm-errors = { path = "../../../../crates/core/errors" }
-hypgm-ext-rdbms = { path = "../../../../crates/ext/rdbms", features = ["postgres"] }
+hypgmx-rdbms = { path = "../../../../crates/ext/rdbms", features = ["postgres"] }
 sqlx = { workspace = true, features = ["macros"] }
 sea-orm.workspace = true
 sea-orm-migration.workspace = true

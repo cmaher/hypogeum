@@ -22,7 +22,7 @@ The repository uses a two-tier architecture cleanly separating framework foundat
 │   │   ├── logging/              # Structured tracing subscriber configuration
 │   │   ├── rpc/                  # Generated gRPC protobuf client and server definitions
 │   │   └── test-support/         # Testcontainers bootstrap for isolated database tests
-│   └── ext/                      # External driver & stateful adapters (hypgm-ext-*)
+│   └── ext/                      # External driver & stateful adapters (hypgmx-*)
 │       ├── file-storage/         # Streamed immutable byte storage
 │       ├── rdbms/
 │       │   ├── db/               # Migration runner, schema verification, inspection
