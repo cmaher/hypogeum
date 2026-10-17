@@ -180,8 +180,18 @@ async fn user_repository_connects_and_persists_under_runtime_privileges(
             "allowed {forbidden}"
         );
     }
-    assert!(sqlx::raw_sql("SELECT count(*) FROM exemplum.auth_identities").execute(&pool).await.is_ok());
-    assert!(sqlx::raw_sql("SELECT count(*) FROM exemplum.sessions").execute(&pool).await.is_ok());
+    assert!(
+        sqlx::raw_sql("SELECT count(*) FROM exemplum.auth_identities")
+            .execute(&pool)
+            .await
+            .is_ok()
+    );
+    assert!(
+        sqlx::raw_sql("SELECT count(*) FROM exemplum.sessions")
+            .execute(&pool)
+            .await
+            .is_ok()
+    );
     // Readiness must reject the wrong role and an altered schema contract.
     assert!(exemplum_dmn_users::repo::check_ready(&tasks).await.is_err());
     let mut admin = PgConnection::connect(&db.admin_url).await.unwrap();
@@ -266,13 +276,12 @@ async fn auth_identities_and_sessions_schema_and_constraints_enforced(
 
     // Deleting user cascades to auth_identities
     repo.delete(user_id).await.unwrap();
-    let count: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM exemplum.auth_identities WHERE user_id = $1",
-    )
-    .bind(user_id)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM exemplum.auth_identities WHERE user_id = $1")
+            .bind(user_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert_eq!(count, 0);
 
     // Sessions table operations
@@ -286,4 +295,3 @@ async fn auth_identities_and_sessions_schema_and_constraints_enforced(
 
     pool.close().await;
 }
-

@@ -208,7 +208,14 @@ impl AuthRepo for Arc<dyn AuthRepo> {
         metadata: serde_json::Value,
     ) -> Result<AuthIdentity, RepoError> {
         self.as_ref()
-            .create(id, user_id, identity_type, identifier, secret_hash, metadata)
+            .create(
+                id,
+                user_id,
+                identity_type,
+                identifier,
+                secret_hash,
+                metadata,
+            )
             .await
     }
 
@@ -345,4 +352,3 @@ mod tests {
         assert!(identity.revoked_at.is_none());
     }
 }
-

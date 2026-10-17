@@ -15,21 +15,13 @@ impl MigrationTrait for Migration {
                     .not_null()
                     .primary_key(),
             )
-            .col(
-                ColumnDef::new(Alias::new("user_id"))
-                    .uuid()
-                    .not_null(),
-            )
+            .col(ColumnDef::new(Alias::new("user_id")).uuid().not_null())
             .col(
                 ColumnDef::new(Alias::new("identity_type"))
                     .string()
                     .not_null(),
             )
-            .col(
-                ColumnDef::new(Alias::new("identifier"))
-                    .string()
-                    .not_null(),
-            )
+            .col(ColumnDef::new(Alias::new("identifier")).string().not_null())
             .col(
                 ColumnDef::new(Alias::new("secret_hash"))
                     .string()
@@ -104,11 +96,7 @@ impl MigrationTrait for Migration {
                     .not_null()
                     .primary_key(),
             )
-            .col(
-                ColumnDef::new(Alias::new("data"))
-                    .binary()
-                    .not_null(),
-            )
+            .col(ColumnDef::new(Alias::new("data")).binary().not_null())
             .col(
                 ColumnDef::new(Alias::new("expiry_date"))
                     .timestamp_with_time_zone()

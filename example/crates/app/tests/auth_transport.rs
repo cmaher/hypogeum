@@ -4,8 +4,8 @@ use exemplum_app::auth::{LoginRequest, LoginResponse, TokenResponse};
 use exemplum_dmn_hello_world::service::DefaultHelloWorldService;
 use exemplum_dmn_users::models::{PageRequest, User, UserPage};
 use exemplum_dmn_users::service::{UserError, UserService};
-use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, COOKIE, SET_COOKIE};
 use reqwest::StatusCode;
+use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, COOKIE, SET_COOKIE};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, RwLock};
@@ -284,7 +284,13 @@ async fn test_two_distinct_users_receive_respective_display_names() {
         .await
         .unwrap();
     assert_eq!(resp1.status(), StatusCode::OK);
-    let cookie1 = resp1.headers().get(SET_COOKIE).unwrap().to_str().unwrap().to_string();
+    let cookie1 = resp1
+        .headers()
+        .get(SET_COOKIE)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
 
     // Login User 2
     let resp2 = client
@@ -295,7 +301,13 @@ async fn test_two_distinct_users_receive_respective_display_names() {
         .await
         .unwrap();
     assert_eq!(resp2.status(), StatusCode::OK);
-    let cookie2 = resp2.headers().get(SET_COOKIE).unwrap().to_str().unwrap().to_string();
+    let cookie2 = resp2
+        .headers()
+        .get(SET_COOKIE)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
 
     // GET /api/hello/me for User 1
     let resp_me1 = client
@@ -461,7 +473,13 @@ async fn test_logout_invalidates_session_and_clears_cookie() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
-    let cookie = resp.headers().get(SET_COOKIE).unwrap().to_str().unwrap().to_string();
+    let cookie = resp
+        .headers()
+        .get(SET_COOKIE)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
 
     // Access /me succeeds
     let resp = client

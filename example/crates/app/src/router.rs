@@ -60,7 +60,9 @@ pub fn router_with_postgres(
     let session_store = crate::auth::session::init_session_store(pool.clone());
     let auth_repo = Arc::new(PgAuthRepo::new(pool.clone()));
     let user_repo = Arc::new(exemplum_dmn_users::repo::PgUserRepo::new(pool));
-    let user_service = Arc::new(exemplum_dmn_users::service::DefaultUserService::new(user_repo));
+    let user_service = Arc::new(exemplum_dmn_users::service::DefaultUserService::new(
+        user_repo,
+    ));
     router_with_auth(
         hello_service,
         authorizer,

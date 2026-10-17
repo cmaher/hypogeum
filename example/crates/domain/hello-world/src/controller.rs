@@ -1,8 +1,8 @@
 use crate::api::{HelloRequest, HelloResponse};
 use crate::service::HelloWorldService;
+use axum::Router;
 use axum::extract::State;
 use axum::routing::{get, post};
-use axum::Router;
 use exemplum_dmn_users::service::UserService;
 use hypgm_authn::RequireAuth;
 use hypgm_authz::Authorizer;
@@ -64,17 +64,11 @@ async fn hello_me(
         .as_ref()
         .ok_or_else(HttpError::internal_error)?;
 
-    let mut decision = authorizer.is_authorized(
-        &principal,
-        ("Action", "greet"),
-        ("Resource", "hello_world"),
-    );
+    let mut decision =
+        authorizer.is_authorized(&principal, ("Action", "greet"), ("Resource", "hello_world"));
     if decision != cedar_policy::Decision::Allow {
-        let alt = authorizer.is_authorized(
-            &principal,
-            ("Action", "greet"),
-            ("Greeting", "hello_world"),
-        );
+        let alt =
+            authorizer.is_authorized(&principal, ("Action", "greet"), ("Greeting", "hello_world"));
         if alt == cedar_policy::Decision::Allow {
             decision = alt;
         }
@@ -88,9 +82,11 @@ async fn hello_me(
         .get(principal.user_id)
         .await
         .map_err(|e| match e {
-            exemplum_dmn_users::service::UserError::NotFound => {
-                HttpError::custom(axum::http::StatusCode::NOT_FOUND, "not_found", "User not found")
-            }
+            exemplum_dmn_users::service::UserError::NotFound => HttpError::custom(
+                axum::http::StatusCode::NOT_FOUND,
+                "not_found",
+                "User not found",
+            ),
             other => HttpError::from(other),
         })?;
 
