@@ -8,5 +8,6 @@ pub use error::{
 };
 pub use json::{AppJson, AppJson as Json, MAX_BODY_BYTES, is_json_content_type};
 pub use trace::{
-    REQUEST_ID_HEADER, RequestId, resolve_matched_path, trace_layer, trace_middleware,
+    REQUEST_ID_HEADER, RequestId, TraceLayer, TraceService, resolve_matched_path, trace_layer,
+    trace_middleware,
 };

@@ -32,7 +32,16 @@ pub fn resolve_matched_path(req: &Request) -> &'static str {
     }
 }
 
-pub async fn trace_middleware(mut req: Request, next: Next) -> Response {
+struct RequestTraceMetadata {
+    request_id: String,
+    header_val: HeaderValue,
+    method: String,
+    path: String,
+    matched_path: &'static str,
+    start: Instant,
+}
+
+fn prepare_request(req: &mut Request) -> (RequestTraceMetadata, tracing::Span) {
     let start = Instant::now();
 
     let request_id = uuid::Uuid::new_v4().to_string();
@@ -44,9 +53,9 @@ pub async fn trace_middleware(mut req: Request, next: Next) -> Response {
 
     let method = req.method().to_string();
     let path = req.uri().path().to_string();
-    let matched_path = resolve_matched_path(&req);
+    let matched_path = resolve_matched_path(req);
 
-    let span = tracing::info_span!(
+    let span = tracing::error_span!(
         "request",
         request_id = %request_id,
         method = %method,
@@ -56,8 +65,23 @@ pub async fn trace_middleware(mut req: Request, next: Next) -> Response {
         error_code = tracing::field::Empty,
     );
 
-    let mut response = next.run(req).instrument(span.clone()).await;
+    let meta = RequestTraceMetadata {
+        request_id,
+        header_val,
+        method,
+        path,
+        matched_path,
+        start,
+    };
 
+    (meta, span)
+}
+
+fn process_response(
+    mut response: Response,
+    meta: RequestTraceMetadata,
+    span: &tracing::Span,
+) -> Response {
     if response.status() == StatusCode::METHOD_NOT_ALLOWED
         && response
             .extensions()
@@ -80,16 +104,16 @@ pub async fn trace_middleware(mut req: Request, next: Next) -> Response {
         response = crate::error::not_found_response();
     }
 
-    let elapsed_ms = start.elapsed().as_millis() as u64;
+    let elapsed_ms = meta.start.elapsed().as_millis() as u64;
     let status = response.status();
     let status_code = status.as_u16();
 
     response
         .headers_mut()
-        .insert(REQUEST_ID_HEADER.clone(), header_val);
+        .insert(REQUEST_ID_HEADER.clone(), meta.header_val);
     response
         .extensions_mut()
-        .insert(RequestId(request_id.clone()));
+        .insert(RequestId(meta.request_id.clone()));
 
     let error_code = response
         .extensions()
@@ -115,13 +139,13 @@ pub async fn trace_middleware(mut req: Request, next: Next) -> Response {
 
     let _guard = span.enter();
     let is_health_success =
-        (matched_path == "/healthz" || path == "/healthz") && status.is_success();
+        (meta.matched_path == "/healthz" || meta.path == "/healthz") && status.is_success();
 
     if is_health_success {
         tracing::debug!(
-            request_id = %request_id,
-            method = %method,
-            matched_path = %matched_path,
+            request_id = %meta.request_id,
+            method = %meta.method,
+            matched_path = %meta.matched_path,
             status = status_code,
             elapsed_ms = elapsed_ms,
             "request completed"
@@ -129,9 +153,9 @@ pub async fn trace_middleware(mut req: Request, next: Next) -> Response {
     } else if status.is_server_error() {
         if let Some(code) = error_code {
             tracing::error!(
-                request_id = %request_id,
-                method = %method,
-                matched_path = %matched_path,
+                request_id = %meta.request_id,
+                method = %meta.method,
+                matched_path = %meta.matched_path,
                 status = status_code,
                 elapsed_ms = elapsed_ms,
                 error_code = code,
@@ -139,9 +163,9 @@ pub async fn trace_middleware(mut req: Request, next: Next) -> Response {
             );
         } else {
             tracing::error!(
-                request_id = %request_id,
-                method = %method,
-                matched_path = %matched_path,
+                request_id = %meta.request_id,
+                method = %meta.method,
+                matched_path = %meta.matched_path,
                 status = status_code,
                 elapsed_ms = elapsed_ms,
                 "request completed"
@@ -150,9 +174,9 @@ pub async fn trace_middleware(mut req: Request, next: Next) -> Response {
     } else {
         if let Some(code) = error_code {
             tracing::info!(
-                request_id = %request_id,
-                method = %method,
-                matched_path = %matched_path,
+                request_id = %meta.request_id,
+                method = %meta.method,
+                matched_path = %meta.matched_path,
                 status = status_code,
                 elapsed_ms = elapsed_ms,
                 error_code = code,
@@ -160,9 +184,9 @@ pub async fn trace_middleware(mut req: Request, next: Next) -> Response {
             );
         } else {
             tracing::info!(
-                request_id = %request_id,
-                method = %method,
-                matched_path = %matched_path,
+                request_id = %meta.request_id,
+                method = %meta.method,
+                matched_path = %meta.matched_path,
                 status = status_code,
                 elapsed_ms = elapsed_ms,
                 "request completed"
@@ -173,6 +197,63 @@ pub async fn trace_middleware(mut req: Request, next: Next) -> Response {
     response
 }
 
-pub fn trace_layer<S>() -> impl tower::Layer<S> + Clone {
-    axum::middleware::from_fn::<_, (Request, Next)>(trace_middleware)
+pub async fn trace_middleware(mut req: Request, next: Next) -> Response {
+    let (meta, span) = prepare_request(&mut req);
+    let response = next.run(req).instrument(span.clone()).await;
+    process_response(response, meta, &span)
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct TraceLayer;
+
+impl TraceLayer {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+pub fn trace_layer() -> TraceLayer {
+    TraceLayer::new()
+}
+
+impl<S> tower::Layer<S> for TraceLayer {
+    type Service = TraceService<S>;
+
+    fn layer(&self, inner: S) -> Self::Service {
+        TraceService { inner }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct TraceService<S> {
+    inner: S,
+}
+
+impl<S> tower::Service<Request> for TraceService<S>
+where
+    S: tower::Service<Request, Response = Response> + Clone + Send + 'static,
+    S::Error: Into<std::convert::Infallible> + 'static,
+    S::Future: Send + 'static,
+{
+    type Response = Response;
+    type Error = S::Error;
+    type Future = std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<Self::Response, Self::Error>> + Send>,
+    >;
+
+    fn poll_ready(
+        &mut self,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx)
+    }
+
+    fn call(&mut self, mut req: Request) -> Self::Future {
+        let mut inner = self.inner.clone();
+        Box::pin(async move {
+            let (meta, span) = prepare_request(&mut req);
+            let response = inner.call(req).instrument(span.clone()).await?;
+            Ok(process_response(response, meta, &span))
+        })
+    }
 }

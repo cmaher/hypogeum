@@ -1,13 +1,10 @@
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
-use axum::middleware::from_fn;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use errors::ServiceError;
-use http_support::{
-    AppJson, HttpError, REQUEST_ID_HEADER, RequestId, not_found_handler, trace_middleware,
-};
+use http_support::{AppJson, HttpError, REQUEST_ID_HEADER, RequestId, not_found_handler};
 use logging::{LogFormat, create_test_subscriber};
 use tower::ServiceExt;
 use tracing::Instrument;
@@ -51,8 +48,15 @@ fn create_test_app() -> Router {
                 HttpError::from(ServiceError::InvalidResponse("boom")).into_response()
             }),
         )
+        .route(
+            "/error/logged-500",
+            get(|| async {
+                tracing::error!(handler_error = true, "handler failed with internal error");
+                HttpError::from(ServiceError::InvalidResponse("boom")).into_response()
+            }),
+        )
         .fallback(not_found_handler)
-        .layer(from_fn(trace_middleware))
+        .layer(http_support::trace_layer())
 }
 
 #[tokio::test]
@@ -244,4 +248,117 @@ async fn test_context_inheritance_in_service_and_spawned_task() {
     assert!(found_service, "service event must be recorded in log");
     assert!(found_spawned, "spawned task event must be recorded in log");
     assert!(found_completion, "completion event must be recorded in log");
+}
+
+#[tokio::test]
+async fn test_trace_layer_installation_and_execution() {
+    use http_support::TraceLayer;
+
+    // Verify both trace_layer() and TraceLayer::new() are installable and functional
+    let app1 = Router::new()
+        .route("/healthz", get(|| async { "ok" }))
+        .layer(http_support::trace_layer());
+
+    let req1 = Request::builder()
+        .method("GET")
+        .uri("/healthz")
+        .body(Body::empty())
+        .unwrap();
+
+    let resp1 = app1.oneshot(req1).await.unwrap();
+    assert_eq!(resp1.status(), StatusCode::OK);
+    assert!(resp1.headers().contains_key(REQUEST_ID_HEADER.clone()));
+
+    let app2 = Router::new()
+        .route("/healthz", get(|| async { "ok" }))
+        .layer(TraceLayer::new());
+
+    let req2 = Request::builder()
+        .method("GET")
+        .uri("/healthz")
+        .body(Body::empty())
+        .unwrap();
+
+    let resp2 = app2.oneshot(req2).await.unwrap();
+    assert_eq!(resp2.status(), StatusCode::OK);
+    assert!(resp2.headers().contains_key(REQUEST_ID_HEADER.clone()));
+}
+
+#[tokio::test]
+async fn test_handler_error_retains_context_under_warn_and_error_filters() {
+    let app = create_test_app();
+
+    for filter_level in ["warn", "error"] {
+        let (subscriber, writer) = create_test_subscriber(filter_level, LogFormat::Json).unwrap();
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        let req = Request::builder()
+            .method("GET")
+            .uri("/error/logged-500")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+        let returned_id = resp
+            .headers()
+            .get(REQUEST_ID_HEADER.clone())
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+
+        let lines = writer.lines();
+        assert_eq!(
+            lines.len(),
+            2,
+            "filter '{}' should capture handler error and 500 completion event",
+            filter_level
+        );
+
+        let mut found_handler_error = false;
+        let mut found_completion = false;
+
+        for line in lines {
+            let val: serde_json::Value = serde_json::from_str(&line).unwrap();
+
+            // Span association must be preserved even under warn/error filters
+            let span = val.get("span").expect("event must have enclosing span");
+            assert_eq!(
+                span["request_id"], returned_id,
+                "span request_id must match response request_id under filter '{}'",
+                filter_level
+            );
+            assert_eq!(
+                span["matched_path"], "unmatched",
+                "span matched_path must be present under filter '{}'",
+                filter_level
+            );
+
+            if val["fields"].get("handler_error") == Some(&serde_json::Value::Bool(true)) {
+                found_handler_error = true;
+                assert_eq!(val["level"], "ERROR");
+            }
+            if val["fields"].get("message")
+                == Some(&serde_json::Value::String("request completed".into()))
+            {
+                found_completion = true;
+                assert_eq!(val["level"], "ERROR");
+                assert_eq!(val["fields"]["status"], 500);
+                assert_eq!(val["fields"]["request_id"], returned_id);
+            }
+        }
+
+        assert!(
+            found_handler_error,
+            "handler error must be captured under filter '{}'",
+            filter_level
+        );
+        assert!(
+            found_completion,
+            "completion error must be captured under filter '{}'",
+            filter_level
+        );
+    }
 }

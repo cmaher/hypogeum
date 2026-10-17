@@ -17,7 +17,7 @@ cmd/app (main.rs)
   ▼
 crates/domain/app (router.rs)
   │  Composes top-level router: GET /healthz, /api
-  │  Applies 16KiB DefaultBodyLimit & trace_middleware
+  │  Applies 16KiB DefaultBodyLimit & trace_layer
   │  Installs JSON 404 fallback
   ▼
 crates/domain/hello-world (controller.rs)
@@ -43,7 +43,7 @@ crates/domain/hello-world (service.rs)
 2. **`crates/domain/app` (`app` package):**
    The application glue router.
    - Mounts health checks (`GET /healthz`) and API namespaces (`/api`).
-   - Enforces global HTTP policies: 16KiB raw body limits, request tracing middleware, and 404/405 error translations.
+   - Enforces global HTTP policies: 16KiB raw body limits, request tracing layer, and 404/405 error translations.
    - Accepts injected domain services; contains no business logic.
 
 3. **Domain Layer (`crates/domain/<domain>`):**
@@ -70,7 +70,7 @@ pub fn router(hello_service: Arc<dyn HelloWorldService>) -> Router<()> {
         .nest("/api", api)
         .fallback(not_found_handler)
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
-        .layer(from_fn(trace_middleware))
+        .layer(trace_layer())
 }
 ```
 
@@ -225,9 +225,9 @@ logging::init(&config.log, config.log_format)?;
   - `text`: ANSI-colorized, human-readable terminal output.
   - `json`: Machine-readable newline-delimited JSON for log aggregators.
 
-### Request Tracing Middleware (`crates/http-support`)
+### Request Tracing Layer (`crates/http-support`)
 
-Every HTTP request traverses `trace_middleware`:
+Every HTTP request traverses `trace_layer` (`TraceLayer`):
 
 1. **Request ID Generation:**
    A UUID v4 is generated for every request. Any untrusted `X-Request-Id` supplied by the client is rejected and replaced. The generated ID is injected into:
