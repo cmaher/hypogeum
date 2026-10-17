@@ -5,8 +5,10 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+chrono.workspace = true
 http = "1"
 hypgm-errors = { path = "../errors" }
+jsonwebtoken = "9"
 serde.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
