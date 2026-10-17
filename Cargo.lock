@@ -1791,7 +1791,9 @@ dependencies = [
  "http",
  "hypgm-authn",
  "hypgm-errors",
+ "serde_json",
  "thiserror",
+ "tracing",
  "uuid",
 ]
 
