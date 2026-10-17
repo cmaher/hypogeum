@@ -9,7 +9,7 @@ name = "exemplum-db"
 path = "src/main.rs"
 
 [dependencies]
-hypgm-ext-db = { path = "../../../crates/ext/rdbms/db" }
+hypgm-ext-rdbms = { path = "../../../crates/ext/rdbms", features = ["postgres"] }
 hypgm-env-config = { path = "../../../crates/core/env-config" }
 exemplum-dmn-users = { path = "../../crates/domain/users" }
 sea-orm.workspace = true

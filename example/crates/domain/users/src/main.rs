@@ -31,7 +31,7 @@ async fn main() -> Result<()> {
         .with_env_filter(tracing_subscriber::EnvFilter::try_new(&log.log)?)
         .init();
 
-    let pool = hypgm_ext_postgres::create_pool(&hypgm_ext_postgres::PostgresConfig::new(
+    let pool = hypgm_ext_rdbms::create_pool(&hypgm_ext_rdbms::PoolConfig::new(
         config.database_url.expose(),
     ))
     .map_err(|_| anyhow::anyhow!("Invalid database configuration"))?;

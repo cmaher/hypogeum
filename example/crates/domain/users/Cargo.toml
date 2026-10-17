@@ -6,7 +6,7 @@ rust-version.workspace = true
 
 [dependencies]
 hypgm-errors = { path = "../../../../crates/core/errors" }
-hypgm-ext-postgres = { path = "../../../../crates/ext/rdbms/postgres" }
+hypgm-ext-rdbms = { path = "../../../../crates/ext/rdbms", features = ["postgres"] }
 sqlx = { workspace = true, features = ["macros"] }
 sea-orm.workspace = true
 sea-orm-migration.workspace = true
@@ -24,7 +24,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 thiserror.workspace = true
 
 [dev-dependencies]
-hypgm-ext-db = { path = "../../../../crates/ext/rdbms/db" }
 hypgm-test-support = { path = "../../../../crates/core/test-support" }
 tokio-stream = { version = "0.1", features = ["net"] }
 

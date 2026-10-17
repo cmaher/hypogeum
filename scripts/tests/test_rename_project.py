@@ -98,10 +98,16 @@ class RenameProjectTests(unittest.TestCase):
             "example/cmd/app/src/main.rs",
             "example/cmd/db/src/main.rs",
             "example/crates/app/Cargo.toml",
+            "example/crates/domain/users/src/repo/entity.rs",
+            "example/crates/domain/users/src/repo/postgres.rs",
+            "example/crates/domain/users/src/pg/migrations/m20260101_000001_create_users.rs",
+            "example/infra/postgres/provision.sql",
         ]
         root_paths = [
             "Cargo.toml",
             "crates/core/rpc/src/lib.rs",
+            "crates/ext/rdbms/src/lib.rs",
+            "crates/core/env-config/src/lib.rs",
         ]
         for relative in paths + root_paths:
             source = repository / relative
@@ -116,6 +122,10 @@ class RenameProjectTests(unittest.TestCase):
         app_main = (self.root / paths[2]).read_text()
         db_main = (self.root / paths[3]).read_text()
         app_cargo = (self.root / paths[4]).read_text()
+        entity = (self.root / paths[5]).read_text()
+        postgres = (self.root / paths[6]).read_text()
+        migration = (self.root / paths[7]).read_text()
+        provision = (self.root / paths[8]).read_text()
 
         self.assertIn(f"{TARGET}-app", app_cargo)
         self.assertIn(f"POSTGRES_DB: {TARGET}", compose)
@@ -123,6 +133,15 @@ class RenameProjectTests(unittest.TestCase):
         self.assertIn(f'"{TARGET.upper()}_APP_"', app_main)
         self.assertIn(f'"{TARGET.upper()}_MIGRATION_"', db_main)
         self.assertIn(f"Usage: {TARGET}-db", db_main)
+        self.assertIn(f'schema_name = "{TARGET}"', entity)
+        self.assertIn(f'role != "{TARGET}_users"', postgres)
+        self.assertIn(f'SELECT {TARGET}.schema_version()', postgres)
+        self.assertIn(f'CREATE SCHEMA IF NOT EXISTS {TARGET} AUTHORIZATION {TARGET}_owner', migration)
+        self.assertIn(f'GRANT USAGE ON SCHEMA {TARGET} TO {TARGET}_users', migration)
+        self.assertIn(f"{TARGET}_owner", provision)
+        self.assertIn(f"{TARGET}_migrator", provision)
+        self.assertIn(f"{TARGET}_users", provision)
+        self.assertIn(f"{TARGET}_tasks", provision)
 
         for relative in paths:
             self.assertNotIn(SOURCE, (self.root / relative).read_text().lower())
