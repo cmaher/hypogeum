@@ -172,6 +172,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "app"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "errors",
+ "hello-world",
+ "http-support",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tower",
+ "uuid",
+]
+
+[[package]]
 name = "arrayvec"
 version = "0.7.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4134,24 +4150,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tonic-web"
-version = "0.14.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b5e6a1b6319ca4b61a4c0f0c94d439c8f3ed344cca56fe0df40e1fe4be11380b"
-dependencies = [
- "base64 0.22.1",
- "bytes",
- "http",
- "http-body",
- "pin-project",
- "tokio-stream",
- "tonic",
- "tower-layer",
- "tower-service",
- "tracing",
-]
-
-[[package]]
 name = "tower"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4540,36 +4538,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "web-server"
-version = "0.1.0"
-dependencies = [
- "axum",
- "base64 0.22.1",
- "errors",
- "hello-world",
- "prost",
- "reqwest",
- "rpc",
- "tokio",
- "tonic",
- "tonic-prost",
- "tonic-web",
- "tower",
- "tower-http",
-]
-
-[[package]]
 name = "web-server-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "app",
  "axum",
  "env-config",
  "hello-world",
  "serde",
  "tokio",
  "tracing-subscriber",
- "web-server",
 ]
 
 [[package]]

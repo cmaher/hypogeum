@@ -1,0 +1,28 @@
+use axum::extract::DefaultBodyLimit;
+use axum::http::header;
+use axum::middleware::from_fn;
+use axum::response::IntoResponse;
+use axum::routing::get;
+use axum::Router;
+use hello_world::service::HelloWorldService;
+use http_support::{not_found_handler, trace_middleware, MAX_BODY_BYTES};
+use std::sync::Arc;
+
+async fn healthz() -> impl IntoResponse {
+    (
+        [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+        "ok",
+    )
+}
+
+pub fn router(hello_service: Arc<dyn HelloWorldService>) -> Router<()> {
+    let hello = hello_world::controller::router(hello_service);
+    let api = Router::new().nest("/hello", hello);
+
+    Router::new()
+        .route("/healthz", get(healthz))
+        .nest("/api", api)
+        .fallback(not_found_handler)
+        .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
+        .layer(from_fn(trace_middleware))
+}

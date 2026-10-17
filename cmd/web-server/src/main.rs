@@ -31,7 +31,7 @@ async fn main() -> anyhow::Result<()> {
         .context("Bind public web listener")?;
     axum::serve(
         listener,
-        web_server::router(Arc::new(DefaultHelloWorldService)),
+        app::router(Arc::new(DefaultHelloWorldService)),
     )
     .with_graceful_shutdown(shutdown())
     .await

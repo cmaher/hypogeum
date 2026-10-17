@@ -59,6 +59,22 @@ pub async fn trace_middleware(mut req: Request, next: Next) -> Response {
 
     let mut response = next.run(req).instrument(span.clone()).await;
 
+    if response.status() == StatusCode::METHOD_NOT_ALLOWED
+        && response.extensions().get::<crate::error::ErrorClassification>().is_none()
+    {
+        let allow = response
+            .headers()
+            .get(axum::http::header::ALLOW)
+            .and_then(|h| h.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+        response = crate::error::render_method_not_allowed(allow);
+    } else if response.status() == StatusCode::NOT_FOUND
+        && response.extensions().get::<crate::error::ErrorClassification>().is_none()
+    {
+        response = crate::error::not_found_response();
+    }
+
     let elapsed_ms = start.elapsed().as_millis() as u64;
     let status = response.status();
     let status_code = status.as_u16();

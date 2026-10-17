@@ -4,6 +4,7 @@ members = [
     "cmd/db",
     "cmd/web-server",
     "crates/db",
+    "crates/domain/app",
     "crates/domain/hello-world",
     "crates/domain/users",
     "crates/env-config",
@@ -15,7 +16,6 @@ members = [
     "crates/rpc",
     "crates/tasks",
     "crates/test-support",
-    "crates/web-server",
 ]
 resolver = "3"
 

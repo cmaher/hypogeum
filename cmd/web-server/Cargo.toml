@@ -9,7 +9,7 @@ name = "web-server"
 path = "src/main.rs"
 
 [dependencies]
-web-server = { path = "../../crates/web-server" }
+app = { path = "../../crates/domain/app" }
 hello-world = { path = "../../crates/domain/hello-world" }
 axum = { version = "0.8", features = ["http2"] }
 tokio.workspace = true
