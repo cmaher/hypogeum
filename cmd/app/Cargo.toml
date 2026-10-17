@@ -9,8 +9,8 @@ name = "app"
 path = "src/main.rs"
 
 [dependencies]
-hypgm-dmn-app = { path = "../../crates/domain/app" }
-hypgm-dmn-hello-world = { path = "../../crates/domain/hello-world" }
+exemplum-app = { path = "../../example/crates/app" }
+exemplum-dmn-hello-world = { path = "../../example/crates/domain/hello-world" }
 axum = { version = "0.8", features = ["http2"] }
 tokio.workspace = true
 anyhow = "1"

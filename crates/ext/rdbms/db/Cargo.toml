@@ -10,7 +10,7 @@ hypgm-errors = { path = "../../../core/errors", default-features = false }
 sqlx = { workspace = true, features = ["migrate", "macros"] }
 tokio.workspace = true
 serde_json.workspace = true
-hypgm-dmn-users = { path = "../../../domain/users" }
+exemplum-dmn-users = { path = "../../../../example/crates/domain/users" }
 sea-orm.workspace = true
 sea-orm-migration.workspace = true
 

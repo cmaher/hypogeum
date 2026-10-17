@@ -1,5 +1,5 @@
-use hypgm_dmn_app::router;
-use hypgm_dmn_hello_world::service::{DefaultHelloWorldService, HelloWorldService};
+use exemplum_app::router;
+use exemplum_dmn_hello_world::service::{DefaultHelloWorldService, HelloWorldService};
 use hypgm_logging::{LogFormat, create_test_dispatch};
 use std::collections::HashSet;
 use std::sync::Arc;

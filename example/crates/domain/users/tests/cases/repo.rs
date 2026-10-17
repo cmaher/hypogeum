@@ -1,4 +1,4 @@
-use hypgm_dmn_users::{
+use exemplum_dmn_users::{
     models::PageRequest,
     repo::{PgUserRepo, UserRepo},
 };
@@ -24,7 +24,7 @@ async fn existing_user_survives_migration_upgrade(
         ]);
     let migrator_pool = sqlx::PgPool::connect_with(owner).await.unwrap();
     let sea_db = sea_orm::SqlxPostgresConnector::from_sqlx_postgres_pool(migrator_pool.clone());
-    hypgm_dmn_users::pg::migrations::Migrator::up(&sea_db, Some(1))
+    exemplum_dmn_users::pg::migrations::Migrator::up(&sea_db, Some(1))
         .await
         .unwrap();
     migrator_pool.close().await;
@@ -33,7 +33,7 @@ async fn existing_user_survives_migration_upgrade(
     let before = repo.create(Uuid::new_v4(), "Existing User").await.unwrap();
     db.migrate().await;
     assert_eq!(repo.get(before.id).await.unwrap(), before);
-    hypgm_dmn_users::repo::check_ready(&pool).await.unwrap();
+    exemplum_dmn_users::repo::check_ready(&pool).await.unwrap();
     hypgm_ext_db::verify(&db.migration_url).await.unwrap();
     pool.close().await;
 }
@@ -90,7 +90,7 @@ async fn user_repository_connects_and_persists_under_runtime_privileges(
         db.users_url.clone(),
     ))
     .unwrap();
-    hypgm_dmn_users::repo::check_ready(&pool).await.unwrap();
+    exemplum_dmn_users::repo::check_ready(&pool).await.unwrap();
     let repo = PgUserRepo::new(pool.clone());
     let id = Uuid::new_v4();
     let created = repo.create(id, "Example User").await.unwrap();
@@ -163,13 +163,13 @@ async fn user_repository_connects_and_persists_under_runtime_privileges(
         );
     }
     // Readiness must reject the wrong role and an altered schema contract.
-    assert!(hypgm_dmn_users::repo::check_ready(&tasks).await.is_err());
+    assert!(exemplum_dmn_users::repo::check_ready(&tasks).await.is_err());
     let mut admin = PgConnection::connect(&db.admin_url).await.unwrap();
     sqlx::raw_sql("CREATE OR REPLACE FUNCTION hypogeum.schema_version() RETURNS bigint LANGUAGE sql AS 'SELECT 0::bigint'").execute(&mut admin).await.unwrap();
-    assert!(hypgm_dmn_users::repo::check_ready(&pool).await.is_err());
+    assert!(exemplum_dmn_users::repo::check_ready(&pool).await.is_err());
     // Applied migrations do not silently rewrite objects after manual tampering.
     hypgm_ext_db::migrate(&migration_url).await.unwrap();
-    assert!(hypgm_dmn_users::repo::check_ready(&pool).await.is_err());
+    assert!(exemplum_dmn_users::repo::check_ready(&pool).await.is_err());
     assert!(hypgm_ext_db::verify(&migration_url).await.is_err());
     pool.close().await;
     tasks.close().await;

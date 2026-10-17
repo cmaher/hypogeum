@@ -9,14 +9,12 @@ members = [
     "crates/core/logging",
     "crates/core/rpc",
     "crates/core/test-support",
-    "crates/domain/app",
-    "crates/domain/hello-world",
-    "crates/domain/users",
     "crates/ext/file-storage",
     "crates/ext/rdbms/db",
     "crates/ext/rdbms/postgres",
     "crates/ext/tasks",
 ]
+exclude = ["example"]
 resolver = "3"
 
 [workspace.package]

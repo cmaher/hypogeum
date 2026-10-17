@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use hypgm_dmn_users::{
+use exemplum_dmn_users::{
     repo::{PgUserRepo, check_ready},
     server::GrpcUserServer,
     service::DefaultUserService,

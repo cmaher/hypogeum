@@ -1,9 +1,9 @@
 use async_trait::async_trait;
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode, header};
-use hypgm_dmn_hello_world::HelloWorldError;
-use hypgm_dmn_hello_world::controller::router;
-use hypgm_dmn_hello_world::service::{DefaultHelloWorldService, HelloWorldService};
+use exemplum_dmn_hello_world::HelloWorldError;
+use exemplum_dmn_hello_world::controller::router;
+use exemplum_dmn_hello_world::service::{DefaultHelloWorldService, HelloWorldService};
 use std::sync::Arc;
 use tower::ServiceExt;
 

@@ -23,7 +23,7 @@ struct AppLogConfig {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     use anyhow::Context;
-    use hypgm_dmn_hello_world::service::DefaultHelloWorldService;
+    use exemplum_dmn_hello_world::service::DefaultHelloWorldService;
     use hypgm_env_config::{EnvSource, LogConfig};
     use std::sync::Arc;
 
@@ -49,7 +49,7 @@ async fn main() -> anyhow::Result<()> {
 
     axum::serve(
         listener,
-        hypgm_dmn_app::router(Arc::new(DefaultHelloWorldService)),
+        exemplum_app::router(Arc::new(DefaultHelloWorldService)),
     )
     .with_graceful_shutdown(async {
         shutdown().await;

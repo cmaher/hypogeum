@@ -1,4 +1,4 @@
-use hypgm_dmn_users::{
+use exemplum_dmn_users::{
     UserError,
     client::GrpcUserClient,
     models::PageRequest,

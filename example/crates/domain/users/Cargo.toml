@@ -1,12 +1,12 @@
 [package]
-name = "hypgm-dmn-users"
+name = "exemplum-dmn-users"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-hypgm-errors = { path = "../../core/errors" }
-hypgm-ext-postgres = { path = "../../ext/rdbms/postgres" }
+hypgm-errors = { path = "../../../../crates/core/errors" }
+hypgm-ext-postgres = { path = "../../../../crates/ext/rdbms/postgres" }
 sqlx = { workspace = true, features = ["macros"] }
 sea-orm.workspace = true
 sea-orm-migration.workspace = true
@@ -15,17 +15,17 @@ chrono.workspace = true
 serde.workspace = true
 async-trait.workspace = true
 tokio.workspace = true
-hypgm-rpc = { path = "../../core/rpc" }
+hypgm-rpc = { path = "../../../../crates/core/rpc" }
 tonic.workspace = true
 prost-types.workspace = true
 anyhow = "1"
-hypgm-env-config = { path = "../../core/env-config" }
+hypgm-env-config = { path = "../../../../crates/core/env-config" }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 thiserror.workspace = true
 
 [dev-dependencies]
-hypgm-ext-db = { path = "../../ext/rdbms/db" }
-hypgm-test-support = { path = "../../core/test-support" }
+hypgm-ext-db = { path = "../../../../crates/ext/rdbms/db" }
+hypgm-test-support = { path = "../../../../crates/core/test-support" }
 tokio-stream = { version = "0.1", features = ["net"] }
 
 [lints]
