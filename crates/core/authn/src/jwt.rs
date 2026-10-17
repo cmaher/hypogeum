@@ -4,6 +4,42 @@ use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, errors::ErrorKind
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+/// Represents JWT audience claim, which RFC 7519 §4.1.3 allows to be either
+/// a single string or an array of strings.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum Audience {
+    Single(String),
+    Multiple(Vec<String>),
+}
+
+impl Audience {
+    pub fn contains(&self, expected: &str) -> bool {
+        match self {
+            Self::Single(s) => s == expected,
+            Self::Multiple(list) => list.iter().any(|s| s == expected),
+        }
+    }
+}
+
+impl From<&str> for Audience {
+    fn from(s: &str) -> Self {
+        Self::Single(s.to_string())
+    }
+}
+
+impl From<String> for Audience {
+    fn from(s: String) -> Self {
+        Self::Single(s)
+    }
+}
+
+impl From<Vec<String>> for Audience {
+    fn from(list: Vec<String>) -> Self {
+        Self::Multiple(list)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Claims {
     pub sub: Uuid,
@@ -12,7 +48,7 @@ pub struct Claims {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub iss: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub aud: Option<String>,
+    pub aud: Option<Audience>,
 }
 
 impl Claims {
@@ -26,19 +62,19 @@ impl Claims {
         }
     }
 
-    pub fn with_iss_aud(
+    pub fn with_iss_aud<A: Into<Audience>>(
         sub: Uuid,
         auth_id: Uuid,
         exp: usize,
         iss: Option<String>,
-        aud: Option<String>,
+        aud: Option<A>,
     ) -> Self {
         Self {
             sub,
             auth_id,
             exp,
             iss,
-            aud,
+            aud: aud.map(Into::into),
         }
     }
 }
@@ -75,8 +111,6 @@ impl JwtValidator {
         validation.leeway = config.leeway_seconds;
         if let Some(ref iss) = config.issuer {
             validation.set_issuer(&[iss]);
-        } else {
-            validation.validate_exp = true;
         }
         if let Some(ref aud) = config.audience {
             validation.set_audience(&[aud]);

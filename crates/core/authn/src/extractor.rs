@@ -1,7 +1,7 @@
 use crate::error::AuthError;
 use crate::jwt::JwtValidator;
 use crate::principal::Principal;
-use crate::session::{AuthBackend, PrincipalAuthBackend};
+use crate::session::PrincipalAuthBackend;
 use axum::extract::FromRequestParts;
 use axum::http::header;
 use axum::http::request::Parts;
@@ -124,15 +124,7 @@ pub fn extract_principal_from_parts(parts: &Parts) -> Result<Option<Principal>, 
     // Check if an axum-login AuthSession is present in extensions
     if let Some(principal) = parts
         .extensions
-        .get::<axum_login::AuthSession<PrincipalAuthBackend<()>>>()
-        .and_then(|s| s.user.as_ref())
-    {
-        return Ok(Some(principal.clone()));
-    }
-
-    if let Some(principal) = parts
-        .extensions
-        .get::<axum_login::AuthSession<PrincipalAuthBackend<Arc<dyn AuthBackend>>>>()
+        .get::<axum_login::AuthSession<PrincipalAuthBackend>>()
         .and_then(|s| s.user.as_ref())
     {
         return Ok(Some(principal.clone()));

@@ -219,3 +219,61 @@ fn test_issuer_and_audience_validation() {
         Err(AuthError::InvalidToken(_))
     ));
 }
+
+#[test]
+fn test_multi_value_audience_validation() {
+    let auth_id = Uuid::new_v4();
+    let user_id = Uuid::new_v4();
+    let exp = now_epoch() + 3600;
+
+    let claims = Claims::with_iss_aud(
+        user_id,
+        auth_id,
+        exp,
+        Some("auth.example.com".to_string()),
+        Some(vec![
+            "api.example.com".to_string(),
+            "other.example.com".to_string(),
+        ]),
+    );
+
+    let token = encode(
+        &Header::default(),
+        &claims,
+        &EncodingKey::from_secret(TEST_SECRET),
+    )
+    .unwrap();
+
+    let config = JwtConfig {
+        algorithm: Algorithm::HS256,
+        issuer: Some("auth.example.com".to_string()),
+        audience: Some("api.example.com".to_string()),
+        leeway_seconds: 0,
+    };
+    let validator = JwtValidator::new(jsonwebtoken::DecodingKey::from_secret(TEST_SECRET), config);
+
+    let principal = validator.verify_token(&token).unwrap();
+    assert_eq!(principal.auth_id, auth_id);
+
+    let raw_claims_json = serde_json::json!({
+        "sub": user_id,
+        "auth_id": auth_id,
+        "exp": exp,
+        "iss": "auth.example.com",
+        "aud": ["api.example.com", "dashboard.example.com"]
+    });
+    let deserialized: Claims = serde_json::from_value(raw_claims_json).unwrap();
+    match deserialized.aud {
+        Some(hypgm_authn::Audience::Multiple(ref list)) => {
+            assert_eq!(list.len(), 2);
+            assert!(
+                deserialized
+                    .aud
+                    .as_ref()
+                    .unwrap()
+                    .contains("api.example.com")
+            );
+        }
+        _ => panic!("expected Audience::Multiple"),
+    }
+}

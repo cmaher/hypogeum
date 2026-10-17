@@ -5,7 +5,9 @@ use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::{Extension, Router};
 use http_body_util::BodyExt;
-use hypgm_authn::{AuthMethod, Claims, JwtValidator, OptionalAuth, Principal, RequireAuth};
+use hypgm_authn::{
+    AuthMethod, Claims, JwtValidator, OptionalAuth, Principal, PrincipalAuthBackend, RequireAuth,
+};
 use jsonwebtoken::{EncodingKey, Header, encode};
 use serde_json::Value;
 use tower::ServiceExt;
@@ -209,4 +211,83 @@ async fn test_axum_router_integration() {
     assert_eq!(res.status(), StatusCode::OK);
     let body = res.into_body().collect().await.unwrap().to_bytes();
     assert_eq!(&body[..], format!("some: {user_id}").as_bytes());
+}
+
+#[tokio::test]
+async fn test_require_auth_with_axum_login_auth_session() {
+    struct MockBackend(Principal);
+
+    #[async_trait::async_trait]
+    impl hypgm_authn::AuthBackend for MockBackend {
+        async fn resolve_principal(&self, auth_id: Uuid) -> Option<Principal> {
+            if auth_id == self.0.auth_id {
+                Some(self.0.clone())
+            } else {
+                None
+            }
+        }
+    }
+
+    let auth_id = Uuid::new_v4();
+    let user_id = Uuid::new_v4();
+    let principal = Principal::new(auth_id, user_id, AuthMethod::Session);
+
+    let backend = MockBackend(principal.clone());
+    let login_backend = PrincipalAuthBackend::new(backend);
+    let session_store = tower_sessions::MemoryStore::default();
+    let session_layer = tower_sessions::SessionManagerLayer::new(session_store);
+    let auth_layer = axum_login::AuthManagerLayerBuilder::new(login_backend, session_layer).build();
+
+    let app = Router::new()
+        .route(
+            "/login-check",
+            get(
+                |RequireAuth(p): RequireAuth| async move { format!("session user: {}", p.user_id) },
+            ),
+        )
+        .route(
+            "/do-login",
+            get(
+                move |mut auth_session: axum_login::AuthSession<PrincipalAuthBackend>| async move {
+                    let p = Principal::new(auth_id, user_id, AuthMethod::Session);
+                    auth_session.login(&p).await.unwrap();
+                    "logged in"
+                },
+            ),
+        )
+        .layer(auth_layer);
+
+    // Initial check without session -> 401
+    let req = Request::builder()
+        .uri("/login-check")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+
+    // Log in to get session cookie
+    let req = Request::builder()
+        .uri("/do-login")
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let cookie = res
+        .headers()
+        .get(axum::http::header::SET_COOKIE)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+
+    // Check with session cookie -> 200 OK with extracted user!
+    let req = Request::builder()
+        .uri("/login-check")
+        .header(axum::http::header::COOKIE, cookie)
+        .body(Body::empty())
+        .unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(&body[..], format!("session user: {user_id}").as_bytes());
 }

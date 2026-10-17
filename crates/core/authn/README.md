@@ -64,6 +64,8 @@ impl AuthBackend for MyDbAuthBackend {
 let login_backend = PrincipalAuthBackend::new(MyDbAuthBackend);
 ```
 
+> **Note**: `PrincipalAuthBackend` is a session-resolution adapter designed to resolve `Principal` instances via `get_user(auth_id)`. Credential verification (such as username/password or OAuth verification) is handled out-of-band by application services prior to calling `auth_session.login(&principal)`.
+
 ### Axum Extractors
 
 Endpoints consume `RequireAuth` or `OptionalAuth`:

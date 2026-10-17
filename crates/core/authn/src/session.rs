@@ -2,6 +2,7 @@ use crate::principal::Principal;
 use async_trait::async_trait;
 use axum_login::AuthUser;
 use std::convert::Infallible;
+use std::sync::Arc;
 use uuid::Uuid;
 
 impl AuthUser for Principal {
@@ -30,29 +31,52 @@ impl AuthBackend for () {
 }
 
 #[async_trait]
-impl AuthBackend for std::sync::Arc<dyn AuthBackend> {
+impl AuthBackend for Arc<dyn AuthBackend> {
     async fn resolve_principal(&self, auth_id: Uuid) -> Option<Principal> {
         self.as_ref().resolve_principal(auth_id).await
     }
 }
 
 /// Adapter wrapping an [`AuthBackend`] to implement [`axum_login::AuthnBackend`].
-#[derive(Debug, Clone, Default)]
-pub struct PrincipalAuthBackend<B> {
-    backend: B,
+///
+/// NOTE: `PrincipalAuthBackend` is a session-resolution adapter designed to restore
+/// authenticated [`Principal`] instances from session storage via `get_user(auth_id)`.
+/// Credential verification (such as passwords or OAuth callbacks) is handled out-of-band
+/// by application services before logging the user in via `auth_session.login(&principal)`.
+/// For this reason, `type Credentials = ()` and `authenticate` returns `Ok(None)`.
+///
+/// The inner backend is type-erased to [`Arc<dyn AuthBackend>`], ensuring all consuming
+/// applications share the uniform `axum_login::AuthSession<PrincipalAuthBackend>` extension
+/// type across the framework.
+#[derive(Clone)]
+pub struct PrincipalAuthBackend {
+    backend: Arc<dyn AuthBackend>,
 }
 
-impl<B> PrincipalAuthBackend<B> {
-    pub const fn new(backend: B) -> Self {
+impl PrincipalAuthBackend {
+    pub fn new<B: AuthBackend>(backend: B) -> Self {
+        Self {
+            backend: Arc::new(backend),
+        }
+    }
+
+    pub fn from_arc(backend: Arc<dyn AuthBackend>) -> Self {
         Self { backend }
     }
 
-    pub fn inner(&self) -> &B {
+    pub fn inner(&self) -> &Arc<dyn AuthBackend> {
         &self.backend
     }
 }
 
-impl<B: AuthBackend + Clone> axum_login::AuthnBackend for PrincipalAuthBackend<B> {
+impl std::fmt::Debug for PrincipalAuthBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PrincipalAuthBackend")
+            .finish_non_exhaustive()
+    }
+}
+
+impl axum_login::AuthnBackend for PrincipalAuthBackend {
     type User = Principal;
     type Credentials = ();
     type Error = Infallible;
@@ -78,7 +102,6 @@ mod tests {
     use crate::principal::AuthMethod;
     use axum_login::AuthnBackend;
     use std::collections::HashMap;
-    use std::sync::Arc;
     use tokio::sync::RwLock;
 
     #[derive(Clone, Default)]
