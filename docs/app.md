@@ -160,6 +160,7 @@ JSON Error Envelope (Safe status, code, message)
 | `RepoError::NotFound` | `404 Not Found` | `"not_found"` | `"Resource not found"` |
 | `RepoError::Database(_)` | `500 Internal Server Error` | `"internal_error"` | `"Internal server error"` (details redacted) |
 | `ServiceError::Remote(_)` | `500 Internal Server Error` | `"internal_error"` | `"Internal server error"` (details redacted) |
+| Response serialization failure | `500 Internal Server Error` | `"internal_error"` | `"Internal server error"` (details redacted) |
 | Malformed JSON body | `400 Bad Request` | `"invalid_request"` | `"Invalid request"` |
 | Consumed body exceeds 16KiB | `413 Payload Too Large` | `"payload_too_large"` | `"Payload too large"` |
 | Unsupported `Content-Type` | `415 Unsupported Media Type` | `"unsupported_media_type"` | `"Unsupported media type"` |
@@ -239,7 +240,7 @@ Every HTTP request traverses `trace_layer` (`TraceLayer`):
    `request{request_id, method, matched_path, status, elapsed_ms, error_code}`
 3. **Completion Event:**
    Exactly one completion event is emitted when the response is ready:
-   - `DEBUG` for successful `/healthz` checks (reducing log noise).
+   - `DEBUG` for successful health responses marked with `Extension(HealthCheck)` (`/healthz` in this app). The shared middleware does not depend on application route names.
    - `ERROR` for `5xx` internal server errors.
    - `INFO` for all other requests.
 4. **Data Redaction:**

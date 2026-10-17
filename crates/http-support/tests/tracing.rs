@@ -1,10 +1,12 @@
-use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
+use axum::{Extension, Router};
 use errors::ServiceError;
-use http_support::{AppJson, HttpError, REQUEST_ID_HEADER, RequestId, not_found_handler};
+use http_support::{
+    AppJson, HealthCheck, HttpError, REQUEST_ID_HEADER, RequestId, not_found_handler,
+};
 use logging::{LogFormat, create_test_subscriber};
 use tower::ServiceExt;
 use tracing::Instrument;
@@ -21,7 +23,7 @@ struct DummyResponse {
 
 fn create_test_app() -> Router {
     Router::new()
-        .route("/healthz", get(|| async { "ok" }))
+        .route("/healthz", get(|| async { (Extension(HealthCheck), "ok") }))
         .route(
             "/api/hello",
             post(|AppJson(req): AppJson<DummyRequest>| async move {
@@ -57,6 +59,85 @@ fn create_test_app() -> Router {
         )
         .fallback(not_found_handler)
         .layer(http_support::trace_layer())
+}
+
+#[tokio::test]
+async fn test_tracing_preserves_nested_route_templates() {
+    let (subscriber, writer) = create_test_subscriber("debug", LogFormat::Json).unwrap();
+    let _guard = tracing::subscriber::set_default(subscriber);
+    let routes = Router::new().route("/widgets/{id}", get(|| async { "ok" }));
+    let app = Router::new()
+        .nest("/api", routes)
+        .layer(http_support::trace_layer());
+    let request = Request::builder()
+        .uri("/api/widgets/private-id?token=private-query")
+        .body(Body::empty())
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let lines = writer.lines();
+    assert_eq!(lines.len(), 1);
+    let event: serde_json::Value = serde_json::from_str(&lines[0]).unwrap();
+    assert_eq!(event["fields"]["matched_path"], "/api/widgets/{id}");
+    assert_eq!(event["span"]["matched_path"], "/api/widgets/{id}");
+    assert!(!writer.output_string().contains("private-id"));
+    assert!(!writer.output_string().contains("private-query"));
+}
+
+#[tokio::test]
+async fn test_unmatched_route_never_uses_raw_uri_as_template() {
+    let (subscriber, writer) = create_test_subscriber("debug", LogFormat::Json).unwrap();
+    let _guard = tracing::subscriber::set_default(subscriber);
+    let app = Router::new()
+        .fallback(not_found_handler)
+        .layer(http_support::trace_layer());
+    let request = Request::builder()
+        .uri("/api/hello")
+        .body(Body::empty())
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    let lines = writer.lines();
+    assert_eq!(lines.len(), 1);
+    let event: serde_json::Value = serde_json::from_str(&lines[0]).unwrap();
+    assert_eq!(event["fields"]["matched_path"], "unmatched");
+}
+
+#[tokio::test]
+async fn test_health_response_marker_controls_success_logging_on_any_route() {
+    let (subscriber, writer) = create_test_subscriber("debug", LogFormat::Json).unwrap();
+    let _guard = tracing::subscriber::set_default(subscriber);
+    let app = Router::new()
+        .route("/probe", get(|| async { (Extension(HealthCheck), "ok") }))
+        .route(
+            "/probe-failed",
+            get(|| async { (Extension(HealthCheck), HttpError::internal_error()) }),
+        )
+        .layer(http_support::trace_layer());
+
+    for (path, status) in [
+        ("/probe", StatusCode::OK),
+        ("/probe-failed", StatusCode::INTERNAL_SERVER_ERROR),
+    ] {
+        let request = Request::builder().uri(path).body(Body::empty()).unwrap();
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), status);
+    }
+
+    let lines = writer.lines();
+    assert_eq!(lines.len(), 2);
+    for (line, (path, level)) in lines
+        .iter()
+        .zip([("/probe", "DEBUG"), ("/probe-failed", "ERROR")])
+    {
+        let event: serde_json::Value = serde_json::from_str(line).unwrap();
+        assert_eq!(event["level"], level);
+        assert_eq!(event["fields"]["matched_path"], path);
+    }
 }
 
 #[tokio::test]
@@ -356,7 +437,7 @@ async fn test_handler_error_retains_context_under_warn_and_error_filters() {
                 filter_level
             );
             assert_eq!(
-                span["matched_path"], "unmatched",
+                span["matched_path"], "/error/logged-500",
                 "span matched_path must be present under filter '{}'",
                 filter_level
             );

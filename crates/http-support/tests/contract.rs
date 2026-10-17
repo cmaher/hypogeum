@@ -10,6 +10,31 @@ use http_support::{
 use tower::ServiceExt;
 
 #[tokio::test]
+async fn test_response_serialization_failure_is_a_redacted_json_error() {
+    struct FailingSerialization;
+
+    impl serde::Serialize for FailingSerialization {
+        fn serialize<S: serde::Serializer>(&self, _: S) -> Result<S::Ok, S::Error> {
+            Err(serde::ser::Error::custom("private serialization detail"))
+        }
+    }
+
+    let response = AppJson(FailingSerialization).into_response();
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(response.headers()[header::CONTENT_TYPE], "application/json");
+    assert_eq!(
+        response.extensions().get::<ErrorClassification>(),
+        Some(&ErrorClassification::INTERNAL_ERROR)
+    );
+    let bytes = to_bytes(response.into_body(), 1024).await.unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        body,
+        serde_json::json!({"code": "internal_error", "message": "Internal server error"})
+    );
+}
+
+#[tokio::test]
 async fn test_error_mappings_and_no_leakage() {
     let test_cases: Vec<(HttpError, StatusCode, &'static str, &'static str)> = vec![
         (

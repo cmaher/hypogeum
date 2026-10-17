@@ -7,6 +7,10 @@ use tracing::Instrument;
 
 pub static REQUEST_ID_HEADER: HeaderName = HeaderName::from_static("x-request-id");
 
+/// Marks a health-check response so successful completions are logged at DEBUG.
+#[derive(Debug, Clone, Copy)]
+pub struct HealthCheck;
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct RequestId(pub String);
 
@@ -16,28 +20,18 @@ impl std::fmt::Display for RequestId {
     }
 }
 
-pub fn resolve_matched_path(req: &Request) -> &'static str {
-    if let Some(matched) = req.extensions().get::<MatchedPath>() {
-        match matched.as_str() {
-            "/healthz" => "/healthz",
-            "/api/hello" => "/api/hello",
-            _ => "unmatched",
-        }
-    } else {
-        match req.uri().path() {
-            "/healthz" => "/healthz",
-            "/api/hello" => "/api/hello",
-            _ => "unmatched",
-        }
-    }
+pub fn resolve_matched_path(req: &Request) -> &str {
+    req.extensions()
+        .get::<MatchedPath>()
+        .map(MatchedPath::as_str)
+        .unwrap_or("unmatched")
 }
 
 struct RequestTraceMetadata {
     request_id: String,
     header_val: HeaderValue,
     method: String,
-    path: String,
-    matched_path: &'static str,
+    matched_path: String,
     start: Instant,
 }
 
@@ -52,8 +46,7 @@ fn prepare_request(req: &mut Request) -> (RequestTraceMetadata, tracing::Span) {
     req.extensions_mut().insert(RequestId(request_id.clone()));
 
     let method = req.method().to_string();
-    let path = req.uri().path().to_string();
-    let matched_path = resolve_matched_path(req);
+    let matched_path = resolve_matched_path(req).to_owned();
 
     let span = tracing::error_span!(
         "request",
@@ -69,7 +62,6 @@ fn prepare_request(req: &mut Request) -> (RequestTraceMetadata, tracing::Span) {
         request_id,
         header_val,
         method,
-        path,
         matched_path,
         start,
     };
@@ -139,7 +131,7 @@ fn process_response(
 
     let _guard = span.enter();
     let is_health_success =
-        (meta.matched_path == "/healthz" || meta.path == "/healthz") && status.is_success();
+        response.extensions().get::<HealthCheck>().is_some() && status.is_success();
 
     if is_health_success {
         tracing::debug!(

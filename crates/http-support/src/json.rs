@@ -26,7 +26,10 @@ impl<T> DerefMut for AppJson<T> {
 
 impl<T: Serialize> IntoResponse for AppJson<T> {
     fn into_response(self) -> Response {
-        axum::Json(self.0).into_response()
+        match serde_json::to_vec(&self.0) {
+            Ok(body) => ([(header::CONTENT_TYPE, "application/json")], body).into_response(),
+            Err(_) => HttpError::internal_error().into_response(),
+        }
     }
 }
 
