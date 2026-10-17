@@ -24,6 +24,8 @@ tower = "0.5"
 tower-sessions = "0.14"
 tower-sessions-sqlx-store = { version = "0.14", default-features = false, features = ["postgres"] }
 axum-login = "0.18"
+jsonwebtoken = "9"
+serde_urlencoded = "0.7"
 
 [dev-dependencies]
 tokio.workspace = true
