@@ -1787,12 +1787,17 @@ dependencies = [
 name = "hypgm-authz"
 version = "0.1.0"
 dependencies = [
+ "axum",
  "cedar-policy",
  "http",
+ "http-body-util",
  "hypgm-authn",
  "hypgm-errors",
+ "hypgm-http",
  "serde_json",
  "thiserror",
+ "tokio",
+ "tower",
  "tracing",
  "uuid",
 ]

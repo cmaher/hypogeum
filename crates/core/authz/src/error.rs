@@ -39,6 +39,12 @@ impl PublicError for AuthzError {
     }
 }
 
+impl axum::response::IntoResponse for AuthzError {
+    fn into_response(self) -> axum::response::Response {
+        hypgm_http::render_public_error(&self)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
