@@ -27,7 +27,7 @@ async fn main() -> anyhow::Result<()> {
     use hypgm_env_config::{EnvSource, LogConfig};
     use std::sync::Arc;
 
-    let env = EnvSource::load()?;
+    let env = EnvSource::load_for("EXEMPLUM")?;
     let config: AppConfig = env.deserialize("EXEMPLUM_APP_")?;
     let log: LogConfig = env.deserialize("EXEMPLUM_")?;
     let log_format: AppLogConfig = env.deserialize("EXEMPLUM_")?;

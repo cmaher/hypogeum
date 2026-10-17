@@ -39,24 +39,45 @@ async fn run() -> Result<Value, String> {
         );
     }
 
-    let env = EnvSource::load().map_err(|e| e.to_string())?;
+    let env = EnvSource::load_for("EXEMPLUM").map_err(|e| e.to_string())?;
     let config: Config = env
         .deserialize("EXEMPLUM_MIGRATION_")
         .map_err(|e| e.to_string())?;
     let url = config.database_url.expose();
 
+    let db_config = hypgm_ext_db::DatabaseConfig::new(
+        "exemplum_migrator",
+        "exemplum_owner",
+        "exemplum_tasks",
+    )
+    .with_app_schema("exemplum")
+    .with_domain_migrator(hypgm_ext_db::DomainMigrator::from_sea_orm::<
+        exemplum_dmn_users::pg::migrations::Migrator,
+    >())
+    .with_service_contract(hypgm_ext_db::ServiceContract::new(
+        "exemplum",
+        "exemplum_users",
+        1,
+        Some("m20260101_000001_create_users"),
+        "users",
+    ));
+
     match args[0].as_str() {
         "migrate" => {
-            hypgm_ext_db::migrate(url)
+            hypgm_ext_db::migrate(url, &db_config)
                 .await
                 .map_err(|e| e.to_string())?;
             Ok(json!({"migrated":true}))
         }
         "verify" => {
-            hypgm_ext_db::verify(url).await.map_err(|e| e.to_string())?;
+            hypgm_ext_db::verify(url, &db_config)
+                .await
+                .map_err(|e| e.to_string())?;
             Ok(json!({"verified":true}))
         }
-        "inspect" => hypgm_ext_db::inspect(url).await.map_err(|e| e.to_string()),
+        "inspect" => hypgm_ext_db::inspect(url, &db_config)
+            .await
+            .map_err(|e| e.to_string()),
         _ => unreachable!(),
     }
 }
