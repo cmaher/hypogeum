@@ -102,6 +102,8 @@ class RenameProjectTests(unittest.TestCase):
             "example/crates/domain/users/src/repo/postgres.rs",
             "example/crates/domain/users/src/pg/migrations/m20260101_000001_create_users.rs",
             "example/infra/postgres/provision.sql",
+            "example/config/schema.cedarschema",
+            "example/config/policies.cedar",
         ]
         root_paths = [
             "Cargo.toml",
