@@ -10,15 +10,16 @@ async fn repeated_migrations_do_not_rewrite_objects_and_corrupt_history_is_rejec
     options: sqlx::postgres::PgConnectOptions,
 ) {
     let db = hypgm_test_support::TestDatabase::provision(options).await;
-    db.migrate().await;
+    let config = hypgm_test_support::test_config();
+    db.migrate_with(&config).await;
     let admin = sqlx::PgPool::connect(&db.admin_url).await.unwrap();
-    let versions = "SELECT xmin::text FROM pg_catalog.pg_proc WHERE oid IN ('hypogeum.schema_version()'::regprocedure,'apalis.schema_version()'::regprocedure) ORDER BY oid";
+    let versions = "SELECT xmin::text FROM pg_catalog.pg_proc WHERE oid IN ('apalis.schema_version()'::regprocedure) ORDER BY oid";
     let before: Vec<String> = sqlx::query_scalar(versions)
         .fetch_all(&admin)
         .await
         .unwrap();
-    assert_eq!(before.len(), 2);
-    db.migrate().await;
+    assert_eq!(before.len(), 1);
+    db.migrate_with(&config).await;
     let after: Vec<String> = sqlx::query_scalar(versions)
         .fetch_all(&admin)
         .await
@@ -32,7 +33,7 @@ async fn repeated_migrations_do_not_rewrite_objects_and_corrupt_history_is_rejec
         .execute(&admin)
         .await
         .unwrap();
-    assert!(hypgm_ext_db::migrate(&db.migration_url).await.is_err());
-    assert!(hypgm_ext_db::verify(&db.migration_url).await.is_err());
+    assert!(hypgm_ext_db::migrate(&db.migration_url, &config).await.is_err());
+    assert!(hypgm_ext_db::verify(&db.migration_url, &config).await.is_err());
     admin.close().await;
 }

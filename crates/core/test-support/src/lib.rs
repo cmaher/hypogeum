@@ -93,7 +93,22 @@ impl TestDatabase {
         }
     }
     pub async fn migrate(&self) {
-        hypgm_ext_db::migrate(&self.migration_url).await.unwrap();
+        self.migrate_with(&test_config()).await;
+    }
+
+    pub async fn migrate_with(&self, config: &hypgm_ext_db::DatabaseConfig) {
+        hypgm_ext_db::migrate(&self.migration_url, config).await.unwrap();
+    }
+}
+
+pub fn test_config() -> hypgm_ext_db::DatabaseConfig {
+    hypgm_ext_db::DatabaseConfig {
+        migrator_role: "hypogeum_migrator".into(),
+        owner_role: "hypogeum_owner".into(),
+        tasks_role: "hypogeum_tasks".into(),
+        app_schemas: vec![],
+        domain_migrators: vec![],
+        service_contracts: vec![],
     }
 }
 
