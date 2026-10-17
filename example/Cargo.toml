@@ -1,5 +1,7 @@
 [workspace]
 members = [
+    "cmd/app",
+    "cmd/db",
     "crates/app",
     "crates/domain/hello-world",
     "crates/domain/users",

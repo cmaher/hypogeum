@@ -1,23 +1,24 @@
 [package]
-name = "hypogeum-db-cli"
+name = "exemplum-db-cli"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
 [[bin]]
-name = "hypogeum-db"
+name = "exemplum-db"
 path = "src/main.rs"
 
 [dependencies]
-hypgm-ext-db = { path = "../../crates/ext/rdbms/db" }
-hypgm-env-config = { path = "../../crates/core/env-config" }
+hypgm-ext-db = { path = "../../../crates/ext/rdbms/db" }
+hypgm-env-config = { path = "../../../crates/core/env-config" }
+exemplum-dmn-users = { path = "../../crates/domain/users" }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
 sqlx = { workspace = true, features = ["macros"] }
-hypgm-test-support = { path = "../../crates/core/test-support" }
+hypgm-test-support = { path = "../../../crates/core/test-support" }
 
 [lints]
 workspace = true

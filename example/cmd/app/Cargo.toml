@@ -1,5 +1,5 @@
 [package]
-name = "app-cli"
+name = "exemplum-app-cli"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,13 +9,13 @@ name = "app"
 path = "src/main.rs"
 
 [dependencies]
-exemplum-app = { path = "../../example/crates/app" }
-exemplum-dmn-hello-world = { path = "../../example/crates/domain/hello-world" }
+exemplum-app = { path = "../../crates/app" }
+exemplum-dmn-hello-world = { path = "../../crates/domain/hello-world" }
 axum = { version = "0.8", features = ["http2"] }
 tokio.workspace = true
 anyhow = "1"
-hypgm-env-config = { path = "../../crates/core/env-config" }
-hypgm-logging = { path = "../../crates/core/logging" }
+hypgm-env-config = { path = "../../../crates/core/env-config" }
+hypgm-logging = { path = "../../../crates/core/logging" }
 serde.workspace = true
 tracing = "0.1"
 

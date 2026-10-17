@@ -29,19 +29,19 @@ async fn run() -> Result<Value, String> {
     }
     if args == ["--describe"] || args == ["--help"] || args == ["-h"] {
         return Ok(
-            json!({"commands":["migrate","verify","inspect"],"output":"json","configuration":"HYPOGEUM_MIGRATION_DATABASE_URL","migrations":"Explicit only; dedicated migrator credentials required"}),
+            json!({"commands":["migrate","verify","inspect"],"output":"json","configuration":"EXEMPLUM_MIGRATION_DATABASE_URL","migrations":"Explicit only; dedicated migrator credentials required"}),
         );
     }
     if args.len() != 1 || !matches!(args[0].as_str(), "migrate" | "verify" | "inspect") {
         return Err(
-            "Usage: hypogeum-db migrate|verify|inspect [--output json]; --describe for schema"
+            "Usage: exemplum-db migrate|verify|inspect [--output json]; --describe for schema"
                 .into(),
         );
     }
 
     let env = EnvSource::load().map_err(|e| e.to_string())?;
     let config: Config = env
-        .deserialize("HYPOGEUM_MIGRATION_")
+        .deserialize("EXEMPLUM_MIGRATION_")
         .map_err(|e| e.to_string())?;
     let url = config.database_url.expose();
 
@@ -69,10 +69,10 @@ mod tests {
     #[test]
     fn test_config_loads_with_url() {
         let env = EnvSource::from_pairs([(
-            "HYPOGEUM_MIGRATION_DATABASE_URL",
+            "EXEMPLUM_MIGRATION_DATABASE_URL",
             "postgres://user:pass@localhost/db",
         )]);
-        let config: Config = env.deserialize("HYPOGEUM_MIGRATION_").unwrap();
+        let config: Config = env.deserialize("EXEMPLUM_MIGRATION_").unwrap();
         assert_eq!(
             config.database_url.expose(),
             "postgres://user:pass@localhost/db"
@@ -80,12 +80,12 @@ mod tests {
     }
 
     #[test]
-    fn test_config_missing_url_error_names_hypogeum_migration_database_url() {
+    fn test_config_missing_url_error_names_exemplum_migration_database_url() {
         let env = EnvSource::from_pairs(Vec::<(&str, &str)>::new());
         let err = env
-            .deserialize::<Config>("HYPOGEUM_MIGRATION_")
+            .deserialize::<Config>("EXEMPLUM_MIGRATION_")
             .unwrap_err();
         let err_msg = err.to_string();
-        assert!(err_msg.contains("HYPOGEUM_MIGRATION_DATABASE_URL"));
+        assert!(err_msg.contains("EXEMPLUM_MIGRATION_DATABASE_URL"));
     }
 }

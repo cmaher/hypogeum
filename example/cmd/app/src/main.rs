@@ -28,9 +28,9 @@ async fn main() -> anyhow::Result<()> {
     use std::sync::Arc;
 
     let env = EnvSource::load()?;
-    let config: AppConfig = env.deserialize("HYPOGEUM_APP_")?;
-    let log: LogConfig = env.deserialize("HYPOGEUM_")?;
-    let log_format: AppLogConfig = env.deserialize("HYPOGEUM_")?;
+    let config: AppConfig = env.deserialize("EXEMPLUM_APP_")?;
+    let log: LogConfig = env.deserialize("EXEMPLUM_")?;
+    let log_format: AppLogConfig = env.deserialize("EXEMPLUM_")?;
 
     hypgm_logging::init(&log.log, log_format.log_format)
         .context("Initialize logging subscriber")?;
@@ -87,30 +87,30 @@ mod tests {
     #[test]
     fn bind_defaults_without_database_configuration() {
         let env = EnvSource::from_pairs(Vec::<(&str, &str)>::new());
-        let config: AppConfig = env.deserialize("HYPOGEUM_APP_").unwrap();
+        let config: AppConfig = env.deserialize("EXEMPLUM_APP_").unwrap();
         assert_eq!(config.bind, "127.0.0.1:8080".parse::<SocketAddr>().unwrap());
     }
 
     #[test]
     fn bind_can_be_overridden_and_invalid_addresses_fail() {
-        let env = EnvSource::from_pairs([("HYPOGEUM_APP_BIND", "127.0.0.1:9090")]);
-        let config: AppConfig = env.deserialize("HYPOGEUM_APP_").unwrap();
+        let env = EnvSource::from_pairs([("EXEMPLUM_APP_BIND", "127.0.0.1:9090")]);
+        let config: AppConfig = env.deserialize("EXEMPLUM_APP_").unwrap();
         assert_eq!(config.bind, "127.0.0.1:9090".parse::<SocketAddr>().unwrap());
-        let env = EnvSource::from_pairs([("HYPOGEUM_APP_BIND", "invalid")]);
-        assert!(env.deserialize::<AppConfig>("HYPOGEUM_APP_").is_err());
+        let env = EnvSource::from_pairs([("EXEMPLUM_APP_BIND", "invalid")]);
+        assert!(env.deserialize::<AppConfig>("EXEMPLUM_APP_").is_err());
     }
 
     #[test]
     fn log_format_defaults_and_overrides() {
         let env = EnvSource::from_pairs(Vec::<(&str, &str)>::new());
-        let log: AppLogConfig = env.deserialize("HYPOGEUM_").unwrap();
+        let log: AppLogConfig = env.deserialize("EXEMPLUM_").unwrap();
         assert_eq!(log.log_format, LogFormat::Text);
 
-        let env = EnvSource::from_pairs([("HYPOGEUM_LOG_FORMAT", "json")]);
-        let log: AppLogConfig = env.deserialize("HYPOGEUM_").unwrap();
+        let env = EnvSource::from_pairs([("EXEMPLUM_LOG_FORMAT", "json")]);
+        let log: AppLogConfig = env.deserialize("EXEMPLUM_").unwrap();
         assert_eq!(log.log_format, LogFormat::Json);
 
-        let env = EnvSource::from_pairs([("HYPOGEUM_LOG_FORMAT", "invalid")]);
-        assert!(env.deserialize::<AppLogConfig>("HYPOGEUM_").is_err());
+        let env = EnvSource::from_pairs([("EXEMPLUM_LOG_FORMAT", "invalid")]);
+        assert!(env.deserialize::<AppLogConfig>("EXEMPLUM_").is_err());
     }
 }
