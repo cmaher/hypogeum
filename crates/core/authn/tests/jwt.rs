@@ -62,7 +62,9 @@ fn test_decode_valid_hs256_token() {
     .expect("encoding should succeed");
 
     let validator = JwtValidator::from_hs256_secret(TEST_SECRET);
-    let principal = validator.verify_token(&token).expect("verification should succeed");
+    let principal = validator
+        .verify_token(&token)
+        .expect("verification should succeed");
 
     assert_eq!(principal.auth_id, auth_id);
     assert_eq!(principal.user_id, user_id);
@@ -86,16 +88,13 @@ fn test_decode_valid_rs256_token() {
     let claims = Claims::new(user_id, auth_id, exp);
     let encoding_key =
         EncodingKey::from_rsa_pem(RSA_PRIVATE_KEY_PEM).expect("valid RSA private key");
-    let token = encode(
-        &Header::new(Algorithm::RS256),
-        &claims,
-        &encoding_key,
-    )
-    .expect("encoding should succeed");
+    let token = encode(&Header::new(Algorithm::RS256), &claims, &encoding_key)
+        .expect("encoding should succeed");
 
-    let validator =
-        JwtValidator::from_rs256_pem(RSA_PUBLIC_KEY_PEM).expect("valid RSA public key");
-    let principal = validator.verify_token(&token).expect("RS256 verification should succeed");
+    let validator = JwtValidator::from_rs256_pem(RSA_PUBLIC_KEY_PEM).expect("valid RSA public key");
+    let principal = validator
+        .verify_token(&token)
+        .expect("RS256 verification should succeed");
 
     assert_eq!(principal.auth_id, auth_id);
     assert_eq!(principal.user_id, user_id);
@@ -199,10 +198,7 @@ fn test_issuer_and_audience_validation() {
         audience: Some("api.example.com".to_string()),
         leeway_seconds: 0,
     };
-    let validator = JwtValidator::new(
-        jsonwebtoken::DecodingKey::from_secret(TEST_SECRET),
-        config,
-    );
+    let validator = JwtValidator::new(jsonwebtoken::DecodingKey::from_secret(TEST_SECRET), config);
 
     let principal = validator.verify_token(&token).unwrap();
     assert_eq!(principal.auth_id, auth_id);

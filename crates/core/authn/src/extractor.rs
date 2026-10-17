@@ -100,7 +100,12 @@ pub fn extract_principal_from_parts(parts: &Parts) -> Result<Option<Principal>, 
                 .extensions
                 .get::<JwtValidator>()
                 .cloned()
-                .or_else(|| parts.extensions.get::<Arc<JwtValidator>>().map(|v| (**v).clone()))
+                .or_else(|| {
+                    parts
+                        .extensions
+                        .get::<Arc<JwtValidator>>()
+                        .map(|v| (**v).clone())
+                })
                 .ok_or_else(|| {
                     AuthError::Internal("JwtValidator not found in request extensions".to_string())
                 })?;
@@ -117,19 +122,20 @@ pub fn extract_principal_from_parts(parts: &Parts) -> Result<Option<Principal>, 
     }
 
     // Check if an axum-login AuthSession is present in extensions
-    if let Some(session) = parts.extensions.get::<axum_login::AuthSession<PrincipalAuthBackend<()>>>() {
-        if let Some(ref principal) = session.user {
-            return Ok(Some(principal.clone()));
-        }
+    if let Some(principal) = parts
+        .extensions
+        .get::<axum_login::AuthSession<PrincipalAuthBackend<()>>>()
+        .and_then(|s| s.user.as_ref())
+    {
+        return Ok(Some(principal.clone()));
     }
 
-    if let Some(session) = parts
+    if let Some(principal) = parts
         .extensions
         .get::<axum_login::AuthSession<PrincipalAuthBackend<Arc<dyn AuthBackend>>>>()
+        .and_then(|s| s.user.as_ref())
     {
-        if let Some(ref principal) = session.user {
-            return Ok(Some(principal.clone()));
-        }
+        return Ok(Some(principal.clone()));
     }
 
     Ok(None)
