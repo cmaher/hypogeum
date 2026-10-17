@@ -1,5 +1,5 @@
 use hypgm_authn::{AuthMethod, Principal};
-use hypgm_authz::{Authorizer, AuthzError, Decision, load_schema_and_policies};
+use hypgm_authz::{Authorizer, AuthzError, Decision, Entities, load_schema_and_policies};
 use uuid::Uuid;
 
 const SCHEMA: &str = r#"
@@ -180,7 +180,11 @@ fn test_authorizer_fail_closed_on_missing_attribute_evaluation_error() {
     };
     action "View" appliesTo {
         principal: [User],
-        resource: [Document]
+        resource: [Document],
+        context: {
+            auth_id: String,
+            auth_method: String
+        }
     };
     "#;
     let policy_str = r#"
@@ -207,4 +211,141 @@ fn test_authorizer_fail_closed_on_missing_attribute_evaluation_error() {
 
     let auth_res = authorizer.authorize(&principal, "Action::\"View\"", "Document::\"doc-123\"");
     assert!(matches!(auth_res, Err(AuthzError::Forbidden)));
+}
+
+#[test]
+fn test_authorizer_with_preloaded_entities() {
+    let schema_str = r#"
+    entity User;
+    entity Document {
+        is_secret: Bool
+    };
+    action "View" appliesTo {
+        principal: [User],
+        resource: [Document],
+        context: {
+            auth_id: String,
+            auth_method: String
+        }
+    };
+    "#;
+    let policy_str = r#"
+    permit(
+        principal,
+        action == Action::"View",
+        resource
+    ) when {
+        resource.is_secret == false
+    };
+    "#;
+    let (schema, policies) = load_schema_and_policies(schema_str, policy_str).unwrap();
+
+    let entities_json = serde_json::json!([
+        {
+            "uid": { "type": "Document", "id": "doc-public" },
+            "attrs": { "is_secret": false },
+            "parents": []
+        },
+        {
+            "uid": { "type": "Document", "id": "doc-secret" },
+            "attrs": { "is_secret": true },
+            "parents": []
+        }
+    ]);
+    let entities = Entities::from_json_value(entities_json, Some(&schema)).unwrap();
+    let authorizer = Authorizer::with_entities(schema, policies, entities);
+
+    let user_id = Uuid::new_v4();
+    let auth_id = Uuid::new_v4();
+    let principal = Principal::new(auth_id, user_id, AuthMethod::BearerJwt);
+
+    // doc-public has is_secret == false -> Allow
+    assert_eq!(
+        authorizer.is_authorized(&principal, "Action::\"View\"", "Document::\"doc-public\""),
+        Decision::Allow
+    );
+    assert!(
+        authorizer
+            .authorize(&principal, "Action::\"View\"", "Document::\"doc-public\"")
+            .is_ok()
+    );
+
+    // doc-secret has is_secret == true -> Deny
+    assert_eq!(
+        authorizer.is_authorized(&principal, "Action::\"View\"", "Document::\"doc-secret\""),
+        Decision::Deny
+    );
+    assert!(matches!(
+        authorizer.authorize(&principal, "Action::\"View\"", "Document::\"doc-secret\""),
+        Err(AuthzError::Forbidden)
+    ));
+}
+
+#[test]
+fn test_authorizer_with_runtime_entities() {
+    let schema_str = r#"
+    entity User;
+    entity Document {
+        is_secret: Bool
+    };
+    action "View" appliesTo {
+        principal: [User],
+        resource: [Document],
+        context: {
+            auth_id: String,
+            auth_method: String
+        }
+    };
+    "#;
+    let policy_str = r#"
+    permit(
+        principal,
+        action == Action::"View",
+        resource
+    ) when {
+        resource.is_secret == false
+    };
+    "#;
+    let (schema, policies) = load_schema_and_policies(schema_str, policy_str).unwrap();
+    let authorizer = Authorizer::new(schema.clone(), policies);
+
+    let entities_json = serde_json::json!([
+        {
+            "uid": { "type": "Document", "id": "dynamic-doc" },
+            "attrs": { "is_secret": false },
+            "parents": []
+        }
+    ]);
+    let runtime_entities = Entities::from_json_value(entities_json, Some(&schema)).unwrap();
+
+    let user_id = Uuid::new_v4();
+    let auth_id = Uuid::new_v4();
+    let principal = Principal::new(auth_id, user_id, AuthMethod::BearerJwt);
+
+    // Evaluating without entities fails closed
+    assert_eq!(
+        authorizer.is_authorized(&principal, "Action::\"View\"", "Document::\"dynamic-doc\""),
+        Decision::Deny
+    );
+
+    // Evaluating with runtime entities permits access
+    assert_eq!(
+        authorizer.is_authorized_with_entities(
+            &principal,
+            "Action::\"View\"",
+            "Document::\"dynamic-doc\"",
+            &runtime_entities
+        ),
+        Decision::Allow
+    );
+    assert!(
+        authorizer
+            .authorize_with_entities(
+                &principal,
+                "Action::\"View\"",
+                "Document::\"dynamic-doc\"",
+                &runtime_entities
+            )
+            .is_ok()
+    );
 }

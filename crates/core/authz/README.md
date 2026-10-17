@@ -6,7 +6,7 @@ Core authorization crate for the Hypogeum framework.
 - **Cedar Policy Engine**: In-memory `Authorizer` wrapping `cedar_policy::PolicySet` and `cedar_policy::Schema` with strict fail-closed evaluation.
 - **Declarative Loader**: Validates `.cedarschema` schemas and `.cedar` policies from strings or disk files at startup.
 - **Principal & Context Mapping**: Maps `Principal` from `hypgm-authn` to Cedar `User::<user_id>` with execution context attributes (`auth_id`, `auth_method`).
-- **Axum Integration**: `RequirePermission` extractor and `require_permission` guard helper, returning uniform HTTP 403 Forbidden (`PublicError`) responses on policy denial.
+- **Axum Integration**: `RequirePermission` extractor, `require_permission`, and `require_permission_with_entities` guard helpers, returning uniform HTTP 401 Unauthorized for unauthenticated callers and HTTP 403 Forbidden (`PublicError`) on policy denial.
 - **Diagnostics Redaction**: Internal policy diagnostics and evaluation errors are redacted from client responses and logged at `warn` level.
 
 ## Core Concepts
@@ -67,7 +67,11 @@ Enforce permissions in Axum route handlers using declarative policy extractors o
 use std::sync::Arc;
 use axum::{Router, Json, routing::get, extract::State};
 use hypgm_authn::Principal;
-use hypgm_authz::{Authorizer, AuthzRejection, PermissionPolicy, RequirePermission, require_permission};
+use hypgm_authn::{Principal, RequireAuth};
+use hypgm_authz::{
+    Authorizer, AuthzRejection, PermissionPolicy, RequirePermission, require_permission,
+    require_permission_with_entities,
+};
 
 struct ViewDocumentPolicy;
 impl PermissionPolicy for ViewDocumentPolicy {
@@ -75,14 +79,22 @@ impl PermissionPolicy for ViewDocumentPolicy {
     fn resource() -> &'static str { "Document::\"public\"" }
 }
 
-// Extractor guard
+// Extractor guard (authenticates caller and verifies policy)
 async fn static_guard_handler(
     _perm: RequirePermission<ViewDocumentPolicy>,
 ) -> &'static str {
     "Authorized"
 }
 
-// Programmatic helper inside handler
+// Composed with RequireAuth extractor
+async fn composed_handler(
+    RequireAuth(principal): RequireAuth,
+    _perm: RequirePermission<ViewDocumentPolicy>,
+) -> String {
+    format!("Authorized user {}", principal.user_id)
+}
+
+// Programmatic helper inside handler with dynamic resource
 async fn dynamic_handler(
     State(authorizer): State<Arc<Authorizer>>,
     axum::Extension(principal): axum::Extension<Principal>,
@@ -93,6 +105,7 @@ async fn dynamic_handler(
 
 let app = Router::new()
     .route("/static", get(static_guard_handler))
+    .route("/composed", get(composed_handler))
     .route("/dynamic", get(dynamic_handler))
     .with_state(Arc::new(authorizer));
 ```

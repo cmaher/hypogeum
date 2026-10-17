@@ -5,46 +5,73 @@ use std::sync::Arc;
 use axum::extract::{FromRef, FromRequestParts};
 use axum::http::request::Parts;
 use axum::response::{IntoResponse, Response};
-use hypgm_authn::Principal;
+use hypgm_authn::{AuthError, Principal, extract_principal_from_parts};
+use hypgm_errors::{PublicError, PublicErrorInfo};
 use hypgm_http::render_public_error;
 
 use crate::authorizer::{AsEntityUid, Authorizer};
 use crate::error::AuthzError;
 
-/// Error rejection returned when authorization fails.
+/// Error rejection returned when authentication or authorization fails.
 ///
-/// Converts into a uniform JSON error response (e.g. HTTP 403 Forbidden with
-/// `{"code": "forbidden", "message": "Access denied by policy"}`) using `hypgm-http`.
+/// Converts into a uniform JSON error response:
+/// - HTTP 401 Unauthorized for missing or invalid authentication credentials (`hypgm-authn`).
+/// - HTTP 403 Forbidden for policy denial (`AuthzError::Forbidden`).
+/// - HTTP 500 Internal Server Error for evaluation or internal errors.
 #[derive(Debug)]
-pub struct AuthzRejection(pub AuthzError);
+pub enum AuthzRejection {
+    Auth(AuthError),
+    Authz(AuthzError),
+}
 
 impl std::fmt::Display for AuthzRejection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
+        match self {
+            Self::Auth(err) => write!(f, "{err}"),
+            Self::Authz(err) => write!(f, "{err}"),
+        }
     }
 }
 
 impl std::error::Error for AuthzRejection {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(&self.0)
+        match self {
+            Self::Auth(err) => Some(err),
+            Self::Authz(err) => Some(err),
+        }
+    }
+}
+
+impl From<AuthError> for AuthzRejection {
+    fn from(err: AuthError) -> Self {
+        Self::Auth(err)
     }
 }
 
 impl From<AuthzError> for AuthzRejection {
     fn from(err: AuthzError) -> Self {
-        Self(err)
+        Self::Authz(err)
+    }
+}
+
+impl PublicError for AuthzRejection {
+    fn public_error(&self) -> PublicErrorInfo {
+        match self {
+            Self::Auth(err) => err.public_error(),
+            Self::Authz(err) => err.public_error(),
+        }
     }
 }
 
 impl IntoResponse for AuthzRejection {
     fn into_response(self) -> Response {
-        render_public_error(&self.0)
+        render_public_error(&self)
     }
 }
 
 /// Helper function to evaluate permissions against an `Authorizer`.
 ///
-/// Returns `Ok(())` on `Decision::Allow`, or `Err(AuthzRejection(AuthzError::Forbidden))`
+/// Returns `Ok(())` on `Decision::Allow`, or `Err(AuthzRejection::Authz(AuthzError::Forbidden))`
 /// on `Decision::Deny`.
 pub fn require_permission(
     authorizer: &Authorizer,
@@ -54,7 +81,20 @@ pub fn require_permission(
 ) -> Result<(), AuthzRejection> {
     authorizer
         .authorize(principal, action, resource)
-        .map_err(AuthzRejection)
+        .map_err(AuthzRejection::Authz)
+}
+
+/// Helper function to evaluate permissions against an `Authorizer` with explicitly supplied entities.
+pub fn require_permission_with_entities(
+    authorizer: &Authorizer,
+    principal: &Principal,
+    action: impl AsEntityUid,
+    resource: impl AsEntityUid,
+    entities: &cedar_policy::Entities,
+) -> Result<(), AuthzRejection> {
+    authorizer
+        .authorize_with_entities(principal, action, resource, entities)
+        .map_err(AuthzRejection::Authz)
 }
 
 /// Static declarative specification of action and resource for [`RequirePermission`].
@@ -63,11 +103,14 @@ pub trait PermissionPolicy: Send + Sync + 'static {
     fn resource() -> &'static str;
 }
 
-/// Axum extractor that validates that the authenticated [`Principal`] has permission to execute
-/// the specified action on the resource defined by [`PermissionPolicy`].
+/// Axum extractor that validates that the caller is authenticated as a [`Principal`] and has permission
+/// to execute the specified action on the resource defined by [`PermissionPolicy`].
 ///
-/// Requires `Arc<Authorizer>` to be registered in Axum `State` or request extensions,
-/// and `Principal` (or `RequireAuth`) to be present in request extensions.
+/// Authenticates the caller via [`hypgm_authn::extract_principal_from_parts`] (inspecting Bearer JWT headers,
+/// request extensions, and active sessions). Unauthenticated callers are rejected with HTTP 401 Unauthorized;
+/// policy denials are rejected with HTTP 403 Forbidden.
+///
+/// Requires `Arc<Authorizer>` to be registered in Axum `State` (with optional per-request override in request extensions).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RequirePermission<P: PermissionPolicy> {
     pub principal: Principal,
@@ -87,14 +130,9 @@ impl<P: PermissionPolicy> RequirePermission<P> {
         self.principal
     }
 
-    /// Direct permission check helper.
-    pub fn check(
-        authorizer: &Authorizer,
-        principal: &Principal,
-        action: impl AsEntityUid,
-        resource: impl AsEntityUid,
-    ) -> Result<(), AuthzRejection> {
-        require_permission(authorizer, principal, action, resource)
+    /// Direct permission check helper for policy `P`.
+    pub fn check(authorizer: &Authorizer, principal: &Principal) -> Result<(), AuthzRejection> {
+        require_permission(authorizer, principal, P::action(), P::resource())
     }
 }
 
@@ -107,12 +145,12 @@ where
     type Rejection = AuthzRejection;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        let principal = if let Some(p) = parts.extensions.get::<Principal>() {
-            p.clone()
-        } else if let Some(auth) = parts.extensions.get::<hypgm_authn::RequireAuth>() {
-            auth.0.clone()
-        } else {
-            return Err(AuthzRejection(AuthzError::Forbidden));
+        let principal = match extract_principal_from_parts(parts) {
+            Ok(Some(p)) => p,
+            Ok(None) => {
+                return Err(AuthzRejection::Auth(AuthError::MissingCredentials));
+            }
+            Err(err) => return Err(AuthzRejection::Auth(err)),
         };
 
         let authorizer = if let Some(authz) = parts.extensions.get::<Arc<Authorizer>>() {

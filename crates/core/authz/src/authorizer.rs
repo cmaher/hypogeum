@@ -1,6 +1,6 @@
 use cedar_policy::{
-    Authorizer as CedarAuthorizer, Context, Decision, Entities, EntityUid, PolicySet, Request,
-    Schema,
+    Authorizer as CedarAuthorizer, Context, Decision, Entities, EntityId, EntityTypeName,
+    EntityUid, PolicySet, Request, Schema,
 };
 use hypgm_authn::{AuthMethod, Principal};
 use std::str::FromStr;
@@ -141,7 +141,13 @@ impl Authorizer {
             }
         };
 
-        let request = match Request::new(principal_uid, action_uid, resource_uid, context, None) {
+        let request = match Request::new(
+            principal_uid,
+            action_uid,
+            resource_uid,
+            context,
+            Some(&self.schema),
+        ) {
             Ok(req) => req,
             Err(err) => {
                 tracing::warn!(error = %err, "Failed to construct Cedar Request; failing closed");
@@ -193,9 +199,13 @@ impl Authorizer {
 }
 
 fn principal_to_entity_uid(principal: &Principal) -> Result<EntityUid, AuthzError> {
-    EntityUid::from_str(&format!("User::\"{}\"", principal.user_id)).map_err(|e| {
-        AuthzError::EvaluationError(format!("Failed to parse principal EntityUid: {e}"))
-    })
+    let type_name = EntityTypeName::from_str("User").map_err(|e| {
+        AuthzError::EvaluationError(format!("Failed to parse principal EntityTypeName: {e}"))
+    })?;
+    let entity_id = EntityId::from_str(&principal.user_id.to_string()).map_err(|e| {
+        AuthzError::EvaluationError(format!("Failed to parse principal EntityId: {e}"))
+    })?;
+    Ok(EntityUid::from_type_name_and_id(type_name, entity_id))
 }
 
 fn build_context(principal: &Principal) -> Result<Context, AuthzError> {

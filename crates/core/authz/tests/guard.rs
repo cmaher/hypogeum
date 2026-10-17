@@ -7,10 +7,10 @@ use axum::response::{IntoResponse, Json};
 use axum::routing::get;
 use axum::{Extension, Router};
 use http_body_util::BodyExt;
-use hypgm_authn::{AuthMethod, Principal};
+use hypgm_authn::{AuthMethod, Principal, RequireAuth};
 use hypgm_authz::{
     Authorizer, AuthzRejection, PermissionPolicy, RequirePermission, load_schema_and_policies,
-    require_permission,
+    require_permission, require_permission_with_entities,
 };
 use tower::ServiceExt;
 use uuid::Uuid;
@@ -84,6 +84,13 @@ async fn delete_handler(_perm: RequirePermission<DeleteDocPolicy>) -> impl IntoR
     Json(serde_json::json!({ "result": "deleted" }))
 }
 
+async fn composed_handler(
+    RequireAuth(principal): RequireAuth,
+    _perm: RequirePermission<ViewAllowedDocPolicy>,
+) -> impl IntoResponse {
+    Json(serde_json::json!({ "result": "composed_ok", "user": principal.user_id.to_string() }))
+}
+
 async fn dynamic_handler(
     State(authorizer): State<Arc<Authorizer>>,
     Extension(principal): Extension<Principal>,
@@ -107,6 +114,7 @@ fn build_test_app() -> (Router, Arc<Authorizer>) {
     let app = Router::new()
         .route("/view", get(view_handler))
         .route("/delete", get(delete_handler))
+        .route("/composed", get(composed_handler))
         .route("/doc/{doc_id}", get(dynamic_handler))
         .with_state(Arc::clone(&authorizer));
 
@@ -209,12 +217,94 @@ async fn test_guard_dynamic_require_permission_helper() {
 async fn test_guard_unauthenticated_request_denied() {
     let (app, _) = build_test_app();
 
-    // No principal extension attached
+    // No credentials attached -> returns 401 Unauthorized
     let req = Request::builder().uri("/view").body(Body::empty()).unwrap();
 
     let response = app.oneshot(req).await.unwrap();
-    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
-    assert_eq!(json["code"], "forbidden");
+    assert_eq!(json["code"], "unauthenticated");
+    assert_eq!(json["message"], "Authentication required");
+}
+
+#[tokio::test]
+async fn test_guard_composed_with_require_auth() {
+    let (app, _) = build_test_app();
+    let principal = Principal::new(Uuid::new_v4(), Uuid::new_v4(), AuthMethod::BearerJwt);
+
+    let req = Request::builder()
+        .uri("/composed")
+        .extension(principal.clone())
+        .body(Body::empty())
+        .unwrap();
+
+    let response = app.oneshot(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+    assert_eq!(json["result"], "composed_ok");
+    assert_eq!(json["user"], principal.user_id.to_string());
+}
+
+#[test]
+fn test_guard_check_helper() {
+    let (schema, policies) = load_schema_and_policies(SCHEMA, POLICIES).unwrap();
+    let authorizer = Authorizer::new(schema, policies);
+    let principal = Principal::new(Uuid::new_v4(), Uuid::new_v4(), AuthMethod::BearerJwt);
+
+    // ViewAllowedDocPolicy permits View on Document::"allowed-doc"
+    assert!(RequirePermission::<ViewAllowedDocPolicy>::check(&authorizer, &principal).is_ok());
+
+    // DeleteDocPolicy has no permit -> Forbidden
+    let res = RequirePermission::<DeleteDocPolicy>::check(&authorizer, &principal);
+    assert!(matches!(res, Err(AuthzRejection::Authz(_))));
+}
+
+#[test]
+fn test_guard_dynamic_require_permission_with_entities() {
+    let schema_str = r#"
+    entity User;
+    entity Document {
+        is_secret: Bool
+    };
+    action "View" appliesTo {
+        principal: [User],
+        resource: [Document],
+        context: {
+            auth_id: String,
+            auth_method: String
+        }
+    };
+    "#;
+    let policy_str = r#"
+    permit(
+        principal,
+        action == Action::"View",
+        resource
+    ) when {
+        resource.is_secret == false
+    };
+    "#;
+    let (schema, policies) = load_schema_and_policies(schema_str, policy_str).unwrap();
+    let authorizer = Authorizer::new(schema.clone(), policies);
+
+    let entities_json = serde_json::json!([
+        {
+            "uid": { "type": "Document", "id": "doc-public" },
+            "attrs": { "is_secret": false },
+            "parents": []
+        }
+    ]);
+    let entities = cedar_policy::Entities::from_json_value(entities_json, Some(&schema)).unwrap();
+    let principal = Principal::new(Uuid::new_v4(), Uuid::new_v4(), AuthMethod::BearerJwt);
+
+    let res = require_permission_with_entities(
+        &authorizer,
+        &principal,
+        "Action::\"View\"",
+        "Document::\"doc-public\"",
+        &entities,
+    );
+    assert!(res.is_ok());
 }
