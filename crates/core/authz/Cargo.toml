@@ -1,0 +1,25 @@
+[package]
+name = "hypgm-authz"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+axum = { version = "0.8", default-features = false, features = ["tokio", "json"] }
+cedar-policy.workspace = true
+http = "1"
+hypgm-authn = { path = "../authn" }
+hypgm-errors = { path = "../errors" }
+hypgm-http = { path = "../http" }
+serde_json.workspace = true
+thiserror.workspace = true
+tracing = "0.1"
+
+[dev-dependencies]
+http-body-util = "0.1"
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tower = { version = "0.5", features = ["util"] }
+uuid = { workspace = true, features = ["v4"] }
+
+[lints]
+workspace = true
