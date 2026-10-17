@@ -5,7 +5,7 @@ use axum::extract::State;
 use axum::routing::{get, post};
 use exemplum_dmn_users::service::UserService;
 use hypgm_authn::RequireAuth;
-use hypgm_authz::Authorizer;
+use hypgm_authz::{Authorizer, Decision};
 use hypgm_http::{AppJson, HttpError};
 use std::sync::Arc;
 
@@ -66,15 +66,15 @@ async fn hello_me(
 
     let mut decision =
         authorizer.is_authorized(&principal, ("Action", "greet"), ("Resource", "hello_world"));
-    if decision != cedar_policy::Decision::Allow {
+    if decision != Decision::Allow {
         let alt =
             authorizer.is_authorized(&principal, ("Action", "greet"), ("Greeting", "hello_world"));
-        if alt == cedar_policy::Decision::Allow {
+        if alt == Decision::Allow {
             decision = alt;
         }
     }
 
-    if decision != cedar_policy::Decision::Allow {
+    if decision != Decision::Allow {
         return Err(hypgm_authz::AuthzError::Forbidden.into());
     }
 
