@@ -19,7 +19,7 @@ tower = "0.5"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
-tower = { version = "0.5", features = ["util"] }
+tower = { version = "0.5", features = ["util", "limit"] }
 futures-util = "0.3"
 logging = { path = "../logging" }
 

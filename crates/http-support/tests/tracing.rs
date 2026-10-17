@@ -285,6 +285,31 @@ async fn test_trace_layer_installation_and_execution() {
 }
 
 #[tokio::test]
+async fn test_trace_layer_preserves_concurrency_limiter_readiness() {
+    use std::convert::Infallible;
+    use std::time::Duration;
+    use tower::limit::ConcurrencyLimit;
+    use tower::{Layer, Service};
+
+    let inner = tower::service_fn(|_: Request<Body>| async {
+        Ok::<_, Infallible>(StatusCode::OK.into_response())
+    });
+    let mut service = http_support::trace_layer().layer(ConcurrencyLimit::new(inner, 1));
+
+    for _ in 0..2 {
+        let ready = tokio::time::timeout(Duration::from_secs(1), service.ready())
+            .await
+            .expect("the completed request must release the concurrency permit")
+            .unwrap();
+        let req = Request::builder().uri("/").body(Body::empty()).unwrap();
+        let response = ready.call(req).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(response.headers().contains_key(REQUEST_ID_HEADER.clone()));
+    }
+}
+
+#[tokio::test]
 async fn test_handler_error_retains_context_under_warn_and_error_filters() {
     let app = create_test_app();
 
