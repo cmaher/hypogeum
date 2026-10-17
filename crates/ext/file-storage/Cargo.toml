@@ -1,5 +1,5 @@
 [package]
-name = "file-storage"
+name = "hypgm-ext-file-storage"
 version = "0.1.0"
 edition = "2024"
 rust-version.workspace = true
@@ -7,7 +7,7 @@ rust-version.workspace = true
 [dependencies]
 async-trait = "0.1"
 bytes = "1"
-errors = { path = "../errors", default-features = false }
+hypgm-errors = { path = "../../core/errors", default-features = false }
 futures-core = "0.3"
 futures-util = "0.3"
 sha2 = "0.11"

@@ -1,5 +1,5 @@
 [package]
-name = "tasks"
+name = "hypgm-ext-tasks"
 version = "0.1.0"
 edition = "2024"
 rust-version.workspace = true
@@ -9,7 +9,7 @@ apalis.workspace = true
 apalis-board.workspace = true
 axum = "0.8"
 apalis-postgres.workspace = true
-errors = { path = "../errors", default-features = false }
+hypgm-errors = { path = "../../core/errors", default-features = false }
 sqlx = { workspace = true, features = ["macros"] }
 tower = { version = "0.5", features = ["retry", "limit"] }
 tokio = { version = "1", features = ["full"] }
@@ -18,7 +18,7 @@ serde_json = "1"
 ulid = "=3.0.0"
 
 [dev-dependencies]
-test-support = { path = "../test-support" }
+hypgm-test-support = { path = "../../core/test-support" }
 tokio = { version = "1", features = ["test-util"] }
 http-body-util = "0.1"
 
