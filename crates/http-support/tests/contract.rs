@@ -43,7 +43,7 @@ async fn test_error_mappings_and_no_leakage() {
             "Resource not found",
         ),
         (
-            HttpError::method_not_allowed(),
+            HttpError::method_not_allowed("GET, POST"),
             StatusCode::METHOD_NOT_ALLOWED,
             "method_not_allowed",
             "Method not allowed",
@@ -121,6 +121,19 @@ async fn test_method_not_allowed_preserves_allow_header() {
     let classification = resp.extensions().get::<ErrorClassification>().unwrap();
     assert_eq!(classification.code, "method_not_allowed");
     assert_eq!(classification.message, "Method not allowed");
+
+    // Verify typed HttpError::method_not_allowed also renders Allow header
+    let typed_resp = HttpError::method_not_allowed("GET, POST").into_response();
+    assert_eq!(typed_resp.status(), StatusCode::METHOD_NOT_ALLOWED);
+    assert_eq!(
+        typed_resp.headers().get(header::ALLOW).unwrap(),
+        &"GET, POST"
+    );
+    let typed_classification = typed_resp
+        .extensions()
+        .get::<ErrorClassification>()
+        .unwrap();
+    assert_eq!(typed_classification.code, "method_not_allowed");
 }
 
 #[tokio::test]
@@ -201,6 +214,36 @@ async fn test_json_extractor_content_type_validation() {
         .unwrap();
     let resp = app.clone().oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
+
+    // 6. Malformed media type with extra slashes (e.g. application/not/a/type+json)
+    let req = Request::builder()
+        .method("POST")
+        .uri("/echo")
+        .header(header::CONTENT_TYPE, "application/not/a/type+json")
+        .body(Body::from(r#"{"message":"hello"}"#))
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+
+    // 7. Malformed media type with empty subtype prefix (e.g. application/+json)
+    let req = Request::builder()
+        .method("POST")
+        .uri("/echo")
+        .header(header::CONTENT_TYPE, "application/+json")
+        .body(Body::from(r#"{"message":"hello"}"#))
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+
+    // 8. Malformed media type with whitespace
+    let req = Request::builder()
+        .method("POST")
+        .uri("/echo")
+        .header(header::CONTENT_TYPE, "application/bad space+json")
+        .body(Body::from(r#"{"message":"hello"}"#))
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
 }
 
 #[tokio::test]

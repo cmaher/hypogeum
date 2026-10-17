@@ -161,7 +161,7 @@ JSON Error Envelope (Safe status, code, message)
 | `RepoError::Database(_)` | `500 Internal Server Error` | `"internal_error"` | `"Internal server error"` (details redacted) |
 | `ServiceError::Remote(_)` | `500 Internal Server Error` | `"internal_error"` | `"Internal server error"` (details redacted) |
 | Malformed JSON body | `400 Bad Request` | `"invalid_request"` | `"Invalid request"` |
-| Body exceeds 16KiB | `413 Payload Too Large` | `"payload_too_large"` | `"Payload too large"` |
+| Consumed body exceeds 16KiB | `413 Payload Too Large` | `"payload_too_large"` | `"Payload too large"` |
 | Unsupported `Content-Type` | `415 Unsupported Media Type` | `"unsupported_media_type"` | `"Unsupported media type"` |
 | Route not found | `404 Not Found` | `"not_found"` | `"Resource not found"` |
 | Method not allowed | `405 Method Not Allowed` | `"method_not_allowed"` | `"Method not allowed"` (includes `Allow` header) |
@@ -191,10 +191,10 @@ let item = service.find(id).await.map_err(|e| {
 
 ## 4. HTTP Transport Policies and Hardening
 
-- **16KiB Raw Body Limit:**
-  Every request body is constrained to `MAX_BODY_BYTES = 16_384` bytes. Enforced both by Axum's `DefaultBodyLimit` and by the `AppJson` extractor for both fixed-length and chunked/streamed transfers. Exceeding requests are rejected immediately with `413 Payload Too Large`.
+- **16KiB Raw Body Limit (Extractor-Scoped):**
+  Request payloads consumed by the application are constrained to `MAX_BODY_BYTES = 16_384` bytes. Enforced by Axum's `DefaultBodyLimit` for cooperating extractors and strictly validated by the `AppJson` extractor for both fixed-length and chunked/streamed transfers. Exceeding payloads return `413 Payload Too Large`. Unread request bodies on endpoints that do not consume payloads (such as `GET /healthz` or unmapped routes) are ignored and not buffered by this layer; future extractors must explicitly consume bounded bodies.
 - **Strict Content-Type Validation:**
-  `AppJson` requires `Content-Type: application/json` or `application/*+json`. Other media types (or missing headers) return `415 Unsupported Media Type`.
+  `AppJson` requires valid MIME syntax with `Content-Type: application/json` or structured JSON subtypes (`application/<subtype>+json`). Malformed media types, syntax errors, or non-JSON media types return `415 Unsupported Media Type`.
 - **Trailing Slash Discipline:**
   `/api/hello` is the canonical route. Requesting `/api/hello/` returns `404 Not Found` without redirect, preventing ambiguous redirection loops.
 - **Strict Method Enforcement:**

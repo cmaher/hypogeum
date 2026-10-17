@@ -31,13 +31,69 @@ impl<T: Serialize> IntoResponse for AppJson<T> {
 }
 
 pub fn is_json_content_type(content_type: &str) -> bool {
-    let mime = content_type
-        .split(';')
-        .next()
-        .unwrap_or("")
-        .trim()
-        .to_ascii_lowercase();
-    mime == "application/json" || (mime.starts_with("application/") && mime.ends_with("+json"))
+    let media_type = match content_type.split(';').next() {
+        Some(m) => m.trim(),
+        None => return false,
+    };
+
+    if media_type.is_empty() {
+        return false;
+    }
+
+    let mut parts = media_type.split('/');
+    let top_type = match parts.next() {
+        Some(t) if !t.is_empty() => t,
+        _ => return false,
+    };
+    let sub_type = match parts.next() {
+        Some(s) if !s.is_empty() => s,
+        _ => return false,
+    };
+    if parts.next().is_some() {
+        return false;
+    }
+
+    if !top_type.eq_ignore_ascii_case("application") {
+        return false;
+    }
+
+    fn is_token_char(c: char) -> bool {
+        c.is_ascii_alphanumeric()
+            || matches!(
+                c,
+                '!' | '#'
+                    | '$'
+                    | '%'
+                    | '&'
+                    | '\''
+                    | '*'
+                    | '+'
+                    | '-'
+                    | '.'
+                    | '^'
+                    | '_'
+                    | '`'
+                    | '|'
+                    | '~'
+            )
+    }
+
+    if !sub_type.chars().all(is_token_char) {
+        return false;
+    }
+
+    if sub_type.eq_ignore_ascii_case("json") {
+        return true;
+    }
+
+    if sub_type.len() > 5 {
+        let (prefix, suffix) = sub_type.split_at(sub_type.len() - 5);
+        if suffix.eq_ignore_ascii_case("+json") && !prefix.is_empty() {
+            return true;
+        }
+    }
+
+    false
 }
 
 fn is_length_limit_error(err: &axum::Error) -> bool {

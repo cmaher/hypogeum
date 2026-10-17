@@ -66,6 +66,7 @@ pub enum HttpError {
     Service(ServiceError),
     Repo(RepoError),
     Classification(ErrorClassification),
+    MethodNotAllowed { allow: String },
 }
 
 impl HttpError {
@@ -80,6 +81,7 @@ impl HttpError {
             },
             Self::Repo(repo) => repo_to_classification(repo),
             Self::Classification(c) => *c,
+            Self::MethodNotAllowed { .. } => ErrorClassification::METHOD_NOT_ALLOWED,
         }
     }
 
@@ -95,8 +97,10 @@ impl HttpError {
         Self::Classification(ErrorClassification::NOT_FOUND)
     }
 
-    pub fn method_not_allowed() -> Self {
-        Self::Classification(ErrorClassification::METHOD_NOT_ALLOWED)
+    pub fn method_not_allowed(allow: impl Into<String>) -> Self {
+        Self::MethodNotAllowed {
+            allow: allow.into(),
+        }
     }
 
     pub fn payload_too_large() -> Self {
@@ -184,7 +188,9 @@ pub async fn not_found_handler() -> Response {
 
 impl IntoResponse for HttpError {
     fn into_response(self) -> Response {
-        let classification = self.classification();
-        render_error_response(classification)
+        match self {
+            Self::MethodNotAllowed { allow } => render_method_not_allowed(allow),
+            other => render_error_response(other.classification()),
+        }
     }
 }

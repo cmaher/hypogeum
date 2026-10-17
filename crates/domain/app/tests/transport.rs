@@ -329,6 +329,20 @@ async fn test_malformed_shape_and_content_type_errors() {
     assert_eq!(json["code"], "unsupported_media_type");
     assert_eq!(json["message"], "Unsupported media type");
 
+    // 5. Malformed content-type (application/not/a/type+json)
+    let resp = client
+        .post(format!("{}/api/hello", server.endpoint))
+        .header("content-type", "application/not/a/type+json")
+        .body(r#"{"name":"Ada"}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 415);
+    let text = resp.text().await.unwrap();
+    let json: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(json["code"], "unsupported_media_type");
+    assert_eq!(json["message"], "Unsupported media type");
+
     server.shutdown().await;
 }
 
