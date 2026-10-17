@@ -175,15 +175,19 @@ dependencies = [
 name = "app"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "axum",
  "errors",
+ "futures-util",
  "hello-world",
  "http-support",
+ "logging",
  "reqwest",
  "serde",
  "serde_json",
  "tokio",
  "tower",
+ "tracing",
  "uuid",
 ]
 

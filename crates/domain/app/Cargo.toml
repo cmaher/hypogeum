@@ -18,6 +18,10 @@ serde.workspace = true
 serde_json.workspace = true
 uuid.workspace = true
 tower = { version = "0.5", features = ["util"] }
+logging = { path = "../../logging" }
+tracing = "0.1"
+async-trait.workspace = true
+futures-util = "0.3"
 
 [lints]
 workspace = true

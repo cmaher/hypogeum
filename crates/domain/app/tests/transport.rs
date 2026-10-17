@@ -265,3 +265,197 @@ async fn test_16kib_body_limit_policy() {
 
     server.shutdown().await;
 }
+
+#[tokio::test]
+async fn test_malformed_shape_and_content_type_errors() {
+    let server = Server::start().await;
+    let client = reqwest::Client::new();
+
+    // 1. Malformed JSON
+    let resp = client
+        .post(format!("{}/api/hello", server.endpoint))
+        .header("content-type", "application/json")
+        .body(r#"{"name": broken"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+    let text = resp.text().await.unwrap();
+    let json: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(json["code"], "invalid_request");
+    assert_eq!(json["message"], "Invalid request");
+    assert!(!text.contains("broken"));
+
+    // 2. Shape invalid (expected string name, got integer)
+    let resp = client
+        .post(format!("{}/api/hello", server.endpoint))
+        .header("content-type", "application/json")
+        .body(r#"{"name": 12345}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+    let text = resp.text().await.unwrap();
+    let json: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(json["code"], "invalid_request");
+    assert_eq!(json["message"], "Invalid request");
+
+    // 3. Empty body
+    let resp = client
+        .post(format!("{}/api/hello", server.endpoint))
+        .header("content-type", "application/json")
+        .body("")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+    let text = resp.text().await.unwrap();
+    let json: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(json["code"], "invalid_request");
+
+    // 4. Unsupported content-type (text/plain)
+    let resp = client
+        .post(format!("{}/api/hello", server.endpoint))
+        .header("content-type", "text/plain")
+        .body(r#"{"name":"Ada"}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 415);
+    let text = resp.text().await.unwrap();
+    let json: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(json["code"], "unsupported_media_type");
+    assert_eq!(json["message"], "Unsupported media type");
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn test_chunked_streamed_16kib_boundary() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let server = Server::start().await;
+    let addr = server.endpoint.strip_prefix("http://").unwrap();
+
+    // 1. Exactly 16,384 bytes chunked succeeds 200 OK
+    let mut chunk = b"{\"name\":\"Ada\"}".to_vec();
+    chunk.resize(16_384, b' ');
+
+    let mut tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let req = format!(
+        "POST /api/hello HTTP/1.1\r\nHost: {addr}\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n{:x}\r\n",
+        chunk.len()
+    );
+    tcp.write_all(req.as_bytes()).await.unwrap();
+    tcp.write_all(&chunk).await.unwrap();
+    tcp.write_all(b"\r\n0\r\n\r\n").await.unwrap();
+
+    let mut resp = Vec::new();
+    tcp.read_to_end(&mut resp).await.unwrap();
+    let resp_str = String::from_utf8_lossy(&resp);
+    assert!(resp_str.starts_with("HTTP/1.1 200 OK"));
+
+    // 2. 16,385 bytes chunked fails 413 Payload Too Large
+    let mut large_chunk = b"{\"name\":\"Ada\"}".to_vec();
+    large_chunk.resize(16_385, b' ');
+
+    let mut tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let req = format!(
+        "POST /api/hello HTTP/1.1\r\nHost: {addr}\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n{:x}\r\n",
+        large_chunk.len()
+    );
+    tcp.write_all(req.as_bytes()).await.unwrap();
+    tcp.write_all(&large_chunk).await.unwrap();
+    tcp.write_all(b"\r\n0\r\n\r\n").await.unwrap();
+
+    let mut resp = Vec::new();
+    tcp.read_to_end(&mut resp).await.unwrap();
+    let resp_str = String::from_utf8_lossy(&resp);
+    assert!(resp_str.starts_with("HTTP/1.1 413 Payload Too Large"));
+    assert!(resp_str.contains(r#""code":"payload_too_large""#));
+
+    server.shutdown().await;
+}
+
+struct PausedService {
+    started: Arc<tokio::sync::Notify>,
+    release: Arc<tokio::sync::Notify>,
+}
+
+#[async_trait::async_trait]
+impl HelloWorldService for PausedService {
+    async fn say_hello(&self, name: &str) -> Result<String, errors::ServiceError> {
+        self.started.notify_one();
+        self.release.notified().await;
+        DefaultHelloWorldService.say_hello(name).await
+    }
+}
+
+#[tokio::test]
+async fn test_graceful_shutdown_drains_in_flight_request() {
+    let started = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+
+    let server = Server::start_with(Arc::new(PausedService {
+        started: started.clone(),
+        release: release.clone(),
+    }))
+    .await;
+
+    let client = reqwest::Client::new();
+    let endpoint = server.endpoint.clone();
+    let target_endpoint = endpoint.clone();
+
+    let request_task = tokio::spawn(async move {
+        client
+            .post(format!("{target_endpoint}/api/hello"))
+            .header("content-type", "application/json")
+            .body(r#"{"name":"Ada"}"#)
+            .send()
+            .await
+            .unwrap()
+    });
+
+    // Wait until the request has reached the service
+    tokio::time::timeout(Duration::from_secs(5), started.notified())
+        .await
+        .unwrap();
+
+    // Signal server shutdown
+    let _ = server.stop.send(());
+
+    // Give server a moment to begin draining; verify it has not exited yet
+    let mut serving = server.serving;
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), &mut serving)
+            .await
+            .is_err(),
+        "server exited while the in-flight request was still processing"
+    );
+
+    // Release the paused request
+    release.notify_one();
+
+    // In-flight request completes successfully
+    let resp = tokio::time::timeout(Duration::from_secs(5), request_task)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let text = resp.text().await.unwrap();
+    let json: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(json["message"], "Hello, Ada!");
+
+    // Server finishes shutdown and listener is released
+    tokio::time::timeout(Duration::from_secs(5), serving)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+
+    let addr = endpoint.strip_prefix("http://").unwrap();
+    assert!(
+        TcpListener::bind(addr).await.is_ok(),
+        "listener must be released after graceful shutdown"
+    );
+}
