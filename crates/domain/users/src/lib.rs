@@ -5,3 +5,5 @@ pub mod repo;
 pub mod server;
 pub mod service;
 mod wire;
+
+pub use service::UserError;

@@ -1,11 +1,11 @@
-use env_config::EnvSource;
+use hypgm_env_config::EnvSource;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::process::ExitCode;
 
 #[derive(Debug, Deserialize)]
 struct Config {
-    database_url: env_config::Secret,
+    database_url: hypgm_env_config::Secret,
 }
 
 #[tokio::main]
@@ -47,14 +47,16 @@ async fn run() -> Result<Value, String> {
 
     match args[0].as_str() {
         "migrate" => {
-            hypogeum_db::migrate(url).await.map_err(|e| e.to_string())?;
+            hypgm_ext_db::migrate(url)
+                .await
+                .map_err(|e| e.to_string())?;
             Ok(json!({"migrated":true}))
         }
         "verify" => {
-            hypogeum_db::verify(url).await.map_err(|e| e.to_string())?;
+            hypgm_ext_db::verify(url).await.map_err(|e| e.to_string())?;
             Ok(json!({"verified":true}))
         }
-        "inspect" => hypogeum_db::inspect(url).await.map_err(|e| e.to_string()),
+        "inspect" => hypgm_ext_db::inspect(url).await.map_err(|e| e.to_string()),
         _ => unreachable!(),
     }
 }
@@ -62,7 +64,7 @@ async fn run() -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use env_config::EnvSource;
+    use hypgm_env_config::EnvSource;
 
     #[test]
     fn test_config_loads_with_url() {

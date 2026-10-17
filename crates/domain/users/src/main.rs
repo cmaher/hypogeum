@@ -1,12 +1,12 @@
 use anyhow::{Context, Result};
-use env_config::{EnvSource, LogConfig};
-use serde::Deserialize;
-use std::{net::SocketAddr, sync::Arc};
-use users::{
+use hypgm_dmn_users::{
     repo::{PgUserRepo, check_ready},
     server::GrpcUserServer,
     service::DefaultUserService,
 };
+use hypgm_env_config::{EnvSource, LogConfig};
+use serde::Deserialize;
+use std::{net::SocketAddr, sync::Arc};
 
 fn default_bind() -> SocketAddr {
     "127.0.0.1:50051"
@@ -16,7 +16,7 @@ fn default_bind() -> SocketAddr {
 
 #[derive(Debug, Deserialize)]
 struct Config {
-    database_url: env_config::Secret,
+    database_url: hypgm_env_config::Secret,
     #[serde(default = "default_bind")]
     bind: SocketAddr,
 }
@@ -31,8 +31,10 @@ async fn main() -> Result<()> {
         .with_env_filter(tracing_subscriber::EnvFilter::try_new(&log.log)?)
         .init();
 
-    let pool = postgres::create_pool(&postgres::PostgresConfig::new(config.database_url.expose()))
-        .map_err(|_| anyhow::anyhow!("Invalid database configuration"))?;
+    let pool = hypgm_ext_postgres::create_pool(&hypgm_ext_postgres::PostgresConfig::new(
+        config.database_url.expose(),
+    ))
+    .map_err(|_| anyhow::anyhow!("Invalid database configuration"))?;
 
     check_ready(&pool)
         .await
@@ -69,7 +71,7 @@ async fn shutdown() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use env_config::EnvSource;
+    use hypgm_env_config::EnvSource;
 
     #[test]
     fn test_config_defaults() {
@@ -105,7 +107,7 @@ mod tests {
             ("HYPOGEUM_USERS_BIND", "not_a_valid_socket_addr"),
         ]);
         let err = env.deserialize::<Config>("HYPOGEUM_USERS_").unwrap_err();
-        assert!(matches!(err, env_config::ConfigError::Invalid(_)));
+        assert!(matches!(err, hypgm_env_config::ConfigError::Invalid(_)));
     }
 
     #[test]

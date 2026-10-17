@@ -1,5 +1,5 @@
-use app::router;
-use hello_world::service::{DefaultHelloWorldService, HelloWorldService};
+use hypgm_dmn_app::router;
+use hypgm_dmn_hello_world::service::{DefaultHelloWorldService, HelloWorldService};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
@@ -400,7 +400,10 @@ struct PausedService {
 
 #[async_trait::async_trait]
 impl HelloWorldService for PausedService {
-    async fn say_hello(&self, name: &str) -> Result<String, errors::ServiceError> {
+    async fn say_hello(
+        &self,
+        name: &str,
+    ) -> Result<String, hypgm_dmn_hello_world::HelloWorldError> {
         self.started.notify_one();
         self.release.notified().await;
         DefaultHelloWorldService.say_hello(name).await

@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use errors::RepoError;
+use hypgm_errors::RepoError;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 

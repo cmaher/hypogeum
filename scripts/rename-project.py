@@ -14,6 +14,7 @@ import sys
 
 SOURCE = "hypogeum"
 DISPLAY = "Hypogeum"
+SHORT = "hypgm"
 NAME_PATTERN = r"[a-z][a-z0-9]*(?:_[a-z0-9]+)*"
 # PostgreSQL reserved keywords, Rust strict/reserved keywords, and protobuf
 # declaration/scalar keywords. Keep this local: customization needs no network.
@@ -85,7 +86,7 @@ def validate_name(name):
         name in RESERVED
         or name.startswith("pg_")
         or len(name) > 63
-        or any(form.casefold() in name for form in (SOURCE, DISPLAY))
+        or any(form.casefold() in name for form in (SOURCE, DISPLAY, SHORT))
         or len({forms.lowercase, forms.uppercase, forms.pascal_case}) != 3
     ):
         raise RenameError(
@@ -131,6 +132,9 @@ def plan_changes(root, name):
         source.lowercase: target.lowercase,
         source.uppercase: target.uppercase,
         source.pascal_case: target.pascal_case,
+        SHORT: target.lowercase,
+        SHORT.upper(): target.uppercase,
+        SHORT.capitalize(): target.pascal_case,
     }
     pattern = re.compile(
         "|".join(re.escape(form) for form in sorted(replacements, key=len, reverse=True)),
@@ -187,6 +191,7 @@ def plan_changes(root, name):
 def describe():
     return {
         "source": SOURCE,
+        "short": SHORT,
         "name_pattern": NAME_PATTERN,
         "forms": ["lowercase", "UPPERCASE", "PascalCase"],
         "options": ["--dry-run", "--output", "--describe", "--help"],

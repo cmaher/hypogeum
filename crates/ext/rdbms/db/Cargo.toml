@@ -1,0 +1,21 @@
+[package]
+name = "hypgm-ext-db"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+apalis-postgres = { workspace = true, features = ["migrate"] }
+hypgm-errors = { path = "../../../core/errors", default-features = false }
+sqlx = { workspace = true, features = ["migrate", "macros"] }
+tokio.workspace = true
+serde_json.workspace = true
+hypgm-dmn-users = { path = "../../../domain/users" }
+sea-orm.workspace = true
+sea-orm-migration.workspace = true
+
+[dev-dependencies]
+hypgm-test-support = { path = "../../../core/test-support" }
+
+[lints]
+workspace = true

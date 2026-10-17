@@ -1,11 +1,10 @@
 use crate::{
     models::{PageRequest, User, UserPage},
-    service::UserService,
+    service::{UserError, UserService},
     wire,
 };
 use async_trait::async_trait;
-use errors::{RepoError, ServiceError};
-use rpc::users::{self as pb, users_client::UsersClient};
+use hypgm_rpc::users::{self as pb, users_client::UsersClient};
 use tonic::{Code, Status, transport::Channel};
 use uuid::Uuid;
 
@@ -23,29 +22,29 @@ impl GrpcUserClient {
             client: UsersClient::new(channel),
         }
     }
-    pub async fn connect(endpoint: String) -> Result<Self, ServiceError> {
+    pub async fn connect(endpoint: String) -> Result<Self, UserError> {
         let client = UsersClient::connect(endpoint)
             .await
-            .map_err(ServiceError::remote)?;
+            .map_err(|e| UserError::Remote(e.to_string()))?;
         Ok(Self { client })
     }
 }
 impl UserClient for GrpcUserClient {}
 
-fn error(status: Status) -> ServiceError {
+fn error(status: Status) -> UserError {
     match status.code() {
-        Code::NotFound => RepoError::NotFound.into(),
-        Code::InvalidArgument => ServiceError::Validation(status.message().into()),
-        _ => ServiceError::remote(status),
+        Code::NotFound => UserError::NotFound,
+        Code::InvalidArgument => UserError::Validation(status.message().into()),
+        _ => UserError::Remote(status.to_string()),
     }
 }
-fn user(response: pb::User) -> Result<User, ServiceError> {
+fn user(response: pb::User) -> Result<User, UserError> {
     wire::from_wire(response)
 }
 
 #[async_trait]
 impl UserService for GrpcUserClient {
-    async fn create(&self, name: &str) -> Result<User, ServiceError> {
+    async fn create(&self, name: &str) -> Result<User, UserError> {
         user(
             self.client
                 .clone()
@@ -57,7 +56,7 @@ impl UserService for GrpcUserClient {
                 .into_inner(),
         )
     }
-    async fn get(&self, id: Uuid) -> Result<User, ServiceError> {
+    async fn get(&self, id: Uuid) -> Result<User, UserError> {
         user(
             self.client
                 .clone()
@@ -67,7 +66,7 @@ impl UserService for GrpcUserClient {
                 .into_inner(),
         )
     }
-    async fn list(&self, page: PageRequest) -> Result<UserPage, ServiceError> {
+    async fn list(&self, page: PageRequest) -> Result<UserPage, UserError> {
         let response = self
             .client
             .clone()
@@ -83,7 +82,7 @@ impl UserService for GrpcUserClient {
         } else {
             Some(
                 wire::id(&response.next_after_id)
-                    .map_err(|_| ServiceError::InvalidResponse("Invalid pagination cursor"))?,
+                    .map_err(|_| UserError::InvalidResponse("Invalid pagination cursor"))?,
             )
         };
         Ok(UserPage {
@@ -95,7 +94,7 @@ impl UserService for GrpcUserClient {
             next_after,
         })
     }
-    async fn update_name(&self, id: Uuid, name: &str) -> Result<User, ServiceError> {
+    async fn update_name(&self, id: Uuid, name: &str) -> Result<User, UserError> {
         user(
             self.client
                 .clone()
@@ -108,7 +107,7 @@ impl UserService for GrpcUserClient {
                 .into_inner(),
         )
     }
-    async fn delete(&self, id: Uuid) -> Result<(), ServiceError> {
+    async fn delete(&self, id: Uuid) -> Result<(), UserError> {
         self.client
             .clone()
             .delete_user(pb::DeleteUserRequest { id: id.to_string() })

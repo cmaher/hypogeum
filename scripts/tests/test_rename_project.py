@@ -12,6 +12,7 @@ import unittest
 
 
 SOURCE = "hypogeum"
+SHORT = "hypgm"
 SCRIPT = Path(__file__).resolve().parents[1] / "rename-project.py"
 TARGET = "sample_app" if SOURCE != "sample_app" else "other_app"
 
@@ -37,6 +38,7 @@ class RenameProjectTests(unittest.TestCase):
         self.fixture.write_text(
             f"{SOURCE} {SOURCE.upper()} {display(SOURCE)}\n"
             f"{SOURCE}_db {SOURCE}-db {SOURCE}.users.v1 {SOURCE.upper()}_LOG\n"
+            f"{SHORT}-errors {SHORT}_ext_db {SHORT}_dmn_users\n"
         )
         self.git("add", ".")
 
@@ -76,23 +78,28 @@ class RenameProjectTests(unittest.TestCase):
         self.assertEqual(
             self.fixture.read_bytes(),
             (f"{TARGET} {TARGET.upper()} {display(TARGET)}\r\n"
-             f"{TARGET}_db {TARGET}-db {TARGET}.users.v1 {TARGET.upper()}_LOG\r\n").encode(),
+             f"{TARGET}_db {TARGET}-db {TARGET}.users.v1 {TARGET.upper()}_LOG\r\n"
+             f"{TARGET}-errors {TARGET}_ext_db {TARGET}_dmn_users\r\n").encode(),
         )
         self.assertEqual(stat.S_IMODE(self.fixture.stat().st_mode), 0o755)
         self.assertNotIn(SOURCE.encode(), self.script.read_bytes().lower())
+        self.assertNotIn(SHORT.encode(), self.script.read_bytes().lower())
         # The customized script can customize again, including PascalCase forms.
         self.run_script("next_project")
         self.assertIn("NextProject", self.fixture.read_text())
+        self.assertIn("next_project-errors next_project_ext_db next_project_dmn_users", self.fixture.read_text())
         self.assertNotIn(TARGET, self.fixture.read_text())
 
     def test_app_and_rpc_configuration_stay_aligned(self):
         repository = SCRIPT.parent.parent
         paths = [
             "proto/users.proto",
-            "crates/rpc/src/lib.rs",
+            "crates/core/rpc/src/lib.rs",
             "cmd/app/src/main.rs",
             "crates/domain/app/tests/transport.rs",
             "env/local.env.example",
+            "Cargo.toml",
+            "crates/ext/rdbms/db/Cargo.toml",
         ]
         for relative in paths:
             source = repository / relative
@@ -107,6 +114,8 @@ class RenameProjectTests(unittest.TestCase):
         main = (self.root / paths[2]).read_text()
         transport = (self.root / paths[3]).read_text()
         env = (self.root / paths[4]).read_text()
+        cargo_root = (self.root / paths[5]).read_text()
+        db_cargo = (self.root / paths[6]).read_text()
         package = f"{TARGET}.users.v1"
         self.assertIn(f"package {package};", proto)
         self.assertIn(f'tonic::include_proto!("{package}")', bindings)
@@ -114,8 +123,13 @@ class RenameProjectTests(unittest.TestCase):
         self.assertIn(f"{TARGET.upper()}_APP_BIND", main)
         self.assertIn(f"{TARGET.upper()}_APP_BIND=127.0.0.1:8080", env)
         self.assertIn(f"/{TARGET}.users.v1.Users/GetUser", transport)
+        self.assertIn(f"{TARGET}_dmn_app", transport)
+        self.assertIn(f"{TARGET}_logging", main)
+        self.assertIn("crates/core/rpc", cargo_root)
+        self.assertIn(f"{TARGET}-ext-db", db_cargo)
         for relative in paths:
             self.assertNotIn(SOURCE, (self.root / relative).read_text().lower())
+            self.assertNotIn(SHORT, (self.root / relative).read_text().lower())
 
     def test_hidden_tracked_files_are_included_but_local_files_are_excluded(self):
         hidden = self.root / ".settings"
@@ -134,7 +148,7 @@ class RenameProjectTests(unittest.TestCase):
     def test_invalid_names_fail_without_writing(self):
         names = ["", "a", "a1", "Upper", "has-dash", "has space", "../escape", "a__b", "a_", "1app",
                  "x\nname", "café", "select", "user", "self", "mod", "package", "apalis", "infra", "pg_custom", "a" * 64,
-                 SOURCE, SOURCE + "_copy"]
+                 SOURCE, SOURCE + "_copy", SHORT, SHORT + "_copy"]
         before = self.snapshot()
         for name in names:
             with self.subTest(name=name):
@@ -243,6 +257,7 @@ class RenameProjectTests(unittest.TestCase):
     def test_describe_and_invalid_arguments_return_json(self):
         result = self.run_script("--describe")
         self.assertEqual(result["data"]["source"], SOURCE)
+        self.assertEqual(result["data"]["short"], SHORT)
         self.assertIn("--dry-run", result["data"]["options"])
         result = self.run_script(TARGET, "--unknown", success=False)
         self.assertEqual(result["error"]["code"], "invalid_arguments")

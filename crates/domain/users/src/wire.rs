@@ -1,7 +1,8 @@
 use crate::models::User;
+use crate::service::UserError;
 use chrono::{DateTime, Utc};
-use errors::{RepoError, ServiceError};
-use rpc::users as pb;
+use hypgm_errors::RepoError;
+use hypgm_rpc::users as pb;
 use uuid::Uuid;
 
 pub(crate) fn id(value: &str) -> Result<Uuid, RepoError> {
@@ -19,19 +20,19 @@ pub(crate) fn to_wire(user: User) -> pb::User {
         updated_at: Some(timestamp(user.updated_at)),
     }
 }
-pub(crate) fn from_wire(user: pb::User) -> Result<User, ServiceError> {
+pub(crate) fn from_wire(user: pb::User) -> Result<User, UserError> {
     let timestamp = |value: Option<prost_types::Timestamp>| {
-        let value = value.ok_or(ServiceError::InvalidResponse("Missing timestamp"))?;
+        let value = value.ok_or(UserError::InvalidResponse("Missing timestamp"))?;
         if !(0..1_000_000_000).contains(&value.nanos)
             || !(-62135596800..=253402300799).contains(&value.seconds)
         {
-            return Err(ServiceError::InvalidResponse("Invalid timestamp"));
+            return Err(UserError::InvalidResponse("Invalid timestamp"));
         }
         DateTime::from_timestamp(value.seconds, value.nanos as u32)
-            .ok_or(ServiceError::InvalidResponse("Invalid timestamp"))
+            .ok_or(UserError::InvalidResponse("Invalid timestamp"))
     };
     Ok(User {
-        id: id(&user.id).map_err(|_| ServiceError::InvalidResponse("Invalid UUID"))?,
+        id: id(&user.id).map_err(|_| UserError::InvalidResponse("Invalid UUID"))?,
         display_name: user.display_name,
         created_at: timestamp(user.created_at)?,
         updated_at: timestamp(user.updated_at)?,

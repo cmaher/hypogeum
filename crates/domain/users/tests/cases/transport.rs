@@ -1,15 +1,15 @@
-use errors::{RepoError, ServiceError};
-use rpc::users::{GetUserRequest, ListUsersRequest, users_client::UsersClient};
-use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
-use std::sync::Arc;
-use test_support::TestDatabase;
-use users::{
+use hypgm_dmn_users::{
+    UserError,
     client::GrpcUserClient,
     models::PageRequest,
     repo::PgUserRepo,
     server::GrpcUserServer,
     service::{DefaultUserService, UserService},
 };
+use hypgm_rpc::users::{GetUserRequest, ListUsersRequest, users_client::UsersClient};
+use hypgm_test_support::TestDatabase;
+use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
+use std::sync::Arc;
 use uuid::Uuid;
 
 #[sqlx::test(migrations = false)]
@@ -62,11 +62,11 @@ async fn user_client_round_trip_uses_real_repository(
     client.delete(second.id).await.unwrap();
     assert!(matches!(
         client.get(first.id).await,
-        Err(ServiceError::Repo(RepoError::NotFound))
+        Err(UserError::NotFound)
     ));
     assert!(matches!(
         client.create(" ").await,
-        Err(ServiceError::Validation(_))
+        Err(UserError::Validation(_))
     ));
     let mut raw = UsersClient::connect(endpoint).await.unwrap();
     assert_eq!(

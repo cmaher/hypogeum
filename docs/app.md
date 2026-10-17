@@ -10,23 +10,24 @@ Internal services (such as User CRUD in `crates/domain/users`) retain internal g
 
 ```
 cmd/app (main.rs)
-  │  Loads HYPOGEUM_APP_* config & HYPOGEUM_LOG_*
-  │  Initializes crates/logging subscriber
+  │  Loads HYPOGEUM_APP_* config & HYPOGEUM_LOG_* via crates/core/env-config
+  │  Initializes crates/core/logging subscriber
   │  Constructs domain services (Arc<dyn Service>)
   │  Wired to graceful shutdown signal
   ▼
 crates/domain/app (router.rs)
   │  Composes top-level router: GET /healthz, /api
-  │  Applies 16KiB DefaultBodyLimit & trace_layer
+  │  Applies 16KiB DefaultBodyLimit & trace_layer from crates/core/http
   │  Installs JSON 404 fallback
   ▼
 crates/domain/hello-world (controller.rs)
   │  Extracts AppJson<HelloRequest> (16KiB limit, JSON validation)
-  │  Maps ServiceError -> HttpError
+  │  Maps HelloWorldError (PublicError) -> HttpError
   │  Returns AppJson<HelloResponse>
   ▼
 crates/domain/hello-world (service.rs)
      Pure business logic (HelloWorldService trait & DefaultHelloWorldService)
+     Returns Result<T, HelloWorldError> implementing PublicError
      Zero HTTP / Axum / transport dependencies
 ```
 
@@ -34,20 +35,20 @@ crates/domain/hello-world (service.rs)
 
 1. **`cmd/app` (`app-cli` package):**
    The composition root executable.
-   - Loads environment configuration via `env-config` once at startup.
-   - Initializes structured logging via `crates/logging`.
+   - Loads environment configuration via `hypgm-env-config` (`crates/core/env-config`) once at startup.
+   - Initializes structured logging via `hypgm-logging` (`crates/core/logging`).
    - Constructs dependencies and injects them as trait objects (`Arc<dyn HelloWorldService>`).
    - Binds the TCP listener (default `127.0.0.1:8080`).
    - Handles graceful shutdown on `SIGINT` (Ctrl+C) and `SIGTERM`, draining in-flight requests.
 
-2. **`crates/domain/app` (`app` package):**
+2. **`crates/domain/app` (`hypgm-dmn-app` package):**
    The application glue router.
    - Mounts health checks (`GET /healthz`) and API namespaces (`/api`).
    - Enforces global HTTP policies: 16KiB raw body limits, request tracing layer, and 404/405 error translations.
    - Accepts injected domain services; contains no business logic.
 
 3. **Domain Layer (`crates/domain/<domain>`):**
-   - **`src/service.rs`:** Domain service trait and implementation. Operates strictly on plain Rust types and returns `Result<T, ServiceError>`. Contains no HTTP concepts or Axum dependencies.
+   - **`src/service.rs`:** Domain service trait and implementation. Operates strictly on plain Rust types and returns `Result<T, DomainError>` where `DomainError` implements `PublicError`. Contains no HTTP concepts or Axum dependencies.
    - **`src/api.rs`:** DTOs for JSON requests and responses, deriving `serde::Deserialize` and `serde::Serialize`.
    - **`src/controller.rs`:** Thin HTTP transport adapter. Defines route handlers that extract `AppJson<Req>`, invoke the domain service, and return `Result<AppJson<Res>, HttpError>`. Returns a self-contained `Router<()>` with its private state injected.
    - **Future View Boundary:** Server-rendered HTML or HTMX templates live alongside API controllers as separate route handlers within the domain, reusing the same domain services without architectural changes.
@@ -110,9 +111,10 @@ X-Request-Id: 550e8400-e29b-41d4-a716-446655440000
    ```rust
    #[async_trait::async_trait]
    pub trait WidgetService: Send + Sync {
-       async fn get_widget(&self, id: &str) -> Result<Widget, ServiceError>;
+       async fn get_widget(&self, id: &str) -> Result<Widget, WidgetError>;
    }
    ```
+   *(where `WidgetError` implements `PublicError`).*
 3. Define request/response DTOs in `src/api.rs`.
 4. Create a thin Axum controller in `src/controller.rs`:
    ```rust
@@ -133,33 +135,33 @@ X-Request-Id: 550e8400-e29b-41d4-a716-446655440000
 
 ---
 
-## 3. Typed Error Handling
+## 3. Typed Error Handling and PublicError Contract
 
-Shared error handling in `crates/http-support` bridges application domain errors with HTTP responses without leaking internal details.
+Shared error handling in `crates/core/http` (`hypgm-http`) bridges application domain errors with HTTP responses without leaking internal details, powered by the `PublicError` and `PublicErrorInfo` contract defined in `crates/core/errors` (`hypgm-errors`).
 
 ### Error Mapping Pipeline
 
 ```
-Repository Error (RepoError)
+Repository Error (RepoError: PublicError)
       │
-      ▼ ?
-Domain Service Error (ServiceError)
+      ▼
+Domain Service Error (e.g. HelloWorldError, UserError: PublicError)
       │
-      ▼ ?
+      ▼ ? (Blanket From<E: PublicError> for HttpError)
 HTTP Transport Error (HttpError)
       │
       ▼ IntoResponse
-JSON Error Envelope (Safe status, code, message)
+JSON Error Envelope (Safe status, code, message) + Extensions (PublicErrorInfo)
 ```
 
-`HttpError` implements `From<ServiceError>` and `From<RepoError>`. Inside controllers, `?` automatically converts service errors into standard HTTP responses:
+`hypgm-http` renders any type implementing `PublicError` into the standard JSON error payload and attaches its `PublicErrorInfo` (and status/code) to response extensions for tracing. `HttpError` provides a blanket `From<E: PublicError>` implementation. Inside controllers, `?` automatically converts domain errors implementing `PublicError` into standard HTTP responses:
 
 | Source Error | HTTP Status | Error Code (`code`) | Message Behavior |
 | --- | --- | --- | --- |
-| `ServiceError::Validation(_)` | `400 Bad Request` | `"validation_error"` | `"Validation failed"` (details redacted) |
+| `UserError::Validation(_)` | `400 Bad Request` | `"validation_error"` | `"Validation failed"` (details redacted) |
 | `RepoError::NotFound` | `404 Not Found` | `"not_found"` | `"Resource not found"` |
 | `RepoError::Database(_)` | `500 Internal Server Error` | `"internal_error"` | `"Internal server error"` (details redacted) |
-| `ServiceError::Remote(_)` | `500 Internal Server Error` | `"internal_error"` | `"Internal server error"` (details redacted) |
+| `UserError::Remote(_)` | `500 Internal Server Error` | `"internal_error"` | `"Internal server error"` (details redacted) |
 | Response serialization failure | `500 Internal Server Error` | `"internal_error"` | `"Internal server error"` (details redacted) |
 | Malformed JSON body | `400 Bad Request` | `"invalid_request"` | `"Invalid request"` |
 | Consumed body exceeds 16KiB | `413 Payload Too Large` | `"payload_too_large"` | `"Payload too large"` |
@@ -184,7 +186,7 @@ If a controller needs to map a domain error to a specific classification (for ex
 
 ```rust
 let item = service.find(id).await.map_err(|e| {
-    HttpError::from(e).reclassify(ErrorClassification::INVALID_REQUEST)
+    HttpError::from(e).reclassify(PublicErrorInfo::INVALID_REQUEST)
 })?;
 ```
 
@@ -211,9 +213,9 @@ let item = service.find(id).await.map_err(|e| {
 
 ## 5. Structured Logging and Distributed Tracing
 
-Logging and request tracing are provided by `crates/logging` and `crates/http-support`.
+Logging and request tracing are provided by `crates/core/logging` (`hypgm-logging`) and `crates/core/http` (`hypgm-http`).
 
-### Subscriber Setup (`crates/logging`)
+### Subscriber Setup (`crates/core/logging`)
 
 The subscriber is initialized once in `cmd/app/src/main.rs`:
 
@@ -226,7 +228,7 @@ logging::init(&config.log, config.log_format)?;
   - `text`: ANSI-colorized, human-readable terminal output.
   - `json`: Machine-readable newline-delimited JSON for log aggregators.
 
-### Request Tracing Layer (`crates/http-support`)
+### Request Tracing Layer (`crates/core/http`)
 
 Every HTTP request traverses `trace_layer` (`TraceLayer`):
 

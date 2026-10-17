@@ -26,8 +26,9 @@ behavior needs a distinct component.
 
 Use constructor injection and keep dependency fields private. Libraries receive
 typed configuration, pools, and dependencies explicitly. Separate reusable
-infrastructure from domain behavior, and keep executable composition separate
-from reusable libraries.
+infrastructure (`crates/core/` foundation, `crates/ext/` drivers) from domain
+behavior (`crates/domain/`), and keep executable composition separate from
+reusable libraries.
 
 ## HTTP and RPC composition
 
@@ -83,11 +84,14 @@ service APIs. Add a unit-of-work abstraction only when an operation needs one.
 
 ## Errors and configuration
 
-Define shared typed errors with `thiserror` and map them to transport responses at
-adapter boundaries. Distinguish validation failures, missing entities, downstream
-failures, and persistence failures. Redact internal details in public responses,
-including errors encountered while rendering a response. Never expose connection
-URLs, credentials, or internal queries. Use `anyhow` for binary-level context.
+Define shared and domain-specific typed errors with `thiserror`, implementing
+the `PublicError` and `PublicErrorInfo` contract from `hypgm-errors`. Map them to
+transport responses at adapter boundaries (`hypgm-http` renders any `PublicError`
+into uniform JSON and attaches classification to response extensions for tracing).
+Distinguish validation failures, missing entities, downstream failures, and
+persistence failures. Redact internal details in public responses, including
+errors encountered while rendering a response. Never expose connection URLs,
+credentials, or internal queries. Use `anyhow` for binary-level context.
 
 Only binary composition roots load environment configuration. Load it once,
 deserialize typed configuration, and use types that redact credentials when

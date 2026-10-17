@@ -1,6 +1,6 @@
 #[test]
 fn integration_suite() {
-    test_support::run_suite();
+    hypgm_test_support::run_suite();
 }
 
 #[sqlx::test(migrations = false)]
@@ -9,7 +9,7 @@ async fn explicit_cli_migrates_verifies_and_inspects(
     _pool: sqlx::postgres::PgPoolOptions,
     options: sqlx::postgres::PgConnectOptions,
 ) {
-    let db = test_support::TestDatabase::provision(options).await;
+    let db = hypgm_test_support::TestDatabase::provision(options).await;
     for command in ["migrate", "migrate", "verify", "inspect"] {
         let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_hypogeum-db"))
             .args([command, "--output", "json"])

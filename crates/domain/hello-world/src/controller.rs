@@ -3,7 +3,7 @@ use crate::service::HelloWorldService;
 use axum::Router;
 use axum::extract::State;
 use axum::routing::post;
-use http_support::{AppJson, HttpError};
+use hypgm_http::{AppJson, HttpError};
 use std::sync::Arc;
 
 pub fn router(service: Arc<dyn HelloWorldService>) -> Router<()> {
