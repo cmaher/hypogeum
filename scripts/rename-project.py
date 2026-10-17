@@ -12,9 +12,9 @@ import subprocess
 import sys
 
 
-SOURCE = "hypogeum"
-DISPLAY = "Hypogeum"
-SHORT = "hypgm"
+SOURCE = "exemplum"
+DISPLAY = "Exemplum"
+SHORT = "exmpl"
 NAME_PATTERN = r"[a-z][a-z0-9]*(?:_[a-z0-9]+)*"
 # PostgreSQL reserved keywords, Rust strict/reserved keywords, and protobuf
 # declaration/scalar keywords. Keep this local: customization needs no network.
@@ -113,6 +113,8 @@ def tracked_files(root):
         metadata, raw_path = entry.split(b"\t", 1)
         mode, _, stage = metadata.split()
         relative = os.fsdecode(raw_path)
+        if not (relative.startswith("example/") or relative == "example"):
+            continue
         path = Path(relative)
         if path.is_absolute() or ".." in path.parts or ".git" in path.parts:
             raise RenameError("unsupported_file", "Unsafe path in Git index.")
@@ -195,7 +197,7 @@ def describe():
         "name_pattern": NAME_PATTERN,
         "forms": ["lowercase", "UPPERCASE", "PascalCase"],
         "options": ["--dry-run", "--output", "--describe", "--help"],
-        "scope": "Git-tracked UTF-8 file contents; excludes untracked/ignored files and symlink targets",
+        "scope": "Git-tracked UTF-8 file contents under example/; excludes untracked/ignored files and symlink targets",
         "output": {
             "ok": "boolean",
             "data": "dry_run, files[{path,replacements}], replacements",
