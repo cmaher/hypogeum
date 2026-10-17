@@ -34,7 +34,11 @@ pub struct EnvSource(BTreeMap<String, String>);
 
 impl EnvSource {
     pub fn load() -> Result<Self, ConfigError> {
-        let setting = std::env::var_os("HYPOGEUM_ENV_FILE");
+        Self::load_for("HYPOGEUM")
+    }
+
+    pub fn load_for(prefix: &str) -> Result<Self, ConfigError> {
+        let setting = std::env::var_os(format!("{prefix}_ENV_FILE"));
         let process_pairs =
             std::env::vars_os().filter_map(|(k, v)| match (k.into_string(), v.into_string()) {
                 (Ok(k), Ok(v)) => Some((k, v)),
@@ -322,5 +326,91 @@ mod tests {
         let env = EnvSource::from_pairs([("HYPOGEUM_LOG", "debug")]);
         let log_config: LogConfig = env.deserialize("HYPOGEUM_").unwrap();
         assert_eq!(log_config.log, "debug");
+    }
+
+    #[test]
+    fn test_load_for_custom_prefix() {
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        writeln!(tmp, "CUSTOM_FOO=bar").unwrap();
+        tmp.flush().unwrap();
+
+        let path = tmp.path().to_str().unwrap().to_string();
+        unsafe {
+            std::env::set_var("TEST_CUSTOM_PREFIX_ENV_FILE", &path);
+        }
+
+        let env = EnvSource::load_for("TEST_CUSTOM_PREFIX").unwrap();
+        assert_eq!(env.get("CUSTOM_FOO"), Some("bar"));
+
+        unsafe {
+            std::env::remove_var("TEST_CUSTOM_PREFIX_ENV_FILE");
+        }
+    }
+
+    #[test]
+    fn test_load_for_missing_file() {
+        let nonexistent = std::env::temp_dir().join("nonexistent_load_for_test.env");
+        let _ = std::fs::remove_file(&nonexistent);
+
+        unsafe {
+            std::env::set_var("TEST_MISSING_PREFIX_ENV_FILE", &nonexistent);
+        }
+
+        let err = EnvSource::load_for("TEST_MISSING_PREFIX").unwrap_err();
+        assert_eq!(
+            err,
+            ConfigError::EnvFileMissing {
+                path: nonexistent.clone()
+            }
+        );
+
+        unsafe {
+            std::env::remove_var("TEST_MISSING_PREFIX_ENV_FILE");
+        }
+    }
+
+    #[test]
+    fn test_load_for_malformed_file() {
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        writeln!(tmp, "MALFORMED_LINE_NO_EQUALS").unwrap();
+        tmp.flush().unwrap();
+
+        let path = tmp.path().to_str().unwrap().to_string();
+        unsafe {
+            std::env::set_var("TEST_MALFORMED_PREFIX_ENV_FILE", &path);
+        }
+
+        let err = EnvSource::load_for("TEST_MALFORMED_PREFIX").unwrap_err();
+        match &err {
+            ConfigError::EnvFileMalformed { path: p, .. } => {
+                assert_eq!(p, tmp.path());
+            }
+            other => panic!("Expected EnvFileMalformed, got {other:?}"),
+        }
+
+        unsafe {
+            std::env::remove_var("TEST_MALFORMED_PREFIX_ENV_FILE");
+        }
+    }
+
+    #[test]
+    fn test_load_for_process_variable_override() {
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        writeln!(tmp, "TEST_OVERRIDE_VAR=from_file").unwrap();
+        tmp.flush().unwrap();
+
+        let path = tmp.path().to_str().unwrap().to_string();
+        unsafe {
+            std::env::set_var("TEST_OVERRIDE_PREFIX_ENV_FILE", &path);
+            std::env::set_var("TEST_OVERRIDE_VAR", "from_process");
+        }
+
+        let env = EnvSource::load_for("TEST_OVERRIDE_PREFIX").unwrap();
+        assert_eq!(env.get("TEST_OVERRIDE_VAR"), Some("from_process"));
+
+        unsafe {
+            std::env::remove_var("TEST_OVERRIDE_PREFIX_ENV_FILE");
+            std::env::remove_var("TEST_OVERRIDE_VAR");
+        }
     }
 }
