@@ -156,14 +156,14 @@ JSON Error Envelope (Safe status, code, message)
 
 | Source Error | HTTP Status | Error Code (`code`) | Message Behavior |
 | --- | --- | --- | --- |
-| `ServiceError::Validation(msg)` | `400 Bad Request` | `"validation_error"` | Safe message passed to client |
+| `ServiceError::Validation(_)` | `400 Bad Request` | `"validation_error"` | `"Validation failed"` (details redacted) |
 | `RepoError::NotFound` | `404 Not Found` | `"not_found"` | `"Resource not found"` |
-| `RepoError::Database(_)` | `500 Internal Server Error` | `"internal_error"` | Generic message; details redacted |
-| `ServiceError::Remote(_)` | `500 Internal Server Error` | `"internal_error"` | Generic message; details redacted |
-| Malformed JSON body | `400 Bad Request` | `"invalid_request"` | `"Invalid request payload"` |
+| `RepoError::Database(_)` | `500 Internal Server Error` | `"internal_error"` | `"Internal server error"` (details redacted) |
+| `ServiceError::Remote(_)` | `500 Internal Server Error` | `"internal_error"` | `"Internal server error"` (details redacted) |
+| Malformed JSON body | `400 Bad Request` | `"invalid_request"` | `"Invalid request"` |
 | Body exceeds 16KiB | `413 Payload Too Large` | `"payload_too_large"` | `"Payload too large"` |
 | Unsupported `Content-Type` | `415 Unsupported Media Type` | `"unsupported_media_type"` | `"Unsupported media type"` |
-| Route not found | `404 Not Found` | `"not_found"` | `"Not found"` |
+| Route not found | `404 Not Found` | `"not_found"` | `"Resource not found"` |
 | Method not allowed | `405 Method Not Allowed` | `"method_not_allowed"` | `"Method not allowed"` (includes `Allow` header) |
 
 ### Uniform Error Response Format
@@ -173,7 +173,7 @@ All error responses adhere to the standard JSON envelope:
 ```json
 {
   "code": "validation_error",
-  "message": "Name may contain at most 200 Unicode scalar values."
+  "message": "Validation failed"
 }
 ```
 
