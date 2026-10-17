@@ -1,11 +1,11 @@
 [package]
-name = "web-server-cli"
+name = "app-cli"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
 [[bin]]
-name = "web-server"
+name = "app"
 path = "src/main.rs"
 
 [dependencies]
@@ -15,8 +15,9 @@ axum = { version = "0.8", features = ["http2"] }
 tokio.workspace = true
 anyhow = "1"
 env-config = { path = "../../crates/env-config" }
+logging = { path = "../../crates/logging" }
 serde.workspace = true
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing = "0.1"
 
 [lints]
 workspace = true

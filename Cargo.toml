@@ -2,7 +2,7 @@
 members = [
     "cmd/apalis-dashboard",
     "cmd/db",
-    "cmd/web-server",
+    "cmd/app",
     "crates/db",
     "crates/domain/app",
     "crates/domain/hello-world",
