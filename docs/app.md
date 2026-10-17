@@ -111,9 +111,10 @@ X-Request-Id: 550e8400-e29b-41d4-a716-446655440000
    ```rust
    #[async_trait::async_trait]
    pub trait WidgetService: Send + Sync {
-       async fn get_widget(&self, id: &str) -> Result<Widget, ServiceError>;
+       async fn get_widget(&self, id: &str) -> Result<Widget, WidgetError>;
    }
    ```
+   *(where `WidgetError` implements `PublicError`).*
 3. Define request/response DTOs in `src/api.rs`.
 4. Create a thin Axum controller in `src/controller.rs`:
    ```rust
