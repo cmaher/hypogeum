@@ -9,6 +9,7 @@ use std::str::FromStr;
 const ADMIN_LOCK: i64 = 0x4442_5f41_444d_494e;
 
 pub async fn owner(url: &str, config: &DatabaseConfig) -> Result<PgConnection> {
+    config.validate()?;
     let options = PgConnectOptions::from_str(url).map_err(MigrationError::database)?;
     require(
         options.get_username() == config.migrator_role,
@@ -27,6 +28,7 @@ pub async fn owner(url: &str, config: &DatabaseConfig) -> Result<PgConnection> {
 }
 
 pub async fn owner_pool(url: &str, config: &DatabaseConfig) -> Result<sqlx::PgPool> {
+    config.validate()?;
     let options = PgConnectOptions::from_str(url).map_err(MigrationError::database)?;
     require(
         options.get_username() == config.migrator_role,
@@ -48,6 +50,7 @@ pub async fn owner_pool(url: &str, config: &DatabaseConfig) -> Result<sqlx::PgPo
 }
 
 pub async fn migrate(url: &str, config: &DatabaseConfig) -> Result<()> {
+    config.validate()?;
     let mut connection = owner(url, config).await?;
     sqlx::query("SELECT pg_catalog.pg_advisory_lock($1)")
         .bind(ADMIN_LOCK)
@@ -55,12 +58,28 @@ pub async fn migrate(url: &str, config: &DatabaseConfig) -> Result<()> {
         .await
         .map_err(MigrationError::database)?;
 
+    let result = run_migrations(&mut connection, url, config).await;
+
+    let _ = sqlx::query("SELECT pg_catalog.pg_advisory_unlock($1)")
+        .bind(ADMIN_LOCK)
+        .execute(&mut connection)
+        .await;
+    let _ = connection.close().await;
+
+    result
+}
+
+async fn run_migrations(
+    connection: &mut PgConnection,
+    url: &str,
+    config: &DatabaseConfig,
+) -> Result<()> {
     // Each SQLx migrator locks and validates its own unchanged migration history.
     apalis::migrations()
-        .run(&mut connection)
+        .run(&mut *connection)
         .await
         .map_err(MigrationError::database)?;
-    infra::apply_contracts(&mut connection, config).await?;
+    infra::apply_contracts(&mut *connection, config).await?;
 
     for schema in &config.app_schemas {
         let sql = format!(
@@ -69,7 +88,7 @@ pub async fn migrate(url: &str, config: &DatabaseConfig) -> Result<()> {
             config.owner_role
         );
         sqlx::raw_sql(AssertSqlSafe(sql))
-            .execute(&mut connection)
+            .execute(&mut *connection)
             .await
             .map_err(MigrationError::database)?;
     }
@@ -88,30 +107,21 @@ pub async fn migrate(url: &str, config: &DatabaseConfig) -> Result<()> {
         pool.close().await;
 
         if let Some(err) = sea_error {
-            let _ = sqlx::query("SELECT pg_catalog.pg_advisory_unlock($1)")
-                .bind(ADMIN_LOCK)
-                .execute(&mut connection)
-                .await;
-            connection.close().await.map_err(MigrationError::database)?;
             return Err(err);
         }
     }
-
-    let _ = sqlx::query("SELECT pg_catalog.pg_advisory_unlock($1)")
-        .bind(ADMIN_LOCK)
-        .execute(&mut connection)
-        .await;
-    connection.close().await.map_err(MigrationError::database)?;
 
     Ok(())
 }
 
 pub async fn verify(url: &str, config: &DatabaseConfig) -> Result<()> {
+    config.validate()?;
     let mut connection = owner(url, config).await?;
     verify_checks::connection(&mut connection, config).await
 }
 
 pub async fn inspect(url: &str, config: &DatabaseConfig) -> Result<serde_json::Value> {
+    config.validate()?;
     let mut connection = owner(url, config).await?;
     let mut schemas = vec!["infra".to_string(), "apalis".to_string()];
     for s in &config.app_schemas {
