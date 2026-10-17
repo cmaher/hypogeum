@@ -192,7 +192,7 @@ class RenameProjectTests(unittest.TestCase):
         outside.write_text(SOURCE)
         self.addCleanup(outside.unlink)
         link = self.root / "link"
-        link.symlink_to(outside)
+        link.symlink_to(f"../{outside.name}")
         self.git("add", "link")
         self.run_script(TARGET)
         self.assertEqual(outside.read_text(), SOURCE)
