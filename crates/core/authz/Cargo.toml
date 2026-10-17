@@ -6,7 +6,7 @@ rust-version.workspace = true
 
 [dependencies]
 axum = { version = "0.8", default-features = false, features = ["tokio", "json"] }
-cedar-policy = "4.14"
+cedar-policy.workspace = true
 http = "1"
 hypgm-authn = { path = "../authn" }
 hypgm-errors = { path = "../errors" }

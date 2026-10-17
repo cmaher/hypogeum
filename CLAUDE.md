@@ -7,7 +7,7 @@ Read [the coding standards](docs/coding_standards.md) before changing code.
 This repository is organized into a two-tier architecture:
 
 1. **Hypogeum Framework Foundation** (root workspace):
-   - Foundation crates in `crates/core/` (`hypgm-*`): `authn`, `envconfig`, `errors`, `http`, `logging`, `rpc`, `test-support`.
+   - Foundation crates in `crates/core/` (`hypgm-*`): `authn`, `authz`, `envconfig`, `errors`, `http`, `logging`, `rpc`, `test-support`.
    - External driver and stateful adapters in `crates/ext/` (`hypgmx-*`): `file-storage`, `rdbms`, `tasks`.
    - Standalone framework operations UI: `cmd/apalis-dashboard`.
 2. **Exemplum Reference Implementation** (`example/` workspace):
