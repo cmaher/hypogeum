@@ -7,11 +7,14 @@ rust-version.workspace = true
 [dependencies]
 errors = { path = "../../errors" }
 async-trait.workspace = true
-rpc = { path = "../../rpc" }
-tonic.workspace = true
+serde.workspace = true
+axum = { version = "0.8", default-features = false, features = ["tokio", "json"] }
+http-support = { path = "../../http-support" }
 
 [dev-dependencies]
 tokio.workspace = true
+tower = { version = "0.5", features = ["util"] }
+serde_json.workspace = true
 
 [lints]
 workspace = true

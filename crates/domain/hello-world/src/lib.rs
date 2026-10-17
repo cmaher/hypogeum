@@ -1,2 +1,3 @@
-pub mod server;
+pub mod api;
+pub mod controller;
 pub mod service;

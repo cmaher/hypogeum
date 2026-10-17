@@ -1442,10 +1442,13 @@ name = "hello-world"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "axum",
  "errors",
- "rpc",
+ "http-support",
+ "serde",
+ "serde_json",
  "tokio",
- "tonic",
+ "tower",
 ]
 
 [[package]]
