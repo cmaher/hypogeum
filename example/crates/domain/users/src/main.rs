@@ -23,9 +23,9 @@ struct Config {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let env = EnvSource::load()?;
-    let config: Config = env.deserialize("HYPOGEUM_USERS_")?;
-    let log: LogConfig = env.deserialize("HYPOGEUM_")?;
+    let env = EnvSource::load_for("EXEMPLUM")?;
+    let config: Config = env.deserialize("EXEMPLUM_USERS_")?;
+    let log: LogConfig = env.deserialize("EXEMPLUM_")?;
 
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::try_new(&log.log)?)
@@ -76,10 +76,10 @@ mod tests {
     #[test]
     fn test_config_defaults() {
         let env = EnvSource::from_pairs([(
-            "HYPOGEUM_USERS_DATABASE_URL",
+            "EXEMPLUM_USERS_DATABASE_URL",
             "postgres://user:pass@localhost/db",
         )]);
-        let config: Config = env.deserialize("HYPOGEUM_USERS_").unwrap();
+        let config: Config = env.deserialize("EXEMPLUM_USERS_").unwrap();
         assert_eq!(
             config.database_url.expose(),
             "postgres://user:pass@localhost/db"
@@ -93,31 +93,31 @@ mod tests {
     #[test]
     fn test_config_missing_url() {
         let env = EnvSource::from_pairs(Vec::<(&str, &str)>::new());
-        let err = env.deserialize::<Config>("HYPOGEUM_USERS_").unwrap_err();
-        assert!(err.to_string().contains("HYPOGEUM_USERS_DATABASE_URL"));
+        let err = env.deserialize::<Config>("EXEMPLUM_USERS_").unwrap_err();
+        assert!(err.to_string().contains("EXEMPLUM_USERS_DATABASE_URL"));
     }
 
     #[test]
     fn test_config_invalid_bind() {
         let env = EnvSource::from_pairs([
             (
-                "HYPOGEUM_USERS_DATABASE_URL",
+                "EXEMPLUM_USERS_DATABASE_URL",
                 "postgres://user:pass@localhost/db",
             ),
-            ("HYPOGEUM_USERS_BIND", "not_a_valid_socket_addr"),
+            ("EXEMPLUM_USERS_BIND", "not_a_valid_socket_addr"),
         ]);
-        let err = env.deserialize::<Config>("HYPOGEUM_USERS_").unwrap_err();
+        let err = env.deserialize::<Config>("EXEMPLUM_USERS_").unwrap_err();
         assert!(matches!(err, hypgm_env_config::ConfigError::Invalid(_)));
     }
 
     #[test]
-    fn test_log_config_hypogeum_log() {
+    fn test_log_config_exemplum_log() {
         let env = EnvSource::from_pairs(Vec::<(&str, &str)>::new());
-        let log: LogConfig = env.deserialize("HYPOGEUM_").unwrap();
+        let log: LogConfig = env.deserialize("EXEMPLUM_").unwrap();
         assert_eq!(log.log, "info");
 
-        let env = EnvSource::from_pairs([("HYPOGEUM_LOG", "debug")]);
-        let log: LogConfig = env.deserialize("HYPOGEUM_").unwrap();
+        let env = EnvSource::from_pairs([("EXEMPLUM_LOG", "debug")]);
+        let log: LogConfig = env.deserialize("EXEMPLUM_").unwrap();
         assert_eq!(log.log, "debug");
     }
 }

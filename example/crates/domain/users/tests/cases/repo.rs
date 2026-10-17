@@ -8,6 +8,21 @@ use sea_orm_migration::MigratorTrait;
 use sqlx::{Connection, PgConnection, postgres::PgConnectOptions};
 use uuid::Uuid;
 
+fn exemplum_config() -> hypgm_ext_db::DatabaseConfig {
+    hypgm_ext_db::DatabaseConfig::new("exemplum_migrator", "exemplum_owner", "exemplum_tasks")
+        .with_app_schema("exemplum")
+        .with_domain_migrator(hypgm_ext_db::DomainMigrator::from_sea_orm::<
+            exemplum_dmn_users::pg::migrations::Migrator,
+        >())
+        .with_service_contract(hypgm_ext_db::ServiceContract::new(
+            "exemplum",
+            "exemplum_users",
+            1,
+            Some("m20260101_000001_create_users"),
+            "users",
+        ))
+}
+
 #[sqlx::test(migrations = false)]
 #[ignore = "run by integration_suite"]
 async fn existing_user_survives_migration_upgrade(
@@ -16,11 +31,11 @@ async fn existing_user_survives_migration_upgrade(
 ) {
     use std::str::FromStr;
     let db = TestDatabase::provision(options).await;
-    let owner = PgConnectOptions::from_str(&db.migration_url)
+    let owner = PgConnectOptions::from_str(&db.exemplum_migration_url)
         .unwrap()
         .options([
-            ("role", "hypogeum_owner"),
-            ("search_path", "hypogeum,pg_catalog"),
+            ("role", "exemplum_owner"),
+            ("search_path", "exemplum,pg_catalog"),
         ]);
     let migrator_pool = sqlx::PgPool::connect_with(owner).await.unwrap();
     let sea_db = sea_orm::SqlxPostgresConnector::from_sqlx_postgres_pool(migrator_pool.clone());
@@ -31,10 +46,12 @@ async fn existing_user_survives_migration_upgrade(
     let pool = sqlx::PgPool::connect(&db.users_url).await.unwrap();
     let repo = PgUserRepo::new(pool.clone());
     let before = repo.create(Uuid::new_v4(), "Existing User").await.unwrap();
-    db.migrate().await;
+    db.migrate_with(&exemplum_config()).await;
     assert_eq!(repo.get(before.id).await.unwrap(), before);
     exemplum_dmn_users::repo::check_ready(&pool).await.unwrap();
-    hypgm_ext_db::verify(&db.migration_url).await.unwrap();
+    hypgm_ext_db::verify(&db.exemplum_migration_url, &exemplum_config())
+        .await
+        .unwrap();
     pool.close().await;
 }
 
@@ -45,14 +62,14 @@ async fn update_name_never_moves_database_timestamps_backwards(
     options: PgConnectOptions,
 ) {
     let db = TestDatabase::provision(options).await;
-    db.migrate().await;
+    db.migrate_with(&exemplum_config()).await;
     let pool = sqlx::PgPool::connect(&db.users_url).await.unwrap();
     let repo = PgUserRepo::new(pool.clone());
     let created = repo.create(Uuid::new_v4(), "Clock Test").await.unwrap();
 
     // Simulate a stored timestamp ahead of the current clock without changing clocks.
     let previous: chrono::DateTime<chrono::Utc> = sqlx::query_scalar(
-        "UPDATE hypogeum.users SET updated_at = statement_timestamp() + INTERVAL '1 day' \
+        "UPDATE exemplum.users SET updated_at = statement_timestamp() + INTERVAL '1 day' \
          WHERE id = $1 RETURNING updated_at",
     )
     .bind(created.id)
@@ -77,15 +94,16 @@ async fn user_repository_connects_and_persists_under_runtime_privileges(
     options: PgConnectOptions,
 ) {
     let db = TestDatabase::provision(options).await;
-    let migration_url = db.migration_url.clone();
+    let config = exemplum_config();
+    let migration_url = db.exemplum_migration_url.clone();
     // Concurrent runners must serialize and remain repeatable.
     let (first, second) = tokio::join!(
-        hypgm_ext_db::migrate(&migration_url),
-        hypgm_ext_db::migrate(&migration_url)
+        hypgm_ext_db::migrate(&migration_url, &config),
+        hypgm_ext_db::migrate(&migration_url, &config)
     );
     first.unwrap();
     second.unwrap();
-    hypgm_ext_db::verify(&migration_url).await.unwrap();
+    hypgm_ext_db::verify(&migration_url, &config).await.unwrap();
     let pool = hypgm_ext_postgres::create_pool(&hypgm_ext_postgres::PostgresConfig::new(
         db.users_url.clone(),
     ))
@@ -137,11 +155,11 @@ async fn user_repository_connects_and_persists_under_runtime_privileges(
     ));
     assert!(matches!(repo.delete(id).await, Err(RepoError::NotFound)));
     for forbidden in [
-        "CREATE TABLE hypogeum.forbidden(id integer)",
+        "CREATE TABLE exemplum.forbidden(id integer)",
         "SELECT * FROM infra._sqlx_migrations",
         "SELECT * FROM apalis._sqlx_migrations",
         "SELECT * FROM apalis.jobs",
-        "SET ROLE hypogeum_owner",
+        "SET ROLE exemplum_owner",
         "CREATE TEMP TABLE forbidden(id integer)",
     ] {
         assert!(
@@ -151,11 +169,11 @@ async fn user_repository_connects_and_persists_under_runtime_privileges(
     }
     let tasks = sqlx::PgPool::connect(&db.tasks_url).await.unwrap();
     for forbidden in [
-        "SELECT * FROM hypogeum.users",
+        "SELECT * FROM exemplum.users",
         "SELECT * FROM infra._sqlx_migrations",
         "SELECT * FROM apalis._sqlx_migrations",
         "CREATE TABLE apalis.forbidden(id integer)",
-        "SET ROLE hypogeum_owner",
+        "SET ROLE exemplum_owner",
     ] {
         assert!(
             sqlx::raw_sql(forbidden).execute(&tasks).await.is_err(),
@@ -165,12 +183,12 @@ async fn user_repository_connects_and_persists_under_runtime_privileges(
     // Readiness must reject the wrong role and an altered schema contract.
     assert!(exemplum_dmn_users::repo::check_ready(&tasks).await.is_err());
     let mut admin = PgConnection::connect(&db.admin_url).await.unwrap();
-    sqlx::raw_sql("CREATE OR REPLACE FUNCTION hypogeum.schema_version() RETURNS bigint LANGUAGE sql AS 'SELECT 0::bigint'").execute(&mut admin).await.unwrap();
+    sqlx::raw_sql("CREATE OR REPLACE FUNCTION exemplum.schema_version() RETURNS bigint LANGUAGE sql AS 'SELECT 0::bigint'").execute(&mut admin).await.unwrap();
     assert!(exemplum_dmn_users::repo::check_ready(&pool).await.is_err());
     // Applied migrations do not silently rewrite objects after manual tampering.
-    hypgm_ext_db::migrate(&migration_url).await.unwrap();
+    hypgm_ext_db::migrate(&migration_url, &config).await.unwrap();
     assert!(exemplum_dmn_users::repo::check_ready(&pool).await.is_err());
-    assert!(hypgm_ext_db::verify(&migration_url).await.is_err());
+    assert!(hypgm_ext_db::verify(&migration_url, &config).await.is_err());
     pool.close().await;
     tasks.close().await;
 }

@@ -9,13 +9,13 @@ impl MigrationTrait for Migration {
         manager
             .get_connection()
             .execute_unprepared(
-                "CREATE SCHEMA IF NOT EXISTS hypogeum AUTHORIZATION hypogeum_owner;\
-                 REVOKE ALL ON SCHEMA hypogeum FROM PUBLIC;",
+                "CREATE SCHEMA IF NOT EXISTS exemplum AUTHORIZATION exemplum_owner;\
+                 REVOKE ALL ON SCHEMA exemplum FROM PUBLIC;",
             )
             .await?;
 
         let table = Table::create()
-            .table((Alias::new("hypogeum"), Alias::new("users")))
+            .table((Alias::new("exemplum"), Alias::new("users")))
             .if_not_exists()
             .col(
                 ColumnDef::new(Alias::new("id"))
@@ -50,13 +50,13 @@ impl MigrationTrait for Migration {
         manager
             .get_connection()
             .execute_unprepared(
-                "GRANT USAGE ON SCHEMA hypogeum TO hypogeum_users;\
-                 GRANT SELECT, INSERT, UPDATE, DELETE ON hypogeum.users TO hypogeum_users;\
-                 CREATE OR REPLACE FUNCTION hypogeum.schema_version() RETURNS bigint \
+                "GRANT USAGE ON SCHEMA exemplum TO exemplum_users;\
+                 GRANT SELECT, INSERT, UPDATE, DELETE ON exemplum.users TO exemplum_users;\
+                 CREATE OR REPLACE FUNCTION exemplum.schema_version() RETURNS bigint \
                  LANGUAGE sql IMMUTABLE SECURITY INVOKER SET search_path = pg_catalog, pg_temp \
                  AS $$ SELECT 1::bigint $$;\
-                 REVOKE ALL ON FUNCTION hypogeum.schema_version() FROM PUBLIC;\
-                 GRANT EXECUTE ON FUNCTION hypogeum.schema_version() TO hypogeum_users;",
+                 REVOKE ALL ON FUNCTION exemplum.schema_version() FROM PUBLIC;\
+                 GRANT EXECUTE ON FUNCTION exemplum.schema_version() TO exemplum_users;",
             )
             .await?;
 
@@ -66,7 +66,7 @@ impl MigrationTrait for Migration {
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         manager
             .get_connection()
-            .execute_unprepared("DROP SCHEMA IF EXISTS hypogeum CASCADE;")
+            .execute_unprepared("DROP SCHEMA IF EXISTS exemplum CASCADE;")
             .await?;
         Ok(())
     }
