@@ -4,7 +4,9 @@ use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::{Extension, Router};
 use exemplum_dmn_hello_world::service::HelloWorldService;
+use exemplum_dmn_users::service::UserService;
 use hypgm_authn::{jwt::JwtValidator, session::PrincipalAuthBackend};
+use hypgm_authz::Authorizer;
 use hypgm_http::{HealthCheck, MAX_BODY_BYTES, not_found_handler, trace_layer};
 use std::sync::Arc;
 use tower_sessions::SessionManagerLayer;
@@ -30,14 +32,43 @@ pub fn router(hello_service: Arc<dyn HelloWorldService>) -> Router<()> {
     router_with_components(hello, auth_repo, session_store, jwt_secret)
 }
 
+pub fn router_with_auth<S>(
+    hello_service: Arc<dyn HelloWorldService>,
+    authorizer: Arc<Authorizer>,
+    user_service: Arc<dyn UserService>,
+    auth_repo: Arc<dyn AuthRepo>,
+    session_store: S,
+    jwt_secret: Vec<u8>,
+) -> Router<()>
+where
+    S: tower_sessions::SessionStore + Clone + Send + Sync + 'static,
+{
+    let hello = exemplum_dmn_hello_world::controller::router_with_auth(
+        hello_service,
+        authorizer,
+        user_service,
+    );
+    router_with_components(hello, auth_repo, session_store, jwt_secret)
+}
+
 pub fn router_with_postgres(
-    hello_router: Router<()>,
+    hello_service: Arc<dyn HelloWorldService>,
+    authorizer: Arc<Authorizer>,
     pool: sqlx::PgPool,
     jwt_secret: Vec<u8>,
 ) -> Router<()> {
     let session_store = crate::auth::session::init_session_store(pool.clone());
-    let auth_repo = Arc::new(PgAuthRepo::new(pool));
-    router_with_components(hello_router, auth_repo, session_store, jwt_secret)
+    let auth_repo = Arc::new(PgAuthRepo::new(pool.clone()));
+    let user_repo = Arc::new(exemplum_dmn_users::repo::PgUserRepo::new(pool));
+    let user_service = Arc::new(exemplum_dmn_users::service::DefaultUserService::new(user_repo));
+    router_with_auth(
+        hello_service,
+        authorizer,
+        user_service,
+        auth_repo,
+        session_store,
+        jwt_secret,
+    )
 }
 
 pub fn router_with_components<S, R>(

@@ -6,9 +6,11 @@ rust-version.workspace = true
 
 [dependencies]
 exemplum-dmn-hello-world = { path = "../domain/hello-world" }
+exemplum-dmn-users = { path = "../domain/users" }
 axum = { version = "0.8", default-features = false, features = ["tokio", "http2"] }
 hypgm-http = { path = "../../../crates/core/http" }
 hypgm-authn = { path = "../../../crates/core/authn" }
+hypgm-authz = { path = "../../../crates/core/authz" }
 hypgm-errors = { path = "../../../crates/core/errors" }
 sea-orm.workspace = true
 sqlx.workspace = true
