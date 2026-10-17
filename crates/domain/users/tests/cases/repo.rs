@@ -40,6 +40,38 @@ async fn existing_user_survives_migration_upgrade(
 
 #[sqlx::test(migrations = false)]
 #[ignore = "run by integration_suite"]
+async fn update_name_never_moves_database_timestamps_backwards(
+    _pool_options: sqlx::postgres::PgPoolOptions,
+    options: PgConnectOptions,
+) {
+    let db = TestDatabase::provision(options).await;
+    db.migrate().await;
+    let pool = sqlx::PgPool::connect(&db.users_url).await.unwrap();
+    let repo = PgUserRepo::new(pool.clone());
+    let created = repo.create(Uuid::new_v4(), "Clock Test").await.unwrap();
+
+    // Simulate a stored timestamp ahead of the current clock without changing clocks.
+    let previous: chrono::DateTime<chrono::Utc> = sqlx::query_scalar(
+        "UPDATE hypogeum.users SET updated_at = statement_timestamp() + INTERVAL '1 day' \
+         WHERE id = $1 RETURNING updated_at",
+    )
+    .bind(created.id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let updated = repo
+        .update_name(created.id, "Renamed Clock Test")
+        .await
+        .unwrap();
+    assert_eq!(updated.created_at, created.created_at);
+    assert!(updated.updated_at >= previous);
+    assert_eq!(repo.get(created.id).await.unwrap(), updated);
+    pool.close().await;
+}
+
+#[sqlx::test(migrations = false)]
+#[ignore = "run by integration_suite"]
 async fn user_repository_connects_and_persists_under_runtime_privileges(
     _pool_options: sqlx::postgres::PgPoolOptions,
     options: PgConnectOptions,
