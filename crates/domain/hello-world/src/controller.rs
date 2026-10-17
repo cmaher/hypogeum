@@ -1,8 +1,8 @@
 use crate::api::{HelloRequest, HelloResponse};
 use crate::service::HelloWorldService;
+use axum::Router;
 use axum::extract::State;
 use axum::routing::post;
-use axum::Router;
 use http_support::{AppJson, HttpError};
 use std::sync::Arc;
 

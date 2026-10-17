@@ -32,8 +32,7 @@ async fn main() -> anyhow::Result<()> {
     let log: LogConfig = env.deserialize("HYPOGEUM_")?;
     let log_format: AppLogConfig = env.deserialize("HYPOGEUM_")?;
 
-    logging::init(&log.log, log_format.log_format)
-        .context("Initialize logging subscriber")?;
+    logging::init(&log.log, log_format.log_format).context("Initialize logging subscriber")?;
 
     tracing::info!(
         bind = %config.bind,
@@ -47,16 +46,13 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!(bind = %config.bind, "app listening");
 
-    axum::serve(
-        listener,
-        app::router(Arc::new(DefaultHelloWorldService)),
-    )
-    .with_graceful_shutdown(async {
-        shutdown().await;
-        tracing::info!("app shutting down");
-    })
-    .await
-    .context("App server failed")?;
+    axum::serve(listener, app::router(Arc::new(DefaultHelloWorldService)))
+        .with_graceful_shutdown(async {
+            shutdown().await;
+            tracing::info!("app shutting down");
+        })
+        .await
+        .context("App server failed")?;
 
     tracing::info!("app stopped");
     Ok(())

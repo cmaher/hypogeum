@@ -1,18 +1,15 @@
+use axum::Router;
 use axum::extract::DefaultBodyLimit;
 use axum::http::header;
 use axum::middleware::from_fn;
 use axum::response::IntoResponse;
 use axum::routing::get;
-use axum::Router;
 use hello_world::service::HelloWorldService;
-use http_support::{not_found_handler, trace_middleware, MAX_BODY_BYTES};
+use http_support::{MAX_BODY_BYTES, not_found_handler, trace_middleware};
 use std::sync::Arc;
 
 async fn healthz() -> impl IntoResponse {
-    (
-        [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
-        "ok",
-    )
+    ([(header::CONTENT_TYPE, "text/plain; charset=utf-8")], "ok")
 }
 
 pub fn router(hello_service: Arc<dyn HelloWorldService>) -> Router<()> {

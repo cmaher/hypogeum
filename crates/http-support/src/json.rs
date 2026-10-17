@@ -2,8 +2,8 @@ use crate::error::HttpError;
 use axum::extract::{FromRequest, Request};
 use axum::http::header;
 use axum::response::{IntoResponse, Response};
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 use std::ops::{Deref, DerefMut};
 
 pub const MAX_BODY_BYTES: usize = 16_384;
@@ -37,8 +37,7 @@ pub fn is_json_content_type(content_type: &str) -> bool {
         .unwrap_or("")
         .trim()
         .to_ascii_lowercase();
-    mime == "application/json"
-        || (mime.starts_with("application/") && mime.ends_with("+json"))
+    mime == "application/json" || (mime.starts_with("application/") && mime.ends_with("+json"))
 }
 
 fn is_length_limit_error(err: &axum::Error) -> bool {
@@ -76,14 +75,14 @@ where
             return Err(HttpError::unsupported_media_type());
         }
 
-        if let Some(cl) = parts.headers.get(header::CONTENT_LENGTH) {
-            if let Ok(cl_str) = cl.to_str() {
-                if let Ok(len) = cl_str.trim().parse::<usize>() {
-                    if len > MAX_BODY_BYTES {
-                        return Err(HttpError::payload_too_large());
-                    }
-                }
-            }
+        let content_length_exceeded = parts
+            .headers
+            .get(header::CONTENT_LENGTH)
+            .and_then(|cl| cl.to_str().ok())
+            .and_then(|s| s.trim().parse::<usize>().ok())
+            .is_some_and(|len| len > MAX_BODY_BYTES);
+        if content_length_exceeded {
+            return Err(HttpError::payload_too_large());
         }
 
         let bytes = match axum::body::to_bytes(body, MAX_BODY_BYTES).await {
@@ -101,7 +100,8 @@ where
             return Err(HttpError::invalid_request());
         }
 
-        let value = serde_json::from_slice::<T>(&bytes).map_err(|_| HttpError::invalid_request())?;
+        let value =
+            serde_json::from_slice::<T>(&bytes).map_err(|_| HttpError::invalid_request())?;
 
         Ok(AppJson(value))
     }

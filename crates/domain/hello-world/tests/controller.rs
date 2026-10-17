@@ -1,6 +1,6 @@
 use async_trait::async_trait;
-use axum::body::{to_bytes, Body};
-use axum::http::{header, Request, StatusCode};
+use axum::body::{Body, to_bytes};
+use axum::http::{Request, StatusCode, header};
 use errors::{RepoError, ServiceError};
 use hello_world::controller::router;
 use hello_world::service::{DefaultHelloWorldService, HelloWorldService};
@@ -16,7 +16,9 @@ async fn test_say_hello_success_and_extra_fields_ignored() {
         .method("POST")
         .uri("/")
         .header(header::CONTENT_TYPE, "application/json")
-        .body(Body::from(r#"{"name":" Ada ","extra":123,"nested":{"a":true}}"#))
+        .body(Body::from(
+            r#"{"name":" Ada ","extra":123,"nested":{"a":true}}"#,
+        ))
         .unwrap();
 
     let resp = app.clone().oneshot(req).await.unwrap();

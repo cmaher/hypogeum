@@ -1,4 +1,4 @@
-use axum::http::{header, HeaderValue, StatusCode};
+use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use errors::{RepoError, ServiceError};
 
@@ -165,7 +165,10 @@ pub fn render_error_response(classification: ErrorClassification) -> Response {
 
 pub fn render_method_not_allowed(allow: impl AsRef<str>) -> Response {
     let mut response = render_error_response(ErrorClassification::METHOD_NOT_ALLOWED);
-    if let Ok(val) = HeaderValue::from_str(allow.as_ref()) {
+    let s = allow.as_ref();
+    if !s.is_empty()
+        && let Ok(val) = HeaderValue::from_str(s)
+    {
         response.headers_mut().insert(header::ALLOW, val);
     }
     response

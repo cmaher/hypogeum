@@ -40,8 +40,7 @@ pub async fn trace_middleware(mut req: Request, next: Next) -> Response {
 
     req.headers_mut()
         .insert(REQUEST_ID_HEADER.clone(), header_val.clone());
-    req.extensions_mut()
-        .insert(RequestId(request_id.clone()));
+    req.extensions_mut().insert(RequestId(request_id.clone()));
 
     let method = req.method().to_string();
     let path = req.uri().path().to_string();
@@ -60,7 +59,10 @@ pub async fn trace_middleware(mut req: Request, next: Next) -> Response {
     let mut response = next.run(req).instrument(span.clone()).await;
 
     if response.status() == StatusCode::METHOD_NOT_ALLOWED
-        && response.extensions().get::<crate::error::ErrorClassification>().is_none()
+        && response
+            .extensions()
+            .get::<crate::error::ErrorClassification>()
+            .is_none()
     {
         let allow = response
             .headers()
@@ -70,7 +72,10 @@ pub async fn trace_middleware(mut req: Request, next: Next) -> Response {
             .to_string();
         response = crate::error::render_method_not_allowed(allow);
     } else if response.status() == StatusCode::NOT_FOUND
-        && response.extensions().get::<crate::error::ErrorClassification>().is_none()
+        && response
+            .extensions()
+            .get::<crate::error::ErrorClassification>()
+            .is_none()
     {
         response = crate::error::not_found_response();
     }
@@ -109,7 +114,8 @@ pub async fn trace_middleware(mut req: Request, next: Next) -> Response {
     }
 
     let _guard = span.enter();
-    let is_health_success = (matched_path == "/healthz" || path == "/healthz") && status.is_success();
+    let is_health_success =
+        (matched_path == "/healthz" || path == "/healthz") && status.is_success();
 
     if is_health_success {
         tracing::debug!(

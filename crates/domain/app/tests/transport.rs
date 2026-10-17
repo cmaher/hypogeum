@@ -215,9 +215,11 @@ async fn test_no_implicit_options_success_and_no_cors_headers() {
 
         // No permissive CORS headers
         assert!(!resp.headers().contains_key("access-control-allow-origin"));
-        assert!(!resp
-            .headers()
-            .contains_key("access-control-allow-credentials"));
+        assert!(
+            !resp
+                .headers()
+                .contains_key("access-control-allow-credentials")
+        );
         // OPTIONS is not a registered method, so it's not success
         assert!(!resp.status().is_success());
     }

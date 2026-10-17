@@ -1,11 +1,11 @@
-use axum::body::{to_bytes, Body};
-use axum::http::{header, Request, StatusCode};
+use axum::Router;
+use axum::body::{Body, to_bytes};
+use axum::http::{Request, StatusCode, header};
 use axum::response::IntoResponse;
 use axum::routing::post;
-use axum::Router;
 use errors::{RepoError, ServiceError};
 use http_support::{
-    render_method_not_allowed, AppJson, ErrorClassification, HttpError, MAX_BODY_BYTES,
+    AppJson, ErrorClassification, HttpError, MAX_BODY_BYTES, render_method_not_allowed,
 };
 use tower::ServiceExt;
 
@@ -117,10 +117,7 @@ async fn test_error_mappings_and_no_leakage() {
 async fn test_method_not_allowed_preserves_allow_header() {
     let resp = render_method_not_allowed("GET, POST");
     assert_eq!(resp.status(), StatusCode::METHOD_NOT_ALLOWED);
-    assert_eq!(
-        resp.headers().get(header::ALLOW).unwrap(),
-        &"GET, POST"
-    );
+    assert_eq!(resp.headers().get(header::ALLOW).unwrap(), &"GET, POST");
     let classification = resp.extensions().get::<ErrorClassification>().unwrap();
     assert_eq!(classification.code, "method_not_allowed");
     assert_eq!(classification.message, "Method not allowed");
@@ -133,7 +130,10 @@ async fn test_contextual_reclassification() {
 
     let reclassified = err.reclassify(ErrorClassification::INVALID_REQUEST);
     assert_eq!(reclassified.classification().code, "invalid_request");
-    assert_eq!(reclassified.classification().status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        reclassified.classification().status,
+        StatusCode::BAD_REQUEST
+    );
 }
 
 #[derive(serde::Deserialize, serde::Serialize, Debug, PartialEq)]

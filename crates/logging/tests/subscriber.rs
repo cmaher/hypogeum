@@ -1,4 +1,4 @@
-use logging::{create_subscriber, create_test_subscriber, LogFormat, LoggingError, TestWriter};
+use logging::{LogFormat, LoggingError, TestWriter, create_subscriber, create_test_subscriber};
 
 #[test]
 fn test_valid_text_subscriber_construction() {
@@ -19,9 +19,10 @@ fn test_invalid_filter_fails_cleanly() {
     let writer = TestWriter::new();
     let res = create_subscriber("invalid[[[filter", LogFormat::Text, writer);
     assert!(res.is_err());
-    match res.unwrap_err() {
-        LoggingError::InvalidFilter(_) => {}
-        other => panic!("expected InvalidFilter error, got: {other:?}"),
+    match res {
+        Err(LoggingError::InvalidFilter(_)) => {}
+        Err(other) => panic!("expected InvalidFilter error, got: {other:?}"),
+        Ok(_) => panic!("expected error, got Ok"),
     }
 }
 

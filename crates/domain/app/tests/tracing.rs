@@ -1,6 +1,6 @@
 use app::router;
 use hello_world::service::{DefaultHelloWorldService, HelloWorldService};
-use logging::{create_test_dispatch, LogFormat};
+use logging::{LogFormat, create_test_dispatch};
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
@@ -16,16 +16,20 @@ struct TracingServer {
 }
 
 impl TracingServer {
-    async fn start(
-        service: Arc<dyn HelloWorldService>,
-        dispatch: tracing::Dispatch,
-    ) -> Self {
+    async fn start(service: Arc<dyn HelloWorldService>, dispatch: tracing::Dispatch) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = format!("http://{}", listener.local_addr().unwrap());
         let (stop, stopped) = oneshot::channel();
+        let router_dispatch = dispatch.clone();
+        let app = router(service).layer(axum::middleware::from_fn(
+            move |req, next: axum::middleware::Next| {
+                let dispatch = router_dispatch.clone();
+                async move { next.run(req).with_subscriber(dispatch).await }
+            },
+        ));
         let serving = tokio::spawn(
             async move {
-                axum::serve(listener, router(service))
+                axum::serve(listener, app)
                     .with_graceful_shutdown(async {
                         let _ = stopped.await;
                     })
@@ -157,16 +161,31 @@ async fn test_early_rejections_and_fallbacks_tracing() {
         .await
         .unwrap();
     assert_eq!(resp.status(), 200);
-    let health_req_id = resp.headers().get("x-request-id").unwrap().to_str().unwrap().to_string();
+    let health_req_id = resp
+        .headers()
+        .get("x-request-id")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
 
     // 2. 404 Unknown route (INFO, unmatched marker)
     let resp = client
-        .get(format!("{}/unknown/secret_path?query=secret", server.endpoint))
+        .get(format!(
+            "{}/unknown/secret_path?query=secret",
+            server.endpoint
+        ))
         .send()
         .await
         .unwrap();
     assert_eq!(resp.status(), 404);
-    let not_found_req_id = resp.headers().get("x-request-id").unwrap().to_str().unwrap().to_string();
+    let not_found_req_id = resp
+        .headers()
+        .get("x-request-id")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
 
     // 3. 405 Method Not Allowed
     let resp = client
@@ -175,7 +194,13 @@ async fn test_early_rejections_and_fallbacks_tracing() {
         .await
         .unwrap();
     assert_eq!(resp.status(), 405);
-    let method_req_id = resp.headers().get("x-request-id").unwrap().to_str().unwrap().to_string();
+    let method_req_id = resp
+        .headers()
+        .get("x-request-id")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
 
     // 4. 400 Bad Request
     let resp = client
@@ -186,7 +211,13 @@ async fn test_early_rejections_and_fallbacks_tracing() {
         .await
         .unwrap();
     assert_eq!(resp.status(), 400);
-    let bad_req_id = resp.headers().get("x-request-id").unwrap().to_str().unwrap().to_string();
+    let bad_req_id = resp
+        .headers()
+        .get("x-request-id")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
 
     // 5. 415 Unsupported Media Type
     let resp = client
@@ -197,7 +228,13 @@ async fn test_early_rejections_and_fallbacks_tracing() {
         .await
         .unwrap();
     assert_eq!(resp.status(), 415);
-    let media_req_id = resp.headers().get("x-request-id").unwrap().to_str().unwrap().to_string();
+    let media_req_id = resp
+        .headers()
+        .get("x-request-id")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
 
     server.shutdown().await;
 
@@ -246,5 +283,8 @@ async fn test_early_rejections_and_fallbacks_tracing() {
     let media_event = &completions[&media_req_id];
     assert_eq!(media_event["level"], "INFO");
     assert_eq!(media_event["fields"]["status"], 415);
-    assert_eq!(media_event["fields"]["error_code"], "unsupported_media_type");
+    assert_eq!(
+        media_event["fields"]["error_code"],
+        "unsupported_media_type"
+    );
 }

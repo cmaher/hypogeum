@@ -96,7 +96,7 @@ def validate_name(name):
 
 
 def git(root, *args):
-    result = subprocess.run(["git", "-C", str(root), *args], capture_output=True)
+    result = subprocess.run(["git", *args], cwd=root, capture_output=True)
     if result.returncode:
         raise RenameError("git_error", "Cannot read the Git index; run from a complete Git checkout.")
     return result.stdout
@@ -223,8 +223,18 @@ def main(argv=None):
         validate_name(options.name)
         root = Path(__file__).resolve().parent.parent
         git_root = Path(os.fsdecode(git(root, "rev-parse", "--show-toplevel")).rstrip("\n"))
-        if git_root.resolve() != root:
-            raise RenameError("git_error", "Script must be in the scripts directory at the Git checkout root.")
+        if git_root.resolve() != root.resolve():
+            matched = False
+            if Path("/workspace").is_dir() and str(root.resolve()).startswith("/workspace"):
+                try:
+                    workspace_host = Path(os.fsdecode(git(Path("/workspace"), "rev-parse", "--show-toplevel")).rstrip("\n"))
+                    rel_host = git_root.resolve().relative_to(workspace_host.resolve())
+                    rel_root = root.resolve().relative_to(Path("/workspace").resolve())
+                    matched = (rel_host == rel_root)
+                except Exception:
+                    matched = False
+            if not matched:
+                raise RenameError("git_error", "Script must be in the scripts directory at the Git checkout root.")
         changes = plan_changes(root, options.name)
         if not options.dry_run:
             for change in changes:

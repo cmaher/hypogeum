@@ -1,14 +1,14 @@
+use axum::Router;
 use axum::body::Body;
-use axum::http::{header, Request, StatusCode};
+use axum::http::{Request, StatusCode, header};
 use axum::middleware::from_fn;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
-use axum::Router;
 use errors::ServiceError;
 use http_support::{
-    not_found_handler, trace_middleware, AppJson, HttpError, RequestId, REQUEST_ID_HEADER,
+    AppJson, HttpError, REQUEST_ID_HEADER, RequestId, not_found_handler, trace_middleware,
 };
-use logging::{create_test_subscriber, LogFormat};
+use logging::{LogFormat, create_test_subscriber};
 use tower::ServiceExt;
 use tracing::Instrument;
 
@@ -230,7 +230,9 @@ async fn test_context_inheritance_in_service_and_spawned_task() {
         if val["fields"].get("spawned_event") == Some(&serde_json::Value::Bool(true)) {
             found_spawned = true;
         }
-        if val["fields"].get("message") == Some(&serde_json::Value::String("request completed".into())) {
+        if val["fields"].get("message")
+            == Some(&serde_json::Value::String("request completed".into()))
+        {
             found_completion = true;
             assert_eq!(val["level"], "INFO");
             assert_eq!(val["fields"]["status"], 200);
