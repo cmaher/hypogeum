@@ -1,0 +1,23 @@
+[package]
+name = "http-support"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+axum = { version = "0.8", default-features = false, features = ["tokio", "json"] }
+http = "1"
+http-body-util = "0.1"
+bytes = "1"
+serde.workspace = true
+serde_json.workspace = true
+errors = { path = "../errors" }
+thiserror.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tower = { version = "0.5", features = ["util"] }
+futures-util = "0.3"
+
+[lints]
+workspace = true

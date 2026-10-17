@@ -1515,6 +1515,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "http-support"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "bytes",
+ "errors",
+ "futures-util",
+ "http",
+ "http-body-util",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tower",
+]
+
+[[package]]
 name = "httparse"
 version = "1.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
