@@ -4,7 +4,7 @@ use exemplum_dmn_users::{
     server::GrpcUserServer,
     service::DefaultUserService,
 };
-use hypgm_env_config::{EnvSource, LogConfig};
+use hypgm_envconfig::{EnvSource, LogConfig};
 use serde::Deserialize;
 use std::{net::SocketAddr, sync::Arc};
 
@@ -16,7 +16,7 @@ fn default_bind() -> SocketAddr {
 
 #[derive(Debug, Deserialize)]
 struct Config {
-    database_url: hypgm_env_config::Secret,
+    database_url: hypgm_envconfig::Secret,
     #[serde(default = "default_bind")]
     bind: SocketAddr,
 }
@@ -71,7 +71,7 @@ async fn shutdown() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hypgm_env_config::EnvSource;
+    use hypgm_envconfig::EnvSource;
 
     #[test]
     fn test_config_defaults() {
@@ -107,7 +107,7 @@ mod tests {
             ("EXEMPLUM_USERS_BIND", "not_a_valid_socket_addr"),
         ]);
         let err = env.deserialize::<Config>("EXEMPLUM_USERS_").unwrap_err();
-        assert!(matches!(err, hypgm_env_config::ConfigError::Invalid(_)));
+        assert!(matches!(err, hypgm_envconfig::ConfigError::Invalid(_)));
     }
 
     #[test]

@@ -1,7 +1,7 @@
 [workspace]
 members = [
     "cmd/apalis-dashboard",
-    "crates/core/env-config",
+    "crates/core/envconfig",
     "crates/core/errors",
     "crates/core/http",
     "crates/core/logging",

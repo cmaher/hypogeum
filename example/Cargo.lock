@@ -1045,7 +1045,7 @@ dependencies = [
  "axum",
  "exemplum-app",
  "exemplum-dmn-hello-world",
- "hypgm-env-config",
+ "hypgm-envconfig",
  "hypgm-logging",
  "serde",
  "tokio",
@@ -1057,7 +1057,7 @@ name = "exemplum-db-cli"
 version = "0.1.0"
 dependencies = [
  "exemplum-dmn-users",
- "hypgm-env-config",
+ "hypgm-envconfig",
  "hypgm-ext-rdbms",
  "hypgm-test-support",
  "sea-orm",
@@ -1089,7 +1089,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
- "hypgm-env-config",
+ "hypgm-envconfig",
  "hypgm-errors",
  "hypgm-ext-rdbms",
  "hypgm-rpc",
@@ -1605,7 +1605,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "hypgm-env-config"
+name = "hypgm-envconfig"
 version = "0.1.0"
 dependencies = [
  "dotenvy",

@@ -24,7 +24,7 @@ struct AppLogConfig {
 async fn main() -> anyhow::Result<()> {
     use anyhow::Context;
     use exemplum_dmn_hello_world::service::DefaultHelloWorldService;
-    use hypgm_env_config::{EnvSource, LogConfig};
+    use hypgm_envconfig::{EnvSource, LogConfig};
     use std::sync::Arc;
 
     let env = EnvSource::load_for("EXEMPLUM")?;
@@ -82,7 +82,7 @@ async fn shutdown() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hypgm_env_config::EnvSource;
+    use hypgm_envconfig::EnvSource;
 
     #[test]
     fn bind_defaults_without_database_configuration() {

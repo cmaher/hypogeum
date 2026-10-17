@@ -107,7 +107,7 @@ class RenameProjectTests(unittest.TestCase):
             "Cargo.toml",
             "crates/core/rpc/src/lib.rs",
             "crates/ext/rdbms/src/lib.rs",
-            "crates/core/env-config/src/lib.rs",
+            "crates/core/envconfig/src/lib.rs",
         ]
         for relative in paths + root_paths:
             source = repository / relative

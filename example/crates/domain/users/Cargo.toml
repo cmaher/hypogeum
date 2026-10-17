@@ -19,7 +19,7 @@ hypgm-rpc = { path = "../../../../crates/core/rpc" }
 tonic.workspace = true
 prost-types.workspace = true
 anyhow = "1"
-hypgm-env-config = { path = "../../../../crates/core/env-config" }
+hypgm-envconfig = { path = "../../../../crates/core/envconfig" }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 thiserror.workspace = true
 

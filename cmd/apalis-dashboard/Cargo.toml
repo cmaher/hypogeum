@@ -8,7 +8,7 @@ rust-version.workspace = true
 hypgm-ext-tasks = { path = "../../crates/ext/tasks" }
 axum = "0.8"
 anyhow = "1"
-hypgm-env-config = { path = "../../crates/core/env-config" }
+hypgm-envconfig = { path = "../../crates/core/envconfig" }
 sqlx.workspace = true
 tokio.workspace = true
 serde.workspace = true

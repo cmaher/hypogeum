@@ -145,7 +145,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
- "hypgm-env-config",
+ "hypgm-envconfig",
  "hypgm-ext-tasks",
  "serde",
  "sqlx",
@@ -1587,7 +1587,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "hypgm-env-config"
+name = "hypgm-envconfig"
 version = "0.1.0"
 dependencies = [
  "dotenvy",

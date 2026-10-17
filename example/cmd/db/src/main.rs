@@ -1,11 +1,11 @@
-use hypgm_env_config::EnvSource;
+use hypgm_envconfig::EnvSource;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::process::ExitCode;
 
 #[derive(Debug, Deserialize)]
 struct Config {
-    database_url: hypgm_env_config::Secret,
+    database_url: hypgm_envconfig::Secret,
 }
 
 #[tokio::main]
@@ -85,7 +85,7 @@ async fn run() -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hypgm_env_config::EnvSource;
+    use hypgm_envconfig::EnvSource;
 
     #[test]
     fn test_config_loads_with_url() {

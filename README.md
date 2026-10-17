@@ -16,7 +16,7 @@ The repository uses a two-tier architecture cleanly separating framework foundat
 │   └── apalis-dashboard/         # Standalone framework background tasks dashboard
 ├── crates/
 │   ├── core/                     # Core runtime & cross-cutting foundations (hypgm-*)
-│   │   ├── env-config/           # Type-safe environment loading and secrets
+│   │   ├── envconfig/            # Type-safe environment loading and secrets
 │   │   ├── errors/               # Shared typed error types and PublicError trait
 │   │   ├── http/                 # Axum middleware, error mapping, and body limits
 │   │   ├── logging/              # Structured tracing subscriber configuration

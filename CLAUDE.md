@@ -7,7 +7,7 @@ Read [the coding standards](docs/coding_standards.md) before changing code.
 This repository is organized into a two-tier architecture:
 
 1. **Hypogeum Framework Foundation** (root workspace):
-   - Foundation crates in `crates/core/` (`hypgm-*`): `env-config`, `errors`, `http`, `logging`, `rpc`, `test-support`.
+   - Foundation crates in `crates/core/` (`hypgm-*`): `envconfig`, `errors`, `http`, `logging`, `rpc`, `test-support`.
    - External driver and stateful adapters in `crates/ext/` (`hypgm-ext-*`): `file-storage`, `rdbms`, `tasks`.
    - Standalone framework operations UI: `cmd/apalis-dashboard`.
 2. **Exemplum Reference Implementation** (`example/` workspace):
@@ -37,7 +37,7 @@ Root framework crates and infrastructure namespaces (`hypgm-*`, `hypgm-ext-*`, `
 - Use plain data structs, constructor injection, and trait-based repository, service, and client interfaces. Keep transport adapters thin.
 - Repositories own application SQL. Build typed entity queries with SeaORM, integrating with SQLx pool ownership via `SqlxPostgresConnector`. Keep tables schema-qualified.
 - Define shared errors and the `PublicError` / `PublicErrorInfo` contract in `crates/core/errors` (`hypgm-errors`). Domain crates define domain-specific errors implementing `PublicError`. Use `anyhow` at binary boundaries. Database and internal details must not enter HTTP or gRPC responses.
-- Binaries load environment once via `hypgm-env-config` (`crates/core/env-config`, `EnvSource::load_for` with application prefix, or `EnvSource::load` for framework binaries), deserialize per-binary `Config` with `envy`, use `Secret` for credentials, and never mutate process env. Libraries receive typed values, pools and dependencies explicitly.
+- Binaries load environment once via `hypgm-envconfig` (`crates/core/envconfig`, `EnvSource::load_for` with application prefix, or `EnvSource::load` for framework binaries), deserialize per-binary `Config` with `envy`, use `Secret` for credentials, and never mutate process env. Libraries receive typed values, pools and dependencies explicitly.
 - Run migrations explicitly through `exemplum-db` (driving framework `hypgm-ext-rdbms` via `DatabaseConfig`); runtime processes never migrate on startup and check readiness using restricted credentials.
 - `crates/core/test-support` is a development dependency only. Its suite launcher runs ignored SQLx cases in child processes against Testcontainers, ensuring ordinary `cargo test` commands execute them and propagate failures.
 
