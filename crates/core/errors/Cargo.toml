@@ -1,5 +1,5 @@
 [package]
-name = "errors"
+name = "hypgm-errors"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

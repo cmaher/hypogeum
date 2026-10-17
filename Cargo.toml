@@ -7,15 +7,15 @@ members = [
     "crates/domain/app",
     "crates/domain/hello-world",
     "crates/domain/users",
-    "crates/env-config",
-    "crates/errors",
+    "crates/core/env-config",
+    "crates/core/errors",
+    "crates/core/http",
+    "crates/core/logging",
+    "crates/core/rpc",
+    "crates/core/test-support",
     "crates/file-storage",
-    "crates/http-support",
-    "crates/logging",
     "crates/postgres",
-    "crates/rpc",
     "crates/tasks",
-    "crates/test-support",
 ]
 resolver = "3"
 

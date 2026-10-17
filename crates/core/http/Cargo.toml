@@ -1,5 +1,5 @@
 [package]
-name = "http-support"
+name = "hypgm-http"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,7 +11,7 @@ http-body-util = "0.1"
 bytes = "1"
 serde.workspace = true
 serde_json.workspace = true
-errors = { path = "../errors" }
+hypgm-errors = { path = "../errors" }
 thiserror.workspace = true
 uuid.workspace = true
 tracing = "0.1"
@@ -21,7 +21,7 @@ tower = "0.5"
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 tower = { version = "0.5", features = ["util", "limit"] }
 futures-util = "0.3"
-logging = { path = "../logging" }
+hypgm-logging = { path = "../logging" }
 
 [lints]
 workspace = true
