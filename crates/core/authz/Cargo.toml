@@ -1,0 +1,15 @@
+[package]
+name = "hypgm-authz"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+cedar-policy = "4.14"
+http = "1"
+hypgm-authn = { path = "../authn" }
+hypgm-errors = { path = "../errors" }
+thiserror.workspace = true
+
+[lints]
+workspace = true
