@@ -168,6 +168,8 @@ async fn user_repository_connects_and_persists_under_runtime_privileges(
     let tasks = sqlx::PgPool::connect(&db.tasks_url).await.unwrap();
     for forbidden in [
         "SELECT * FROM exemplum.users",
+        "SELECT * FROM exemplum.auth_identities",
+        "SELECT * FROM exemplum.sessions",
         "SELECT * FROM infra._sqlx_migrations",
         "SELECT * FROM apalis._sqlx_migrations",
         "CREATE TABLE apalis.forbidden(id integer)",
@@ -178,6 +180,8 @@ async fn user_repository_connects_and_persists_under_runtime_privileges(
             "allowed {forbidden}"
         );
     }
+    assert!(sqlx::raw_sql("SELECT count(*) FROM exemplum.auth_identities").execute(&pool).await.is_ok());
+    assert!(sqlx::raw_sql("SELECT count(*) FROM exemplum.sessions").execute(&pool).await.is_ok());
     // Readiness must reject the wrong role and an altered schema contract.
     assert!(exemplum_dmn_users::repo::check_ready(&tasks).await.is_err());
     let mut admin = PgConnection::connect(&db.admin_url).await.unwrap();
@@ -192,3 +196,94 @@ async fn user_repository_connects_and_persists_under_runtime_privileges(
     pool.close().await;
     tasks.close().await;
 }
+
+#[sqlx::test(migrations = false)]
+#[ignore = "run by integration_suite"]
+async fn auth_identities_and_sessions_schema_and_constraints_enforced(
+    _pool_options: sqlx::postgres::PgPoolOptions,
+    options: PgConnectOptions,
+) {
+    let db = TestDatabase::provision(options).await;
+    db.migrate_with(&exemplum_config()).await;
+    let pool = sqlx::PgPool::connect(&db.users_url).await.unwrap();
+
+    let user_id = Uuid::new_v4();
+    let repo = PgUserRepo::new(pool.clone());
+    repo.create(user_id, "Auth Test User").await.unwrap();
+
+    let auth_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO exemplum.auth_identities (id, user_id, identity_type, identifier, secret_hash) \
+         VALUES ($1, $2, 'password', 'alice', 'hash1')",
+    )
+    .bind(auth_id)
+    .bind(user_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Duplicate active identifier must fail unique constraint
+    let dup_res = sqlx::query(
+        "INSERT INTO exemplum.auth_identities (id, user_id, identity_type, identifier, secret_hash) \
+         VALUES ($1, $2, 'password', 'alice', 'hash2')",
+    )
+    .bind(Uuid::new_v4())
+    .bind(user_id)
+    .execute(&pool)
+    .await;
+    assert!(dup_res.is_err());
+
+    // Revoking allows same identifier to be registered again
+    sqlx::query(
+        "UPDATE exemplum.auth_identities SET revoked_at = statement_timestamp() WHERE id = $1",
+    )
+    .bind(auth_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let new_auth_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO exemplum.auth_identities (id, user_id, identity_type, identifier, secret_hash) \
+         VALUES ($1, $2, 'password', 'alice', 'hash2')",
+    )
+    .bind(new_auth_id)
+    .bind(user_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Foreign key constraint on non-existent user
+    let bad_fk = sqlx::query(
+        "INSERT INTO exemplum.auth_identities (id, user_id, identity_type, identifier, secret_hash) \
+         VALUES ($1, $2, 'password', 'bob', 'hash3')",
+    )
+    .bind(Uuid::new_v4())
+    .bind(Uuid::new_v4())
+    .execute(&pool)
+    .await;
+    assert!(bad_fk.is_err());
+
+    // Deleting user cascades to auth_identities
+    repo.delete(user_id).await.unwrap();
+    let count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM exemplum.auth_identities WHERE user_id = $1",
+    )
+    .bind(user_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(count, 0);
+
+    // Sessions table operations
+    sqlx::query(
+        "INSERT INTO exemplum.sessions (id, data, expiry_date) VALUES ('sess1', $1, statement_timestamp() + interval '1 hour')",
+    )
+    .bind(b"session-data" as &[u8])
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    pool.close().await;
+}
+
