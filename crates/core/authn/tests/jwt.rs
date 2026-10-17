@@ -265,6 +265,22 @@ fn test_issuer_and_audience_validation() {
         bad_iss_validator.verify_token(&token),
         Err(AuthError::InvalidToken(_))
     ));
+
+    // Mismatched audience should fail
+    let bad_aud_config = JwtConfig {
+        algorithm: Algorithm::HS256,
+        issuer: Some("auth.example.com".to_string()),
+        audience: Some("wrong.example.com".into()),
+        leeway_seconds: 0,
+    };
+    let bad_aud_validator = JwtValidator::new(
+        jsonwebtoken::DecodingKey::from_secret(TEST_SECRET),
+        bad_aud_config,
+    );
+    assert!(matches!(
+        bad_aud_validator.verify_token(&token),
+        Err(AuthError::InvalidToken(_))
+    ));
 }
 
 #[test]
@@ -322,6 +338,28 @@ fn test_multi_value_audience_validation() {
     );
     let principal_multi = multi_aud_validator.verify_token(&token).unwrap();
     assert_eq!(principal_multi.auth_id, auth_id);
+
+    // Validator configured with non-matching audiences should fail
+    let bad_multi_aud_config = JwtConfig {
+        algorithm: Algorithm::HS256,
+        issuer: Some("auth.example.com".to_string()),
+        audience: Some(
+            vec![
+                "wrong1.example.com".to_string(),
+                "wrong2.example.com".to_string(),
+            ]
+            .into(),
+        ),
+        leeway_seconds: 0,
+    };
+    let bad_multi_aud_validator = JwtValidator::new(
+        jsonwebtoken::DecodingKey::from_secret(TEST_SECRET),
+        bad_multi_aud_config,
+    );
+    assert!(matches!(
+        bad_multi_aud_validator.verify_token(&token),
+        Err(AuthError::InvalidToken(_))
+    ));
 
     let raw_claims_json = serde_json::json!({
         "auth_id": auth_id,

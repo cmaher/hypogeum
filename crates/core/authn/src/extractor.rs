@@ -97,9 +97,6 @@ pub fn extract_principal_from_parts(parts: &Parts) -> Result<Option<Principal>, 
         if let Some((scheme, rest)) = trimmed.split_once(|c: char| c.is_ascii_whitespace()) {
             if scheme.eq_ignore_ascii_case("bearer") {
                 let token = rest.trim();
-                if token.is_empty() {
-                    return Err(AuthError::MissingCredentials);
-                }
 
                 let principal = if let Some(validator) = parts.extensions.get::<JwtValidator>() {
                     validator.verify_token(token)?
