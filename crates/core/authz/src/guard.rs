@@ -97,7 +97,37 @@ pub fn require_permission_with_entities(
         .map_err(AuthzRejection::Authz)
 }
 
+/// Helper function to evaluate permissions against an `Authorizer` with additional execution context.
+pub fn require_permission_with_context(
+    authorizer: &Authorizer,
+    principal: &Principal,
+    action: impl AsEntityUid,
+    resource: impl AsEntityUid,
+    context: &cedar_policy::Context,
+) -> Result<(), AuthzRejection> {
+    authorizer
+        .authorize_with_context(principal, action, resource, context)
+        .map_err(AuthzRejection::Authz)
+}
+
+/// Helper function to evaluate permissions against an `Authorizer` with both custom entities and context.
+pub fn require_permission_advanced(
+    authorizer: &Authorizer,
+    principal: &Principal,
+    action: impl AsEntityUid,
+    resource: impl AsEntityUid,
+    entities: &cedar_policy::Entities,
+    context: Option<&cedar_policy::Context>,
+) -> Result<(), AuthzRejection> {
+    authorizer
+        .authorize_advanced(principal, action, resource, entities, context)
+        .map_err(AuthzRejection::Authz)
+}
+
 /// Static declarative specification of action and resource for [`RequirePermission`].
+///
+/// Implementors specify the Cedar action and resource EntityUids as string literals,
+/// for example `Action::"View"` and `Document::"public"`.
 pub trait PermissionPolicy: Send + Sync + 'static {
     fn action() -> &'static str;
     fn resource() -> &'static str;

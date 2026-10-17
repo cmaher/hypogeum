@@ -43,6 +43,21 @@ impl AsEntityUid for &String {
     }
 }
 
+impl<A: AsRef<str>, B: AsRef<str>> AsEntityUid for (A, B) {
+    fn as_entity_uid(&self) -> Result<EntityUid, AuthzError> {
+        let type_name = EntityTypeName::from_str(self.0.as_ref()).map_err(|e| {
+            AuthzError::EvaluationError(format!(
+                "Invalid EntityTypeName '{}': {e}",
+                self.0.as_ref()
+            ))
+        })?;
+        let entity_id = EntityId::from_str(self.1.as_ref()).map_err(|e| {
+            AuthzError::EvaluationError(format!("Invalid EntityId '{}': {e}", self.1.as_ref()))
+        })?;
+        Ok(EntityUid::from_type_name_and_id(type_name, entity_id))
+    }
+}
+
 /// In-memory policy authorization engine wrapping Cedar's authorizer, schema, and policy set.
 #[derive(Clone, Debug)]
 pub struct Authorizer {
@@ -50,6 +65,7 @@ pub struct Authorizer {
     policies: PolicySet,
     entities: Entities,
     cedar: CedarAuthorizer,
+    principal_type: EntityTypeName,
 }
 
 impl Authorizer {
@@ -60,6 +76,8 @@ impl Authorizer {
             policies,
             entities: Entities::empty(),
             cedar: CedarAuthorizer::new(),
+            principal_type: EntityTypeName::from_str("User")
+                .expect("User is a valid Cedar EntityTypeName"),
         }
     }
 
@@ -70,7 +88,26 @@ impl Authorizer {
             policies,
             entities,
             cedar: CedarAuthorizer::new(),
+            principal_type: EntityTypeName::from_str("User")
+                .expect("User is a valid Cedar EntityTypeName"),
         }
+    }
+
+    /// Configures the Cedar principal `EntityTypeName` (defaults to `"User"`).
+    pub fn with_principal_type(mut self, type_name: impl AsRef<str>) -> Result<Self, AuthzError> {
+        let parsed = EntityTypeName::from_str(type_name.as_ref()).map_err(|e| {
+            AuthzError::PolicyLoadError(format!(
+                "Invalid principal EntityTypeName '{}': {e}",
+                type_name.as_ref()
+            ))
+        })?;
+        self.principal_type = parsed;
+        Ok(self)
+    }
+
+    /// Returns a reference to the configured principal `EntityTypeName`.
+    pub fn principal_type(&self) -> &EntityTypeName {
+        &self.principal_type
     }
 
     /// Returns a reference to the active `Schema`.
@@ -98,10 +135,12 @@ impl Authorizer {
         action: impl AsEntityUid,
         resource: impl AsEntityUid,
     ) -> Decision {
-        self.is_authorized_with_entities(principal, action, resource, &self.entities)
+        self.is_authorized_advanced(principal, action, resource, &self.entities, None)
     }
 
     /// Evaluates authorization with explicitly supplied entities.
+    ///
+    /// If preloaded base entities exist on this `Authorizer`, they are combined with `entities`.
     pub fn is_authorized_with_entities(
         &self,
         principal: &Principal,
@@ -109,7 +148,30 @@ impl Authorizer {
         resource: impl AsEntityUid,
         entities: &Entities,
     ) -> Decision {
-        let principal_uid = match principal_to_entity_uid(principal) {
+        self.is_authorized_advanced(principal, action, resource, entities, None)
+    }
+
+    /// Evaluates authorization with additional execution context.
+    pub fn is_authorized_with_context(
+        &self,
+        principal: &Principal,
+        action: impl AsEntityUid,
+        resource: impl AsEntityUid,
+        context: &Context,
+    ) -> Decision {
+        self.is_authorized_advanced(principal, action, resource, &self.entities, Some(context))
+    }
+
+    /// Evaluates authorization with both custom entities and execution context.
+    pub fn is_authorized_advanced(
+        &self,
+        principal: &Principal,
+        action: impl AsEntityUid,
+        resource: impl AsEntityUid,
+        entities: &Entities,
+        context: Option<&Context>,
+    ) -> Decision {
+        let principal_uid = match principal_to_entity_uid(principal, &self.principal_type) {
             Ok(uid) => uid,
             Err(err) => {
                 tracing::warn!(error = %err, "Failed to map Principal to Cedar EntityUid; failing closed");
@@ -133,7 +195,7 @@ impl Authorizer {
             }
         };
 
-        let context = match build_context(principal) {
+        let execution_context = match build_context(principal, context) {
             Ok(ctx) => ctx,
             Err(err) => {
                 tracing::warn!(error = %err, "Failed to build execution context; failing closed");
@@ -145,8 +207,8 @@ impl Authorizer {
             principal_uid,
             action_uid,
             resource_uid,
-            context,
-            Some(&self.schema),
+            execution_context,
+            None,
         ) {
             Ok(req) => req,
             Err(err) => {
@@ -155,7 +217,31 @@ impl Authorizer {
             }
         };
 
-        let response = self.cedar.is_authorized(&request, &self.policies, entities);
+        let combined_entities;
+        let eval_entities = if self.entities.is_empty() {
+            entities
+        } else if entities.is_empty() {
+            &self.entities
+        } else {
+            match self
+                .entities
+                .clone()
+                .upsert_entities(entities.iter().cloned(), None)
+            {
+                Ok(combined) => {
+                    combined_entities = combined;
+                    &combined_entities
+                }
+                Err(err) => {
+                    tracing::warn!(error = %err, "Failed to combine runtime entities with preloaded entities; failing closed");
+                    return Decision::Deny;
+                }
+            }
+        };
+
+        let response = self
+            .cedar
+            .is_authorized(&request, &self.policies, eval_entities);
 
         let diagnostics = response.diagnostics();
         let mut has_errors = false;
@@ -179,7 +265,7 @@ impl Authorizer {
         action: impl AsEntityUid,
         resource: impl AsEntityUid,
     ) -> Result<(), AuthzError> {
-        self.authorize_with_entities(principal, action, resource, &self.entities)
+        self.authorize_advanced(principal, action, resource, &self.entities, None)
     }
 
     /// Authorizes a request with explicit entities, returning `Ok(())` on `Decision::Allow`
@@ -191,24 +277,53 @@ impl Authorizer {
         resource: impl AsEntityUid,
         entities: &Entities,
     ) -> Result<(), AuthzError> {
-        match self.is_authorized_with_entities(principal, action, resource, entities) {
+        self.authorize_advanced(principal, action, resource, entities, None)
+    }
+
+    /// Authorizes a request with additional execution context.
+    pub fn authorize_with_context(
+        &self,
+        principal: &Principal,
+        action: impl AsEntityUid,
+        resource: impl AsEntityUid,
+        context: &Context,
+    ) -> Result<(), AuthzError> {
+        self.authorize_advanced(principal, action, resource, &self.entities, Some(context))
+    }
+
+    /// Authorizes a request with both custom entities and execution context.
+    pub fn authorize_advanced(
+        &self,
+        principal: &Principal,
+        action: impl AsEntityUid,
+        resource: impl AsEntityUid,
+        entities: &Entities,
+        context: Option<&Context>,
+    ) -> Result<(), AuthzError> {
+        match self.is_authorized_advanced(principal, action, resource, entities, context) {
             Decision::Allow => Ok(()),
             Decision::Deny => Err(AuthzError::Forbidden),
         }
     }
 }
 
-fn principal_to_entity_uid(principal: &Principal) -> Result<EntityUid, AuthzError> {
-    let type_name = EntityTypeName::from_str("User").map_err(|e| {
-        AuthzError::EvaluationError(format!("Failed to parse principal EntityTypeName: {e}"))
-    })?;
+fn principal_to_entity_uid(
+    principal: &Principal,
+    type_name: &EntityTypeName,
+) -> Result<EntityUid, AuthzError> {
     let entity_id = EntityId::from_str(&principal.user_id.to_string()).map_err(|e| {
         AuthzError::EvaluationError(format!("Failed to parse principal EntityId: {e}"))
     })?;
-    Ok(EntityUid::from_type_name_and_id(type_name, entity_id))
+    Ok(EntityUid::from_type_name_and_id(
+        type_name.clone(),
+        entity_id,
+    ))
 }
 
-fn build_context(principal: &Principal) -> Result<Context, AuthzError> {
+fn build_context(
+    principal: &Principal,
+    custom_context: Option<&Context>,
+) -> Result<Context, AuthzError> {
     let method_str = match principal.method {
         AuthMethod::BearerJwt => "bearer_jwt",
         AuthMethod::Session => "session",
@@ -218,6 +333,14 @@ fn build_context(principal: &Principal) -> Result<Context, AuthzError> {
         "auth_id": principal.auth_id.to_string(),
         "auth_method": method_str,
     });
-    Context::from_json_value(json_val, None)
-        .map_err(|e| AuthzError::EvaluationError(format!("Failed to build Cedar context: {e}")))
+    let base_ctx = Context::from_json_value(json_val, None)
+        .map_err(|e| AuthzError::EvaluationError(format!("Failed to build Cedar context: {e}")))?;
+
+    if let Some(custom) = custom_context {
+        base_ctx.merge(custom.clone()).map_err(|e| {
+            AuthzError::EvaluationError(format!("Failed to merge execution context: {e}"))
+        })
+    } else {
+        Ok(base_ctx)
+    }
 }

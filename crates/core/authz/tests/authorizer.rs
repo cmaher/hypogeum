@@ -349,3 +349,231 @@ fn test_authorizer_with_runtime_entities() {
             .is_ok()
     );
 }
+
+#[test]
+fn test_authorizer_schema_without_context_permits_access() {
+    let schema_str = r#"
+    entity User;
+    entity Document;
+    action "View" appliesTo {
+        principal: [User],
+        resource: [Document]
+    };
+    "#;
+    let policy_str = r#"
+    permit(
+        principal,
+        action == Action::"View",
+        resource
+    );
+    "#;
+    let (schema, policies) = load_schema_and_policies(schema_str, policy_str).unwrap();
+    let authorizer = Authorizer::new(schema, policies);
+    let principal = Principal::new(Uuid::new_v4(), Uuid::new_v4(), AuthMethod::BearerJwt);
+
+    let decision =
+        authorizer.is_authorized(&principal, "Action::\"View\"", "Document::\"doc-123\"");
+    assert_eq!(decision, Decision::Allow);
+    assert!(
+        authorizer
+            .authorize(&principal, "Action::\"View\"", "Document::\"doc-123\"")
+            .is_ok()
+    );
+}
+
+#[test]
+fn test_authorizer_combines_preloaded_and_runtime_entities() {
+    let schema_str = r#"
+    entity Group;
+    entity User in [Group];
+    entity Document {
+        owner: User
+    };
+    action "View" appliesTo {
+        principal: [User],
+        resource: [Document]
+    };
+    "#;
+    let policy_str = r#"
+    permit(
+        principal in Group::"Admins",
+        action == Action::"View",
+        resource
+    ) when {
+        resource.owner == principal
+    };
+    "#;
+    let (schema, policies) = load_schema_and_policies(schema_str, policy_str).unwrap();
+
+    let user_id = Uuid::new_v4();
+    let principal = Principal::new(Uuid::new_v4(), user_id, AuthMethod::BearerJwt);
+
+    // Preloaded entities contain Group hierarchy
+    let base_entities_json = serde_json::json!([
+        {
+            "uid": { "type": "Group", "id": "Admins" },
+            "attrs": {},
+            "parents": []
+        },
+        {
+            "uid": { "type": "User", "id": user_id.to_string() },
+            "attrs": {},
+            "parents": [
+                { "type": "Group", "id": "Admins" }
+            ]
+        }
+    ]);
+    let base_entities = Entities::from_json_value(base_entities_json, Some(&schema)).unwrap();
+    let authorizer = Authorizer::with_entities(schema.clone(), policies, base_entities);
+
+    // Runtime entities contain Document resource
+    let runtime_entities_json = serde_json::json!([
+        {
+            "uid": { "type": "Document", "id": "doc-combined" },
+            "attrs": {
+                "owner": { "type": "User", "id": user_id.to_string() }
+            },
+            "parents": []
+        }
+    ]);
+    let runtime_entities = Entities::from_json_value(runtime_entities_json, Some(&schema)).unwrap();
+
+    // Without runtime entities, resource attributes are missing -> Deny
+    assert_eq!(
+        authorizer.is_authorized(&principal, "Action::\"View\"", "Document::\"doc-combined\""),
+        Decision::Deny
+    );
+
+    // Combining preloaded entities (Group membership) with runtime entities (Document owner) -> Allow
+    assert_eq!(
+        authorizer.is_authorized_with_entities(
+            &principal,
+            "Action::\"View\"",
+            "Document::\"doc-combined\"",
+            &runtime_entities
+        ),
+        Decision::Allow
+    );
+    assert!(
+        authorizer
+            .authorize_with_entities(
+                &principal,
+                "Action::\"View\"",
+                "Document::\"doc-combined\"",
+                &runtime_entities
+            )
+            .is_ok()
+    );
+}
+
+#[test]
+fn test_authorizer_with_namespaced_principal_type() {
+    let schema_str = r#"
+    namespace App {
+        entity User;
+        entity Document;
+        action "View" appliesTo {
+            principal: [User],
+            resource: [Document]
+        };
+    }
+    "#;
+    let policy_str = r#"
+    permit(
+        principal,
+        action == App::Action::"View",
+        resource
+    );
+    "#;
+    let (schema, policies) = load_schema_and_policies(schema_str, policy_str).unwrap();
+    let authorizer = Authorizer::new(schema, policies)
+        .with_principal_type("App::User")
+        .expect("App::User is valid");
+
+    assert_eq!(authorizer.principal_type().to_string(), "App::User");
+
+    let principal = Principal::new(Uuid::new_v4(), Uuid::new_v4(), AuthMethod::BearerJwt);
+    assert_eq!(
+        authorizer.is_authorized(
+            &principal,
+            "App::Action::\"View\"",
+            "App::Document::\"doc-1\""
+        ),
+        Decision::Allow
+    );
+}
+
+#[test]
+fn test_authorizer_with_custom_context() {
+    let schema_str = r#"
+    entity User;
+    entity Document;
+    action "View" appliesTo {
+        principal: [User],
+        resource: [Document],
+        context: {
+            auth_id: String,
+            auth_method: String,
+            mfa_verified: Bool
+        }
+    };
+    "#;
+    let policy_str = r#"
+    permit(
+        principal,
+        action == Action::"View",
+        resource
+    ) when {
+        context.mfa_verified == true
+    };
+    "#;
+    let (schema, policies) = load_schema_and_policies(schema_str, policy_str).unwrap();
+    let authorizer = Authorizer::new(schema, policies);
+
+    let principal = Principal::new(Uuid::new_v4(), Uuid::new_v4(), AuthMethod::BearerJwt);
+    let mfa_context =
+        cedar_policy::Context::from_json_value(serde_json::json!({ "mfa_verified": true }), None)
+            .unwrap();
+
+    assert_eq!(
+        authorizer.is_authorized_with_context(
+            &principal,
+            "Action::\"View\"",
+            "Document::\"doc-1\"",
+            &mfa_context
+        ),
+        Decision::Allow
+    );
+    assert!(
+        authorizer
+            .authorize_with_context(
+                &principal,
+                "Action::\"View\"",
+                "Document::\"doc-1\"",
+                &mfa_context
+            )
+            .is_ok()
+    );
+
+    let non_mfa_context =
+        cedar_policy::Context::from_json_value(serde_json::json!({ "mfa_verified": false }), None)
+            .unwrap();
+    assert_eq!(
+        authorizer.is_authorized_with_context(
+            &principal,
+            "Action::\"View\"",
+            "Document::\"doc-1\"",
+            &non_mfa_context
+        ),
+        Decision::Deny
+    );
+}
+
+#[test]
+fn test_authorizer_tuple_as_entity_uid() {
+    let authorizer = create_test_authorizer();
+    let principal = Principal::new(Uuid::new_v4(), Uuid::new_v4(), AuthMethod::BearerJwt);
+
+    let dec = authorizer.is_authorized(&principal, ("Action", "View"), ("Document", "doc-123"));
+    assert_eq!(dec, Decision::Allow);
+}

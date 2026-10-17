@@ -308,3 +308,59 @@ fn test_guard_dynamic_require_permission_with_entities() {
     );
     assert!(res.is_ok());
 }
+
+#[test]
+fn test_guard_require_permission_with_context() {
+    let schema_str = r#"
+    entity User;
+    entity Document;
+    action "View" appliesTo {
+        principal: [User],
+        resource: [Document],
+        context: {
+            auth_id: String,
+            auth_method: String,
+            ip_whitelisted: Bool
+        }
+    };
+    "#;
+    let policy_str = r#"
+    permit(
+        principal,
+        action == Action::"View",
+        resource
+    ) when {
+        context.ip_whitelisted == true
+    };
+    "#;
+    let (schema, policies) = load_schema_and_policies(schema_str, policy_str).unwrap();
+    let authorizer = Authorizer::new(schema, policies);
+    let principal = Principal::new(Uuid::new_v4(), Uuid::new_v4(), AuthMethod::BearerJwt);
+
+    let ctx =
+        cedar_policy::Context::from_json_value(serde_json::json!({ "ip_whitelisted": true }), None)
+            .unwrap();
+
+    let res = hypgm_authz::require_permission_with_context(
+        &authorizer,
+        &principal,
+        ("Action", "View"),
+        ("Document", "doc-1"),
+        &ctx,
+    );
+    assert!(res.is_ok());
+
+    let bad_ctx = cedar_policy::Context::from_json_value(
+        serde_json::json!({ "ip_whitelisted": false }),
+        None,
+    )
+    .unwrap();
+    let bad_res = hypgm_authz::require_permission_with_context(
+        &authorizer,
+        &principal,
+        ("Action", "View"),
+        ("Document", "doc-1"),
+        &bad_ctx,
+    );
+    assert!(matches!(bad_res, Err(AuthzRejection::Authz(_))));
+}

@@ -66,7 +66,6 @@ Enforce permissions in Axum route handlers using declarative policy extractors o
 ```rust
 use std::sync::Arc;
 use axum::{Router, Json, routing::get, extract::State};
-use hypgm_authn::Principal;
 use hypgm_authn::{Principal, RequireAuth};
 use hypgm_authz::{
     Authorizer, AuthzRejection, PermissionPolicy, RequirePermission, require_permission,
