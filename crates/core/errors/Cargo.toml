@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+http = "1"
 thiserror.workspace = true
 tonic = { workspace = true, optional = true }
 
