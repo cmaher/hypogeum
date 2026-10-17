@@ -141,13 +141,7 @@ impl Authorizer {
             }
         };
 
-        let request = match Request::new(
-            principal_uid,
-            action_uid,
-            resource_uid,
-            context,
-            None,
-        ) {
+        let request = match Request::new(principal_uid, action_uid, resource_uid, context, None) {
             Ok(req) => req,
             Err(err) => {
                 tracing::warn!(error = %err, "Failed to construct Cedar Request; failing closed");
@@ -199,8 +193,9 @@ impl Authorizer {
 }
 
 fn principal_to_entity_uid(principal: &Principal) -> Result<EntityUid, AuthzError> {
-    EntityUid::from_str(&format!("User::\"{}\"", principal.user_id))
-        .map_err(|e| AuthzError::EvaluationError(format!("Failed to parse principal EntityUid: {e}")))
+    EntityUid::from_str(&format!("User::\"{}\"", principal.user_id)).map_err(|e| {
+        AuthzError::EvaluationError(format!("Failed to parse principal EntityUid: {e}"))
+    })
 }
 
 fn build_context(principal: &Principal) -> Result<Context, AuthzError> {

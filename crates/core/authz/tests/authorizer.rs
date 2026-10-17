@@ -1,5 +1,5 @@
 use hypgm_authn::{AuthMethod, Principal};
-use hypgm_authz::{AuthzError, Authorizer, Decision, load_schema_and_policies};
+use hypgm_authz::{Authorizer, AuthzError, Decision, load_schema_and_policies};
 use uuid::Uuid;
 
 const SCHEMA: &str = r#"
@@ -71,18 +71,11 @@ fn test_authorizer_permit_decision() {
     let auth_id = Uuid::new_v4();
     let principal = Principal::new(auth_id, user_id, AuthMethod::BearerJwt);
 
-    let decision = authorizer.is_authorized(
-        &principal,
-        "Action::\"View\"",
-        "Document::\"doc-123\"",
-    );
+    let decision =
+        authorizer.is_authorized(&principal, "Action::\"View\"", "Document::\"doc-123\"");
     assert_eq!(decision, Decision::Allow);
 
-    let auth_res = authorizer.authorize(
-        &principal,
-        "Action::\"View\"",
-        "Document::\"doc-123\"",
-    );
+    let auth_res = authorizer.authorize(&principal, "Action::\"View\"", "Document::\"doc-123\"");
     assert!(auth_res.is_ok());
 }
 
@@ -94,18 +87,11 @@ fn test_authorizer_default_deny() {
     let principal = Principal::new(auth_id, user_id, AuthMethod::BearerJwt);
 
     // Delete has no permit policy -> default deny
-    let decision = authorizer.is_authorized(
-        &principal,
-        "Action::\"Delete\"",
-        "Document::\"doc-123\"",
-    );
+    let decision =
+        authorizer.is_authorized(&principal, "Action::\"Delete\"", "Document::\"doc-123\"");
     assert_eq!(decision, Decision::Deny);
 
-    let auth_res = authorizer.authorize(
-        &principal,
-        "Action::\"Delete\"",
-        "Document::\"doc-123\"",
-    );
+    let auth_res = authorizer.authorize(&principal, "Action::\"Delete\"", "Document::\"doc-123\"");
     match auth_res {
         Err(AuthzError::Forbidden) => {}
         other => panic!("Expected Forbidden error on default deny, got {other:?}"),
@@ -120,18 +106,11 @@ fn test_authorizer_explicit_forbid() {
     let principal = Principal::new(auth_id, banned_user_id, AuthMethod::BearerJwt);
 
     // View would normally be permitted, but explicit forbid matches
-    let decision = authorizer.is_authorized(
-        &principal,
-        "Action::\"View\"",
-        "Document::\"doc-123\"",
-    );
+    let decision =
+        authorizer.is_authorized(&principal, "Action::\"View\"", "Document::\"doc-123\"");
     assert_eq!(decision, Decision::Deny);
 
-    let auth_res = authorizer.authorize(
-        &principal,
-        "Action::\"View\"",
-        "Document::\"doc-123\"",
-    );
+    let auth_res = authorizer.authorize(&principal, "Action::\"View\"", "Document::\"doc-123\"");
     assert!(matches!(auth_res, Err(AuthzError::Forbidden)));
 }
 
@@ -143,11 +122,8 @@ fn test_authorizer_context_method_mismatch_denied() {
     // Edit requires Session, but we pass ApiKey
     let principal = Principal::new(auth_id, user_id, AuthMethod::ApiKey);
 
-    let decision = authorizer.is_authorized(
-        &principal,
-        "Action::\"Edit\"",
-        "Document::\"doc-123\"",
-    );
+    let decision =
+        authorizer.is_authorized(&principal, "Action::\"Edit\"", "Document::\"doc-123\"");
     assert_eq!(decision, Decision::Deny);
     assert!(matches!(
         authorizer.authorize(&principal, "Action::\"Edit\"", "Document::\"doc-123\""),
@@ -162,7 +138,15 @@ fn test_authorizer_context_method_mismatch_denied() {
         "Document::\"doc-123\"",
     );
     assert_eq!(session_decision, Decision::Allow);
-    assert!(authorizer.authorize(&session_principal, "Action::\"Edit\"", "Document::\"doc-123\"").is_ok());
+    assert!(
+        authorizer
+            .authorize(
+                &session_principal,
+                "Action::\"Edit\"",
+                "Document::\"doc-123\""
+            )
+            .is_ok()
+    );
 }
 
 #[test]
@@ -181,11 +165,8 @@ fn test_authorizer_fail_closed_on_invalid_entity_uids() {
     assert_eq!(decision, Decision::Deny);
 
     // Malformed resource string
-    let decision = authorizer.is_authorized(
-        &principal,
-        "Action::\"View\"",
-        "InvalidMalformedResource",
-    );
+    let decision =
+        authorizer.is_authorized(&principal, "Action::\"View\"", "InvalidMalformedResource");
     assert_eq!(decision, Decision::Deny);
 }
 
@@ -220,17 +201,10 @@ fn test_authorizer_fail_closed_on_missing_attribute_evaluation_error() {
 
     // Document is not in Entities, so evaluating resource.is_secret causes evaluation error.
     // Authorizer must fail closed to Deny.
-    let decision = authorizer.is_authorized(
-        &principal,
-        "Action::\"View\"",
-        "Document::\"doc-123\"",
-    );
+    let decision =
+        authorizer.is_authorized(&principal, "Action::\"View\"", "Document::\"doc-123\"");
     assert_eq!(decision, Decision::Deny);
 
-    let auth_res = authorizer.authorize(
-        &principal,
-        "Action::\"View\"",
-        "Document::\"doc-123\"",
-    );
+    let auth_res = authorizer.authorize(&principal, "Action::\"View\"", "Document::\"doc-123\"");
     assert!(matches!(auth_res, Err(AuthzError::Forbidden)));
 }

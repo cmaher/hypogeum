@@ -76,15 +76,11 @@ impl PermissionPolicy for DeleteDocPolicy {
     }
 }
 
-async fn view_handler(
-    _perm: RequirePermission<ViewAllowedDocPolicy>,
-) -> impl IntoResponse {
+async fn view_handler(_perm: RequirePermission<ViewAllowedDocPolicy>) -> impl IntoResponse {
     Json(serde_json::json!({ "result": "viewed" }))
 }
 
-async fn delete_handler(
-    _perm: RequirePermission<DeleteDocPolicy>,
-) -> impl IntoResponse {
+async fn delete_handler(_perm: RequirePermission<DeleteDocPolicy>) -> impl IntoResponse {
     Json(serde_json::json!({ "result": "deleted" }))
 }
 
@@ -99,7 +95,9 @@ async fn dynamic_handler(
         "Action::\"View\"",
         format!("Document::\"{doc_id}\""),
     )?;
-    Ok(Json(serde_json::json!({ "result": "success", "doc": doc_id })))
+    Ok(Json(
+        serde_json::json!({ "result": "success", "doc": doc_id }),
+    ))
 }
 
 fn build_test_app() -> (Router, Arc<Authorizer>) {
@@ -186,7 +184,12 @@ async fn test_guard_dynamic_require_permission_helper() {
     let res_forbidden = app.clone().oneshot(req_forbidden).await.unwrap();
     assert_eq!(res_forbidden.status(), StatusCode::FORBIDDEN);
 
-    let body_bytes = res_forbidden.into_body().collect().await.unwrap().to_bytes();
+    let body_bytes = res_forbidden
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
     assert_eq!(json["code"], "forbidden");
     assert_eq!(json["message"], "Access denied by policy");
@@ -207,10 +210,7 @@ async fn test_guard_unauthenticated_request_denied() {
     let (app, _) = build_test_app();
 
     // No principal extension attached
-    let req = Request::builder()
-        .uri("/view")
-        .body(Body::empty())
-        .unwrap();
+    let req = Request::builder().uri("/view").body(Body::empty()).unwrap();
 
     let response = app.oneshot(req).await.unwrap();
     assert_eq!(response.status(), StatusCode::FORBIDDEN);

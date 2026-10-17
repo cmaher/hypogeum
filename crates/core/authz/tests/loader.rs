@@ -44,7 +44,11 @@ permit(
 #[test]
 fn test_load_valid_schema_and_policies() {
     let result = load_schema_and_policies(VALID_SCHEMA, VALID_POLICY);
-    assert!(result.is_ok(), "Expected valid loading, got: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Expected valid loading, got: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -75,8 +79,7 @@ fn test_load_policy_with_undefined_entity_type_fails_validation() {
     match result {
         Err(AuthzError::PolicyLoadError(msg)) => {
             assert!(
-                msg.contains("validation failed against schema")
-                    || msg.contains("SuperUser"),
+                msg.contains("validation failed against schema") || msg.contains("SuperUser"),
                 "Expected validation error message, got: {msg}"
             );
         }
