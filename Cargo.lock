@@ -1524,11 +1524,14 @@ dependencies = [
  "futures-util",
  "http",
  "http-body-util",
+ "logging",
  "serde",
  "serde_json",
  "thiserror",
  "tokio",
  "tower",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
