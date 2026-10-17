@@ -1,6 +1,7 @@
-/target/
+target/
 .env
 env/local.env
+example/env/local.env
 /data/
 .DS_Store
 __pycache__/

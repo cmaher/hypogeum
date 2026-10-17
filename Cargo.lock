@@ -145,8 +145,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
- "hypgm-env-config",
- "hypgm-ext-tasks",
+ "hypgm-envconfig",
+ "hypgmx-tasks",
  "serde",
  "sqlx",
  "tokio",
@@ -169,21 +169,6 @@ dependencies = [
  "tokio",
  "tracing",
  "ulid",
-]
-
-[[package]]
-name = "app-cli"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "hypgm-dmn-app",
- "hypgm-dmn-hello-world",
- "hypgm-env-config",
- "hypgm-logging",
- "serde",
- "tokio",
- "tracing",
 ]
 
 [[package]]
@@ -1571,7 +1556,6 @@ version = "0.1.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ddc03d96684f9226b8a787cdb71488417b53ab5ea8fdb1dac946cb9431cc8bff"
 dependencies = [
- "base64 0.23.1",
  "bytes",
  "futures-channel",
  "futures-util",
@@ -1579,9 +1563,7 @@ dependencies = [
  "http-body",
  "httparse",
  "hyper",
- "ipnet",
  "libc",
- "percent-encoding",
  "pin-project-lite",
  "socket2",
  "tokio",
@@ -1605,68 +1587,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "hypgm-dmn-app"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "axum",
- "futures-util",
- "hypgm-dmn-hello-world",
- "hypgm-errors",
- "hypgm-http",
- "hypgm-logging",
- "reqwest",
- "serde",
- "serde_json",
- "tokio",
- "tower",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "hypgm-dmn-hello-world"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "axum",
- "hypgm-errors",
- "hypgm-http",
- "serde",
- "serde_json",
- "thiserror",
- "tokio",
- "tower",
-]
-
-[[package]]
-name = "hypgm-dmn-users"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "chrono",
- "hypgm-env-config",
- "hypgm-errors",
- "hypgm-ext-db",
- "hypgm-ext-postgres",
- "hypgm-rpc",
- "hypgm-test-support",
- "prost-types",
- "sea-orm",
- "sea-orm-migration",
- "serde",
- "sqlx",
- "thiserror",
- "tokio",
- "tokio-stream",
- "tonic",
- "tracing-subscriber",
- "uuid",
-]
-
-[[package]]
-name = "hypgm-env-config"
+name = "hypgm-envconfig"
 version = "0.1.0"
 dependencies = [
  "dotenvy",
@@ -1683,73 +1604,6 @@ dependencies = [
  "http",
  "thiserror",
  "tonic",
-]
-
-[[package]]
-name = "hypgm-ext-db"
-version = "0.1.0"
-dependencies = [
- "apalis-postgres",
- "hypgm-dmn-users",
- "hypgm-errors",
- "hypgm-test-support",
- "sea-orm",
- "sea-orm-migration",
- "serde_json",
- "sqlx",
- "tokio",
-]
-
-[[package]]
-name = "hypgm-ext-file-storage"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "bytes",
- "futures-core",
- "futures-util",
- "hex",
- "hypgm-errors",
- "libc",
- "serde",
- "serde_json",
- "sha2 0.11.1",
- "tempfile",
- "tokio",
- "uuid",
-]
-
-[[package]]
-name = "hypgm-ext-postgres"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "sea-query",
- "sea-query-sqlx",
- "serde",
- "serde_json",
- "sqlx",
- "tokio",
- "uuid",
-]
-
-[[package]]
-name = "hypgm-ext-tasks"
-version = "0.1.0"
-dependencies = [
- "apalis",
- "apalis-board",
- "apalis-postgres",
- "axum",
- "http-body-util",
- "hypgm-errors",
- "hypgm-test-support",
- "serde",
- "serde_json",
- "sqlx",
- "tokio",
- "tower",
- "ulid",
 ]
 
 [[package]]
@@ -1800,23 +1654,68 @@ dependencies = [
 name = "hypgm-test-support"
 version = "0.1.0"
 dependencies = [
- "hypgm-ext-db",
+ "hypgmx-rdbms",
  "sqlx",
  "testcontainers-modules",
  "tokio",
 ]
 
 [[package]]
-name = "hypogeum-db-cli"
+name = "hypgmx-file-storage"
 version = "0.1.0"
 dependencies = [
- "hypgm-env-config",
- "hypgm-ext-db",
+ "async-trait",
+ "bytes",
+ "futures-core",
+ "futures-util",
+ "hex",
+ "hypgm-errors",
+ "libc",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "tempfile",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "hypgmx-rdbms"
+version = "0.1.0"
+dependencies = [
+ "apalis-postgres",
+ "async-trait",
+ "chrono",
+ "hypgm-errors",
+ "hypgm-test-support",
+ "sea-orm",
+ "sea-orm-migration",
+ "sea-query",
+ "sea-query-sqlx",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "hypgmx-tasks"
+version = "0.1.0"
+dependencies = [
+ "apalis",
+ "apalis-board",
+ "apalis-postgres",
+ "axum",
+ "http-body-util",
+ "hypgm-errors",
  "hypgm-test-support",
  "serde",
  "serde_json",
  "sqlx",
  "tokio",
+ "tower",
+ "ulid",
 ]
 
 [[package]]
@@ -2003,12 +1902,6 @@ checksum = "a37b2691796cffeb8a8cd305ac66e65841559f147f4e63231d0eafa4db5384d1"
 dependencies = [
  "rustversion",
 ]
-
-[[package]]
-name = "ipnet"
-version = "2.12.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "791930b43c0d5973160d90a8f3894509f2b273430f5c5c73b668636d0287c5c0"
 
 [[package]]
 name = "itertools"
@@ -2956,38 +2849,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
-name = "reqwest"
-version = "0.12.28"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eddd3ca559203180a307f12d114c268abf583f59b03cb906fd0b3ff8646c1147"
-dependencies = [
- "base64 0.22.1",
- "bytes",
- "futures-core",
- "http",
- "http-body",
- "http-body-util",
- "hyper",
- "hyper-util",
- "js-sys",
- "log",
- "percent-encoding",
- "pin-project-lite",
- "serde",
- "serde_json",
- "serde_urlencoded",
- "sync_wrapper",
- "tokio",
- "tower",
- "tower-http",
- "tower-service",
- "url",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
-]
-
-[[package]]
 name = "ring"
 version = "0.17.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3842,9 +3703,6 @@ name = "sync_wrapper"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0bf256ce5efdfa370213c1dabab5935a12e49f2c58d15e9eac2870d3b4f27263"
-dependencies = [
- "futures-core",
-]
 
 [[package]]
 name = "synstructure"
@@ -4216,24 +4074,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tower-http"
-version = "0.6.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4cfcf7e2740e6fc6d4d688b4ef00650406bb94adf4731e43c096c3a19fe40840"
-dependencies = [
- "bitflags 2.13.2",
- "bytes",
- "futures-util",
- "http",
- "http-body",
- "pin-project-lite",
- "tower",
- "tower-layer",
- "tower-service",
- "url",
-]
-
-[[package]]
 name = "tower-layer"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4517,17 +4357,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wasm-bindgen-futures"
-version = "0.4.79"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3cbab34de2d982e9b48e18d216d04c4a6f641066ff19ffb699980f591ee3610e"
-dependencies = [
- "js-sys",
- "tokio",
- "wasm-bindgen",
-]
-
-[[package]]
 name = "wasm-bindgen-macro"
 version = "0.2.129"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4557,16 +4386,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "23f0c9c52aa7cd7d77769a4cfe2a9adb1b331f489a41d912ce14513d5ab995c6"
 dependencies = [
  "unicode-ident",
-]
-
-[[package]]
-name = "web-sys"
-version = "0.3.106"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "88261b9deccee56594c11a3460c462c41f58d148598fe70ad77070126a68aba4"
-dependencies = [
- "js-sys",
- "wasm-bindgen",
 ]
 
 [[package]]

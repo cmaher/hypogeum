@@ -1,0 +1,23 @@
+[package]
+name = "exemplum-app-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "app"
+path = "src/main.rs"
+
+[dependencies]
+exemplum-app = { path = "../../crates/app" }
+exemplum-dmn-hello-world = { path = "../../crates/domain/hello-world" }
+axum = { version = "0.8", features = ["http2"] }
+tokio.workspace = true
+anyhow = "1"
+hypgm-envconfig = { path = "../../../crates/core/envconfig" }
+hypgm-logging = { path = "../../../crates/core/logging" }
+serde.workspace = true
+tracing = "0.1"
+
+[lints]
+workspace = true

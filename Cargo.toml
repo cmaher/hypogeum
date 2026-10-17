@@ -1,22 +1,17 @@
 [workspace]
 members = [
     "cmd/apalis-dashboard",
-    "cmd/db",
-    "cmd/app",
-    "crates/core/env-config",
+    "crates/core/envconfig",
     "crates/core/errors",
     "crates/core/http",
     "crates/core/logging",
     "crates/core/rpc",
     "crates/core/test-support",
-    "crates/domain/app",
-    "crates/domain/hello-world",
-    "crates/domain/users",
     "crates/ext/file-storage",
-    "crates/ext/rdbms/db",
-    "crates/ext/rdbms/postgres",
+    "crates/ext/rdbms",
     "crates/ext/tasks",
 ]
+exclude = ["example"]
 resolver = "3"
 
 [workspace.package]

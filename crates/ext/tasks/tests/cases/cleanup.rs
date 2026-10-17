@@ -1,5 +1,5 @@
 use apalis::prelude::*;
-use hypgm_ext_tasks::worker::Lifecycle;
+use hypgmx_tasks::worker::Lifecycle;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions, PgSslMode};
 use std::{
     future::{Future, poll_fn},

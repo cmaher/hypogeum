@@ -10,7 +10,7 @@ Internal services (such as User CRUD in `crates/domain/users`) retain internal g
 
 ```
 cmd/app (main.rs)
-  │  Loads HYPOGEUM_APP_* config & HYPOGEUM_LOG_* via crates/core/env-config
+  │  Loads HYPOGEUM_APP_* config & HYPOGEUM_LOG_* via crates/core/envconfig
   │  Initializes crates/core/logging subscriber
   │  Constructs domain services (Arc<dyn Service>)
   │  Wired to graceful shutdown signal
@@ -35,7 +35,7 @@ crates/domain/hello-world (service.rs)
 
 1. **`cmd/app` (`app-cli` package):**
    The composition root executable.
-   - Loads environment configuration via `hypgm-env-config` (`crates/core/env-config`) once at startup.
+   - Loads environment configuration via `hypgm-envconfig` (`crates/core/envconfig`) once at startup.
    - Initializes structured logging via `hypgm-logging` (`crates/core/logging`).
    - Constructs dependencies and injects them as trait objects (`Arc<dyn HelloWorldService>`).
    - Binds the TCP listener (default `127.0.0.1:8080`).

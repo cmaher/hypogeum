@@ -11,8 +11,8 @@ import tempfile
 import unittest
 
 
-SOURCE = "hypogeum"
-SHORT = "hypgm"
+SOURCE = "exemplum"
+SHORT = "exmpl"
 SCRIPT = Path(__file__).resolve().parents[1] / "rename-project.py"
 TARGET = "sample_app" if SOURCE != "sample_app" else "other_app"
 
@@ -34,12 +34,15 @@ class RenameProjectTests(unittest.TestCase):
         # A missing feature must fail as an assertion before the script exists.
         self.assertTrue(SCRIPT.is_file(), "project rename script has not been implemented")
         shutil.copy2(SCRIPT, self.script)
-        self.fixture = self.root / "example.txt"
+        self.fixture = self.root / "example/fixture.txt"
+        self.fixture.parent.mkdir(parents=True, exist_ok=True)
         self.fixture.write_text(
             f"{SOURCE} {SOURCE.upper()} {display(SOURCE)}\n"
             f"{SOURCE}_db {SOURCE}-db {SOURCE}.users.v1 {SOURCE.upper()}_LOG\n"
             f"{SHORT}-errors {SHORT}_ext_db {SHORT}_dmn_users\n"
         )
+        self.root_file = self.root / "root.txt"
+        self.root_file.write_text(f"{SOURCE} {SOURCE.upper()} {display(SOURCE)}\n")
         self.git("add", ".")
 
     def git(self, *args):
@@ -57,7 +60,7 @@ class RenameProjectTests(unittest.TestCase):
         return json.loads(stream)
 
     def snapshot(self):
-        return {p: p.read_bytes() for p in (self.fixture, self.script)}
+        return {p: p.read_bytes() for p in (self.fixture, self.script, self.root_file)}
 
     def test_preview_is_complete_and_has_no_writes(self):
         before = self.snapshot()
@@ -66,8 +69,9 @@ class RenameProjectTests(unittest.TestCase):
         self.assertTrue(result["data"]["dry_run"])
         paths = [entry["path"] for entry in result["data"]["files"]]
         self.assertEqual(paths, sorted(paths))
-        self.assertIn("example.txt", paths)
-        self.assertIn("scripts/rename-project.py", paths)
+        self.assertIn("example/fixture.txt", paths)
+        self.assertNotIn("root.txt", paths)
+        self.assertNotIn("scripts/rename-project.py", paths)
         self.assertGreater(result["data"]["replacements"], 6)
         self.assertEqual(self.snapshot(), before)
 
@@ -82,68 +86,94 @@ class RenameProjectTests(unittest.TestCase):
              f"{TARGET}-errors {TARGET}_ext_db {TARGET}_dmn_users\r\n").encode(),
         )
         self.assertEqual(stat.S_IMODE(self.fixture.stat().st_mode), 0o755)
-        self.assertNotIn(SOURCE.encode(), self.script.read_bytes().lower())
-        self.assertNotIn(SHORT.encode(), self.script.read_bytes().lower())
-        # The customized script can customize again, including PascalCase forms.
-        self.run_script("next_project")
-        self.assertIn("NextProject", self.fixture.read_text())
-        self.assertIn("next_project-errors next_project_ext_db next_project_dmn_users", self.fixture.read_text())
-        self.assertNotIn(TARGET, self.fixture.read_text())
+        # Root files and script outside example/ are never modified
+        self.assertEqual(self.root_file.read_text(), f"{SOURCE} {SOURCE.upper()} {display(SOURCE)}\n")
+        self.assertIn(SOURCE.encode(), self.script.read_bytes().lower())
 
     def test_app_and_rpc_configuration_stay_aligned(self):
         repository = SCRIPT.parent.parent
         paths = [
-            "proto/users.proto",
-            "crates/core/rpc/src/lib.rs",
-            "cmd/app/src/main.rs",
-            "crates/domain/app/tests/transport.rs",
-            "env/local.env.example",
-            "Cargo.toml",
-            "crates/ext/rdbms/db/Cargo.toml",
+            "example/Cargo.toml",
+            "example/docker-compose.yml",
+            "example/cmd/app/src/main.rs",
+            "example/cmd/db/src/main.rs",
+            "example/crates/app/Cargo.toml",
+            "example/crates/domain/users/src/repo/entity.rs",
+            "example/crates/domain/users/src/repo/postgres.rs",
+            "example/crates/domain/users/src/pg/migrations/m20260101_000001_create_users.rs",
+            "example/infra/postgres/provision.sql",
         ]
-        for relative in paths:
+        root_paths = [
+            "Cargo.toml",
+            "crates/core/rpc/src/lib.rs",
+            "crates/ext/rdbms/src/lib.rs",
+            "crates/core/envconfig/src/lib.rs",
+        ]
+        for relative in paths + root_paths:
             source = repository / relative
-            self.assertTrue(source.is_file(), f"missing app surface: {relative}")
+            self.assertTrue(source.is_file(), f"missing surface: {relative}")
             target = self.root / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, target)
         self.git("add", ".")
         self.run_script(TARGET)
-        proto = (self.root / paths[0]).read_text()
-        bindings = (self.root / paths[1]).read_text()
-        main = (self.root / paths[2]).read_text()
-        transport = (self.root / paths[3]).read_text()
-        env = (self.root / paths[4]).read_text()
-        cargo_root = (self.root / paths[5]).read_text()
-        db_cargo = (self.root / paths[6]).read_text()
-        package = f"{TARGET}.users.v1"
-        self.assertIn(f"package {package};", proto)
-        self.assertIn(f'tonic::include_proto!("{package}")', bindings)
-        self.assertIn(f'"{TARGET.upper()}_APP_"', main)
-        self.assertIn(f"{TARGET.upper()}_APP_BIND", main)
-        self.assertIn(f"{TARGET.upper()}_APP_BIND=127.0.0.1:8080", env)
-        self.assertIn(f"/{TARGET}.users.v1.Users/GetUser", transport)
-        self.assertIn(f"{TARGET}_dmn_app", transport)
-        self.assertIn(f"{TARGET}_logging", main)
-        self.assertIn("crates/core/rpc", cargo_root)
-        self.assertIn(f"{TARGET}-ext-db", db_cargo)
+
+        compose = (self.root / paths[1]).read_text()
+        app_main = (self.root / paths[2]).read_text()
+        db_main = (self.root / paths[3]).read_text()
+        app_cargo = (self.root / paths[4]).read_text()
+        entity = (self.root / paths[5]).read_text()
+        postgres = (self.root / paths[6]).read_text()
+        migration = (self.root / paths[7]).read_text()
+        provision = (self.root / paths[8]).read_text()
+
+        self.assertIn(f"{TARGET}-app", app_cargo)
+        self.assertIn(f"POSTGRES_DB: {TARGET}", compose)
+        self.assertIn(f"{TARGET.upper()}_POSTGRES_PASSWORD", compose)
+        self.assertIn(f'"{TARGET.upper()}_APP_"', app_main)
+        self.assertIn(f'"{TARGET.upper()}_MIGRATION_"', db_main)
+        self.assertIn(f"Usage: {TARGET}-db", db_main)
+        self.assertIn(f'schema_name = "{TARGET}"', entity)
+        self.assertIn(f'role != "{TARGET}_users"', postgres)
+        self.assertIn(f'SELECT {TARGET}.schema_version()', postgres)
+        self.assertIn(f'CREATE SCHEMA IF NOT EXISTS {TARGET} AUTHORIZATION {TARGET}_owner', migration)
+        self.assertIn(f'GRANT USAGE ON SCHEMA {TARGET} TO {TARGET}_users', migration)
+        self.assertIn(f"{TARGET}_owner", provision)
+        self.assertIn(f"{TARGET}_migrator", provision)
+        self.assertIn(f"{TARGET}_users", provision)
+        self.assertIn(f"{TARGET}_tasks", provision)
+
         for relative in paths:
             self.assertNotIn(SOURCE, (self.root / relative).read_text().lower())
-            self.assertNotIn(SHORT, (self.root / relative).read_text().lower())
+
+        for relative in root_paths:
+            self.assertEqual(
+                (self.root / relative).read_bytes(),
+                (repository / relative).read_bytes(),
+                f"Root file modified: {relative}"
+            )
 
     def test_hidden_tracked_files_are_included_but_local_files_are_excluded(self):
-        hidden = self.root / ".settings"
+        hidden = self.root / "example/.settings"
         hidden.write_text(SOURCE)
-        self.git("add", ".settings")
-        ignored = self.root / "local.env"
+        self.git("add", "example/.settings")
+        ignored = self.root / "example/local.env"
         ignored.write_text(SOURCE)
-        (self.root / ".gitignore").write_text("local.env\n")
-        untracked = self.root / "untracked.txt"
+        (self.root / "example/.gitignore").write_text("local.env\n")
+        untracked = self.root / "example/untracked.txt"
         untracked.write_text(SOURCE)
         self.run_script(TARGET)
         self.assertEqual(hidden.read_text(), TARGET)
         self.assertEqual(ignored.read_text(), SOURCE)
         self.assertEqual(untracked.read_text(), SOURCE)
+        self.assertEqual(self.root_file.read_text(), f"{SOURCE} {SOURCE.upper()} {display(SOURCE)}\n")
+
+    def test_root_files_outside_example_remain_unchanged(self):
+        root_sample = self.root / "sample_outside.txt"
+        root_sample.write_text(f"{SOURCE} {SOURCE.upper()} {display(SOURCE)} {SHORT}\n")
+        self.git("add", "sample_outside.txt")
+        self.run_script(TARGET)
+        self.assertEqual(root_sample.read_text(), f"{SOURCE} {SOURCE.upper()} {display(SOURCE)} {SHORT}\n")
 
     def test_invalid_names_fail_without_writing(self):
         names = ["", "a", "a1", "Upper", "has-dash", "has space", "../escape", "a__b", "a_", "1app",
@@ -188,11 +218,11 @@ class RenameProjectTests(unittest.TestCase):
         self.assertEqual(self.snapshot(), before)
 
     def test_matched_binary_is_rejected_and_unmatched_binary_is_skipped(self):
-        binary = self.root / "image.bin"
+        binary = self.root / "example/image.bin"
         self.git("add", ".")
         for content in (b"\x00" + SOURCE.encode(), b"\xff" + SOURCE.encode()):
             binary.write_bytes(content)
-            self.git("add", "image.bin")
+            self.git("add", "example/image.bin")
             before = self.snapshot()
             result = self.run_script(TARGET, success=False)
             self.assertEqual(result["error"]["code"], "unsupported_file")
@@ -205,17 +235,17 @@ class RenameProjectTests(unittest.TestCase):
         outside = self.root.parent / (self.root.name + "-outside")
         outside.write_text(SOURCE)
         self.addCleanup(outside.unlink)
-        link = self.root / "link"
-        link.symlink_to(f"../{outside.name}")
-        self.git("add", "link")
+        link = self.root / "example/link"
+        link.symlink_to(f"../../{outside.name}")
+        self.git("add", "example/link")
         self.run_script(TARGET)
         self.assertEqual(outside.read_text(), SOURCE)
         self.assertTrue(link.is_symlink())
 
     def test_matched_symlink_target_is_rejected(self):
-        link = self.root / "link"
+        link = self.root / "example/link"
         link.symlink_to(SOURCE + "-missing")
-        self.git("add", "link")
+        self.git("add", "example/link")
         before = self.snapshot()
         result = self.run_script(TARGET, success=False)
         self.assertEqual(result["error"]["code"], "unsupported_file")
@@ -223,17 +253,17 @@ class RenameProjectTests(unittest.TestCase):
         self.assertEqual(os.readlink(link), SOURCE + "-missing")
 
     def test_symlink_parent_cannot_escape_checkout(self):
-        folder = self.root / "nested"
+        folder = self.root / "example/nested"
         folder.mkdir()
         (folder / "tracked.txt").write_text(SOURCE)
-        self.git("add", "nested")
+        self.git("add", "example/nested")
         shutil.rmtree(folder)
         with tempfile.TemporaryDirectory() as external:
             outside = Path(external) / "tracked.txt"
             outside.write_text(SOURCE)
             folder.symlink_to(external, target_is_directory=True)
             before = self.snapshot()
-            self.run_script(TARGET, success=False)
+            result = self.run_script(TARGET, success=False)
             self.assertEqual(self.snapshot(), before)
             self.assertEqual(outside.read_text(), SOURCE)
 
@@ -244,9 +274,9 @@ class RenameProjectTests(unittest.TestCase):
         self.assertEqual(self.script.read_bytes(), before)
 
     def test_git_index_symlink_cannot_be_replaced_with_regular_file(self):
-        link = self.root / "link"
+        link = self.root / "example/link"
         link.symlink_to("elsewhere")
-        self.git("add", "link")
+        self.git("add", "example/link")
         link.unlink()
         link.write_text(SOURCE)
         before = self.snapshot()

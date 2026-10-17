@@ -1,0 +1,31 @@
+[package]
+name = "exemplum-dmn-users"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+hypgm-errors = { path = "../../../../crates/core/errors" }
+hypgmx-rdbms = { path = "../../../../crates/ext/rdbms", features = ["postgres"] }
+sqlx = { workspace = true, features = ["macros"] }
+sea-orm.workspace = true
+sea-orm-migration.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+serde.workspace = true
+async-trait.workspace = true
+tokio.workspace = true
+hypgm-rpc = { path = "../../../../crates/core/rpc" }
+tonic.workspace = true
+prost-types.workspace = true
+anyhow = "1"
+hypgm-envconfig = { path = "../../../../crates/core/envconfig" }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+thiserror.workspace = true
+
+[dev-dependencies]
+hypgm-test-support = { path = "../../../../crates/core/test-support" }
+tokio-stream = { version = "0.1", features = ["net"] }
+
+[lints]
+workspace = true

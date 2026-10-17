@@ -1,0 +1,25 @@
+[package]
+name = "exemplum-db-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "exemplum-db"
+path = "src/main.rs"
+
+[dependencies]
+hypgmx-rdbms = { path = "../../../crates/ext/rdbms", features = ["postgres"] }
+hypgm-envconfig = { path = "../../../crates/core/envconfig" }
+exemplum-dmn-users = { path = "../../crates/domain/users" }
+sea-orm.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+sqlx = { workspace = true, features = ["macros"] }
+hypgm-test-support = { path = "../../../crates/core/test-support" }
+
+[lints]
+workspace = true

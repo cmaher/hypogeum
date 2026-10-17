@@ -4,7 +4,7 @@ use tower::ServiceExt;
 
 #[tokio::test]
 async fn bundled_ui_and_empty_api_load_without_queues() {
-    let router = hypgm_ext_tasks::board::Board::new().router();
+    let router = hypgmx_tasks::board::Board::new().router();
     let index = router
         .clone()
         .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
@@ -51,10 +51,10 @@ async fn submissions_keep_each_registered_queue_attempt_budget(
     db.migrate().await;
     let pool = sqlx::PgPool::connect(&db.tasks_url).await.unwrap();
     let queue = |name, max_attempts| {
-        hypgm_ext_tasks::Queue::<Fixture>::new(
+        hypgmx_tasks::Queue::<Fixture>::new(
             pool.clone(),
             name,
-            hypgm_ext_tasks::WorkerConfig {
+            hypgmx_tasks::WorkerConfig {
                 max_attempts,
                 ..Default::default()
             },
@@ -63,7 +63,7 @@ async fn submissions_keep_each_registered_queue_attempt_budget(
     };
     let two = queue("fixture-two", 2);
     let five = queue("fixture-five", 5);
-    let router = hypgm_ext_tasks::board::Board::new()
+    let router = hypgmx_tasks::board::Board::new()
         .register(&two)
         .unwrap()
         .register(&five)

@@ -1,270 +1,90 @@
 # Hypogeum
 
-A Rust workspace for starting services with PostgreSQL, internal gRPC,
-composed Axum JSON APIs, typed background tasks, and streamed byte storage.
-User CRUD and a public HelloWorld service demonstrate the layers.
+A modular Rust framework and reference architecture for building robust backend services with PostgreSQL, internal gRPC, composed Axum JSON APIs, typed background tasks, and streamed byte storage.
 
-## Project customization
+## Architecture
 
-Start with a fresh Git checkout and customize it **before provisioning a database
-or applying migrations**. Run the commands below from the repository root,
-replacing `acme_tools` with your project's lowercase identifier. The rename script
-needs Git and Python 3.9 or newer, with no extra Python packages. Install the
-[development tools](#development) and start Docker before running CI.
+The repository uses a two-tier architecture cleanly separating framework foundations from application domain code:
 
-1. Create a branch and preview the affected files and replacement counts. Preview
-   makes no changes:
+```text
+/workspace/
+├── Cargo.toml                    # Root workspace: framework crates + operations tools
+├── Cargo.lock
+├── Makefile.toml                 # Root CI orchestrator: runs root CI + example CI
+├── CLAUDE.md                     # Development conventions & architecture guide
+├── cmd/
+│   └── apalis-dashboard/         # Standalone framework background tasks dashboard
+├── crates/
+│   ├── core/                     # Core runtime & cross-cutting foundations (hypgm-*)
+│   │   ├── envconfig/            # Type-safe environment loading and secrets
+│   │   ├── errors/               # Shared typed error types and PublicError trait
+│   │   ├── http/                 # Axum middleware, error mapping, and body limits
+│   │   ├── logging/              # Structured tracing subscriber configuration
+│   │   ├── rpc/                  # Generated gRPC protobuf client and server definitions
+│   │   └── test-support/         # Testcontainers bootstrap for isolated database tests
+│   └── ext/                      # External driver & stateful adapters (hypgmx-*)
+│       ├── file-storage/         # Streamed immutable byte storage
+│       ├── rdbms/
+│       │   ├── db/               # Migration runner, schema verification, inspection
+│       │   └── postgres/         # Database pool management
+│       └── tasks/                # Apalis PostgreSQL queues, workers, and boards
+├── scripts/
+│   ├── rename-project.py         # Template customizer scoped exclusively to example/
+│   └── tests/
+│       └── test_rename_project.py
+└── example/                      # Exemplum reference project (independent workspace)
+    ├── Cargo.toml                # Example workspace manifest
+    ├── Makefile.toml             # Example tasks (db-up, db-migrate, app, test, ci)
+    ├── README.md                 # Exemplum documentation & onboarding guide
+    ├── docker-compose.yml        # Local PostgreSQL container for Exemplum
+    ├── infra/                    # PostgreSQL init & schema provisioning
+    ├── cmd/                      # Exemplum binaries (app, exemplum-db)
+    └── crates/                   # Exemplum libraries (exemplum-app, exemplum-dmn-*)
+```
 
+## Exemplum Reference Application
+
+The `example/` directory houses **Exemplum**, an independent, self-contained workspace demonstrating consumption of the Hypogeum framework crates. Exemplum includes:
+- User CRUD service over SeaORM with gRPC interfaces (`exemplum-dmn-users`)
+- Public greeting API and composed Axum router (`exemplum-app`, `exemplum-dmn-hello-world`)
+- Executable entry points for the HTTP server (`app`) and database migration tool (`exemplum-db`)
+- Local PostgreSQL Docker Compose stack and dedicated `Makefile.toml`
+
+For detailed setup, environment variables, and local execution instructions, see [example/README.md](example/README.md).
+
+## Project Customization
+
+The script `scripts/rename-project.py` customizes the `example/` reference application into a project-specific service or template repository, without modifying the framework foundation crates:
+
+1. Preview affected files and replacements:
    ```sh
-   git switch -c customize-project
    python3 scripts/rename-project.py acme_tools --dry-run
    ```
 
-2. Apply the rename, format Rust sources, and review the resulting diff:
-
+2. Apply rename to `example/`:
    ```sh
    python3 scripts/rename-project.py acme_tools
-   cargo make fmt-fix
-   git diff
+   cargo make --cwd example fmt-fix
    ```
 
-3. Verify the customized workspace:
-
+3. Verify customized project:
    ```sh
-   cargo make ci
+   cargo make --cwd example ci
    ```
 
-4. Copy the renamed configuration example, then follow [Run locally](#run-locally)
-   to provision a fresh database and start the services:
+## Development & Verification
 
-   ```sh
-   cp env/local.env.example env/local.env
-   ```
-
-Hypogeum uses three literal, searchable forms: `hypogeum`, `HYPOGEUM`, and
-`Hypogeum`. The script replaces them throughout tracked source, configuration,
-tests and documentation. It also updates itself to use your new project identity.
-Repository hosting and tracker project renames are separate steps.
-
-For automation, preview with JSON output or inspect the command schema:
+Install Rust 1.94, Docker, Git, and Python 3.9+. With Docker running, all unit and integration tests run self-contained without pre-provisioning databases:
 
 ```sh
-python3 scripts/rename-project.py acme_tools --dry-run --output json
-python3 scripts/rename-project.py --describe
+# Root framework verification (runs fmt, clippy, build, test, test-rename, and example CI):
+cargo make ci
+
+# Run only root workspace unit and integration tests:
+cargo make test
+
+# Run python rename tests:
+cargo make test-rename
 ```
 
-The script works from any current directory when invoked by its path.
-`cargo make test-rename` runs its isolated behavioral tests.
-
-### Naming and replacement scope
-
-Choose lowercase ASCII words separated by single underscores. The input
-`acme_tools` produces `acme_tools`, `ACME_TOOLS`, and `AcmeTools`; for example:
-
-| Template name | Customized name |
-| --- | --- |
-| `hypogeum-db` Cargo package / CLI | `acme_tools-db` |
-| `hypogeum_db` Rust library | `acme_tools_db` |
-| `hypogeum.users.v1` protobuf namespace | `acme_tools.users.v1` |
-| `hypogeum` application schema / local database | `acme_tools` |
-| `hypogeum_migrator` database role | `acme_tools_migrator` |
-| `HYPOGEUM_ENV_FILE` environment selector | `ACME_TOOLS_ENV_FILE` |
-| `Hypogeum` display name | `AcmeTools` |
-
-Names must produce three distinct case forms and cannot contain the current
-project identity. Reserved language keywords, infrastructure schema names, and
-PostgreSQL's `pg_` prefix are rejected. Project-prefixed database identifiers,
-including their suffixes, must fit PostgreSQL's 63-byte identifier limit.
-
-The script previews or updates **Git-tracked UTF-8 file contents**, including
-hidden configuration, tests, `Cargo.lock`, documentation, and itself. It replaces
-occurrences within longer identifiers and preserves line endings and file
-permissions. The customized script uses the new identity for future renames.
-File/directory names, Git history and remotes are outside its scope.
-
-All input and file checks finish before writes begin. Unsupported casing,
-matching binary content, matching symlink targets, changed file types, and
-missing tracked files cause preflight failure with no writes. Symlinks are never
-followed. An operating-system error during application may leave earlier files
-updated; review the Git diff before retrying. Output contains paths and counts,
-without printing file contents or credentials.
-
-Ignored and untracked files are excluded. Recreate `env/local.env` from the
-updated example, or update your local overrides separately. Rust formatting can
-change with identifier length, so run `cargo make fmt-fix` before CI. Review the
-resulting diff.
-
-### Database schemas
-
-| Schema | Purpose |
-| --- | --- |
-| `hypogeum` | Application tables (`hypogeum.users`), readiness function, and domain migration history |
-| `infra` | Infrastructure contracts, platform privilege hardening, and extensions |
-| `apalis` | Upstream task tables, functions, extensions and a separate migration ledger |
-| `public` | PostgreSQL's default schema; unused for application data |
-| `pg_catalog`, `pg_temp` | PostgreSQL system schemas used in controlled search paths |
-
-The script renames the application schema along with database names, roles,
-configuration and code. Infrastructure schemas retain their names. In particular,
-the pinned Apalis implementation uses schema-qualified `apalis` references.
-Schemas are explicit in code and SQL; changing a connection URL or `search_path`
-does not rename them. The database name in the connection URL and PostgreSQL
-roles are distinct from schema names, even when they share the project prefix.
-
-For an existing database, preserve applied migration source and checksums. Schema,
-role and migration-ledger renames need a coordinated forward migration and code
-change; this script does not migrate deployed databases. Pointing a migrator at
-an empty ledger would make existing migrations appear unapplied.
-
-## Workspace overview
-
-Reusable infrastructure lives in `crates/core/` (foundation) and `crates/ext/`
-(external drivers and integrations). Domain crates live in `crates/domain/`,
-starting with the generic User example in `crates/domain/users/`.
-
-| Crate | Responsibility |
-| --- | --- |
-| `hypgm-dmn-users` (`crates/domain/users`) | Plain User objects, repository, service, gRPC server and client |
-| `hypgm-dmn-hello-world` (`crates/domain/hello-world`) | Database-independent greeting service and thin JSON controller |
-| `hypgm-dmn-app` (`crates/domain/app`) | Composed public router, health endpoint, and domain mounts |
-| `app-cli` (`cmd/app`) | Public app executable configuration, logging and startup |
-| `hypgm-http` (`crates/core/http`) | Shared Axum error mapping, PublicError rendering, 16KiB JSON extraction, and request tracing |
-| `hypgm-logging` (`crates/core/logging`) | Typed subscriber builder and tracing subscriber initialization |
-| `hypgm-rpc` (`crates/core/rpc`) | Generated protobuf client/server bindings (internal Users RPC) |
-| `hypgm-ext-db` (`crates/ext/rdbms/db`) | Reusable migrations, verification and database inspection |
-| `hypogeum-db-cli` (`cmd/db`) | The `hypogeum-db` administration executable |
-| `hypgm-ext-postgres` (`crates/ext/rdbms/postgres`) | Constructor-injected pool configuration |
-| `hypgm-errors` (`crates/core/errors`) | Shared typed errors, PublicError trait, and transport mappings |
-| `hypgm-ext-tasks` (`crates/ext/tasks`) | Apalis queues, workers, retry policy and Board |
-| `apalis-dashboard` (`cmd/apalis-dashboard`) | Standalone Apalis dashboard and API |
-| `hypgm-ext-file-storage` (`crates/ext/file-storage`) | Streamed immutable byte storage with integrity checks |
-| `hypgm-env-config` (`crates/core/env-config`) | Binary-only env snapshot and typed deserialization |
-| `hypgm-test-support` (`crates/core/test-support`) | Testcontainers suite bootstrap and SQLx test configuration |
-
-## Development
-
-Install Rust 1.94, Docker, Git and Python 3.9 or newer. Optionally use [mise](https://mise.jdx.dev/) to
-install the tools in `mise.toml`:
-
-```sh
-mise trust
-mise install
-```
-
-With Docker running, tests need no database setup or configuration file:
-
-```sh
-cargo test --locked --workspace --all-features
-```
-
-Database suites start one PostgreSQL container each through Testcontainers.
-`sqlx::test` gives each case an isolated database. An ordinary suite test launches
-its SQLx cases in a child harness with `DATABASE_URL` supplied before threads
-start. Cases marked ignored are executed by that launcher as part of the normal
-test command; child failures fail the suite. Containers are removed afterward.
-
-Use Cargo Make for repository commands:
-
-```sh
-cargo make ci          # format check, clippy, build, Rust and Python tests
-cargo make fmt-fix
-cargo make test-db     # database, User transport, and task integration suites
-```
-
-GitHub Actions runs the same format, lint, build, Rust and Python checks on Ubuntu.
-Protobuf compilation uses `protox`; a system `protoc` is unnecessary.
-
-## Run locally
-
-Compose provides a local PostgreSQL instance at `127.0.0.1:5432` with administrator
-login `admin` / `password`. Service roles also default to `password` locally.
-
-```sh
-cp env/local.env.example env/local.env
-cargo make db-up
-cargo make db-provision
-cargo make db-migrate
-cargo make db-verify
-cargo make users
-```
-
-The User gRPC endpoint defaults to `127.0.0.1:50051`. In another terminal,
-`cargo make apalis-dashboard` serves the empty Apalis Board at `127.0.0.1:8082`.
-`cargo make db-down` stops Compose while retaining its data volume.
-
-Configuration precedence is: process env > dotenv file > defaults. The `HYPOGEUM_ENV_FILE`
-variable selects the dotenv file to load:
-
-| `HYPOGEUM_ENV_FILE` | Behavior |
-| --- | --- |
-| unset | Load `env/local.env` if present; silently skip if absent |
-| `<path>` | File must exist, else exit with error |
-| `""` (empty) | Load no file (deployment opt-out) |
-
-Remote PostgreSQL: set `HYPOGEUM_MIGRATION_DATABASE_URL`, `HYPOGEUM_USERS_DATABASE_URL`, and
-`HYPOGEUM_TASKS_DATABASE_URL` to connections for their respective roles and skip Compose.
-Deployment: set real environment variables plus `HYPOGEUM_ENV_FILE=`. Set `HYPOGEUM_LOG`
-(default `info`) for log filtering. Provision roles and database grants using the
-SQL in `infra/postgres/` with administrator access, then run the explicit migration
-command. Server processes never migrate.
-
-If changing local passwords or ports, update the matching URLs as well.
-Production credentials and binding policies belong in deployment configuration.
-
-```sh
-cargo run --locked -p hypogeum-db-cli --bin hypogeum-db -- --describe
-cargo run --locked -p hypogeum-db-cli --bin hypogeum-db -- inspect --output json
-```
-
-The administration CLI returns JSON and exits nonzero on failure. Errors redact
-connection details. Migration and runtime accounts are separate; runtime roles
-cannot perform DDL, inspect migration ledgers, or access each other's data.
-
-## Public App and HelloWorld example
-
-```sh
-cargo make app
-```
-
-The executable entry point lives in `cmd/app/src/main.rs`; the composed router
-lives in `crates/domain/app`. This server needs no database, migrations, Docker,
-or database configuration.
-
-`HYPOGEUM_APP_BIND` defaults to `127.0.0.1:8080`. Logging is configured via
-`HYPOGEUM_LOG` (default `info`) and `HYPOGEUM_LOG_FORMAT` (`text` or `json`,
-default `text`). It uses the same environment-file precedence and
-`HYPOGEUM_ENV_FILE` behavior described above; `HYPOGEUM_ENV_FILE=` disables file
-loading. Ctrl-C and SIGTERM drain active requests before exit.
-
-Composed HTTP routes:
-
-| Route / method | Request payload | Response behavior |
-| --- | --- | --- |
-| `GET /healthz` | None | HTTP 200 `text/plain; charset=utf-8` body `ok` |
-| `HEAD /healthz` | None | HTTP 200 with empty body and identical headers |
-| `POST /api/hello` | JSON `{"name": "Ada"}` | HTTP 200 `{"message": "Hello, Ada!"}` |
-
-Key features:
-- **16KiB Body Limit:** Raw request payloads are bounded to 16KiB; exceeding bodies receive `413 Payload Too Large`.
-- **Typed Error Envelope:** All errors return uniform JSON (`{"code": "...", "message": "..."}`).
-- **Request Tracing:** Generates a UUID v4 `X-Request-Id` header on every response, rejects untrusted caller IDs, and logs exactly one structured completion event with duration and status.
-- **Strict Method Routing:** Mismatched methods return JSON `405 Method Not Allowed` with valid `Allow` headers.
-- **Trailing Slash Discipline:** `/api/hello` is canonical; `/api/hello/` returns JSON `404 Not Found` with no redirect.
-
-See [docs/app.md](docs/app.md) for full architectural documentation, route nesting, error mapping, and steps to add new domain endpoints.
-
-## User example
-
-`User` contains a UUID, display name, and creation/update timestamps. The API
-supports create, get, list, rename and delete. Names are trimmed and accept
-1–200 Unicode characters. Lists use UUID ordering, an exclusive cursor, a
-default page size of 50, and a maximum of 100. The server generates IDs and
-PostgreSQL supplies timestamps. See `proto/users.proto` and the integration tests
-in `crates/domain/users/tests/cases/` for the complete contract.
-
-The example leaves authentication and application-specific permissions to the
-project built from it. Keep development endpoints bound to loopback until a
-deployment supplies its access controls.
-
-See [app architecture](docs/app.md), [architecture and coding standards](docs/coding_standards.md),
-[tasks](docs/tasks.md), and [file storage](docs/file-storage.md).
+Database integration tests automatically provision isolated PostgreSQL containers via Testcontainers and SQLx.
