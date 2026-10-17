@@ -7,6 +7,7 @@ pub mod session;
 pub use error::AuthError;
 pub use extractor::{AuthRejection, OptionalAuth, RequireAuth};
 pub use hypgm_errors::{PublicError, PublicErrorInfo};
+pub use jsonwebtoken::DecodingKey;
 pub use jwt::{Audience, Claims, JwtConfig, JwtValidator};
 pub use principal::{AuthMethod, Principal};
 pub use session::{AuthBackend, PrincipalAuthBackend};

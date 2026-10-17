@@ -53,7 +53,7 @@ fn test_decode_valid_hs256_token() {
     let user_id = Uuid::new_v4();
     let exp = now_epoch() + 3600;
 
-    let claims = Claims::new(user_id, auth_id, exp);
+    let claims = Claims::new(auth_id, user_id, exp);
     let token = encode(
         &Header::default(),
         &claims,
@@ -70,13 +70,25 @@ fn test_decode_valid_hs256_token() {
     assert_eq!(principal.user_id, user_id);
     assert_eq!(principal.method, AuthMethod::BearerJwt);
 
-    // Also verify with "Bearer " prefix
+    // Also verify with "Bearer " prefix, uppercase "BEARER ", and tab whitespace
     let bearer_token = format!("Bearer {token}");
     let principal_bearer = validator
         .verify_token(&bearer_token)
         .expect("verification with Bearer prefix should succeed");
     assert_eq!(principal_bearer.auth_id, auth_id);
     assert_eq!(principal_bearer.user_id, user_id);
+
+    let uppercase_bearer = format!("BEARER {token}");
+    let principal_upper = validator
+        .verify_token(&uppercase_bearer)
+        .expect("verification with uppercase BEARER prefix should succeed");
+    assert_eq!(principal_upper.auth_id, auth_id);
+
+    let tab_bearer = format!("Bearer\t{token}");
+    let principal_tab = validator
+        .verify_token(&tab_bearer)
+        .expect("verification with tab whitespace should succeed");
+    assert_eq!(principal_tab.auth_id, auth_id);
 }
 
 #[test]
@@ -85,7 +97,7 @@ fn test_decode_valid_rs256_token() {
     let user_id = Uuid::new_v4();
     let exp = now_epoch() + 3600;
 
-    let claims = Claims::new(user_id, auth_id, exp);
+    let claims = Claims::new(auth_id, user_id, exp);
     let encoding_key =
         EncodingKey::from_rsa_pem(RSA_PRIVATE_KEY_PEM).expect("valid RSA private key");
     let token = encode(&Header::new(Algorithm::RS256), &claims, &encoding_key)
@@ -102,12 +114,43 @@ fn test_decode_valid_rs256_token() {
 }
 
 #[test]
+fn test_rs256_with_config() {
+    let auth_id = Uuid::new_v4();
+    let user_id = Uuid::new_v4();
+    let exp = now_epoch() + 3600;
+
+    let claims = Claims::with_iss_aud(
+        auth_id,
+        user_id,
+        exp,
+        Some("auth.example.com".to_string()),
+        Some("api.example.com".to_string()),
+    );
+    let encoding_key =
+        EncodingKey::from_rsa_pem(RSA_PRIVATE_KEY_PEM).expect("valid RSA private key");
+    let token = encode(&Header::new(Algorithm::RS256), &claims, &encoding_key)
+        .expect("encoding should succeed");
+
+    let config = JwtConfig {
+        algorithm: Algorithm::RS256,
+        issuer: Some("auth.example.com".to_string()),
+        audience: Some("api.example.com".into()),
+        leeway_seconds: 10,
+    };
+    let validator = JwtValidator::from_rs256_pem_with_config(RSA_PUBLIC_KEY_PEM, config)
+        .expect("valid RSA public key with config");
+    let principal = validator.verify_token(&token).unwrap();
+    assert_eq!(principal.auth_id, auth_id);
+    assert_eq!(principal.user_id, user_id);
+}
+
+#[test]
 fn test_expired_token_rejected() {
     let auth_id = Uuid::new_v4();
     let user_id = Uuid::new_v4();
     let exp = now_epoch() - 3600; // Expired 1 hour ago
 
-    let claims = Claims::new(user_id, auth_id, exp);
+    let claims = Claims::new(auth_id, user_id, exp);
     let token = encode(
         &Header::default(),
         &claims,
@@ -130,7 +173,7 @@ fn test_tampered_token_rejected() {
     let user_id = Uuid::new_v4();
     let exp = now_epoch() + 3600;
 
-    let claims = Claims::new(user_id, auth_id, exp);
+    let claims = Claims::new(auth_id, user_id, exp);
     let token = encode(
         &Header::default(),
         &claims,
@@ -169,6 +212,10 @@ fn test_empty_token_rejected() {
         validator.verify_token("Bearer   "),
         Err(AuthError::MissingCredentials)
     ));
+    assert!(matches!(
+        validator.verify_token("Bearer"),
+        Err(AuthError::MissingCredentials)
+    ));
 }
 
 #[test]
@@ -178,8 +225,8 @@ fn test_issuer_and_audience_validation() {
     let exp = now_epoch() + 3600;
 
     let claims = Claims::with_iss_aud(
-        user_id,
         auth_id,
+        user_id,
         exp,
         Some("auth.example.com".to_string()),
         Some("api.example.com".to_string()),
@@ -195,7 +242,7 @@ fn test_issuer_and_audience_validation() {
     let config = JwtConfig {
         algorithm: Algorithm::HS256,
         issuer: Some("auth.example.com".to_string()),
-        audience: Some("api.example.com".to_string()),
+        audience: Some("api.example.com".into()),
         leeway_seconds: 0,
     };
     let validator = JwtValidator::new(jsonwebtoken::DecodingKey::from_secret(TEST_SECRET), config);
@@ -207,7 +254,7 @@ fn test_issuer_and_audience_validation() {
     let bad_iss_config = JwtConfig {
         algorithm: Algorithm::HS256,
         issuer: Some("wrong.example.com".to_string()),
-        audience: Some("api.example.com".to_string()),
+        audience: Some("api.example.com".into()),
         leeway_seconds: 0,
     };
     let bad_iss_validator = JwtValidator::new(
@@ -227,8 +274,8 @@ fn test_multi_value_audience_validation() {
     let exp = now_epoch() + 3600;
 
     let claims = Claims::with_iss_aud(
-        user_id,
         auth_id,
+        user_id,
         exp,
         Some("auth.example.com".to_string()),
         Some(vec![
@@ -244,10 +291,11 @@ fn test_multi_value_audience_validation() {
     )
     .unwrap();
 
+    // Validator configured with a single audience matching one of token's audiences
     let config = JwtConfig {
         algorithm: Algorithm::HS256,
         issuer: Some("auth.example.com".to_string()),
-        audience: Some("api.example.com".to_string()),
+        audience: Some("api.example.com".into()),
         leeway_seconds: 0,
     };
     let validator = JwtValidator::new(jsonwebtoken::DecodingKey::from_secret(TEST_SECRET), config);
@@ -255,9 +303,29 @@ fn test_multi_value_audience_validation() {
     let principal = validator.verify_token(&token).unwrap();
     assert_eq!(principal.auth_id, auth_id);
 
+    // Validator configured with multiple acceptable audiences
+    let multi_aud_config = JwtConfig {
+        algorithm: Algorithm::HS256,
+        issuer: Some("auth.example.com".to_string()),
+        audience: Some(
+            vec![
+                "other.example.com".to_string(),
+                "api.example.com".to_string(),
+            ]
+            .into(),
+        ),
+        leeway_seconds: 0,
+    };
+    let multi_aud_validator = JwtValidator::new(
+        jsonwebtoken::DecodingKey::from_secret(TEST_SECRET),
+        multi_aud_config,
+    );
+    let principal_multi = multi_aud_validator.verify_token(&token).unwrap();
+    assert_eq!(principal_multi.auth_id, auth_id);
+
     let raw_claims_json = serde_json::json!({
-        "sub": user_id,
         "auth_id": auth_id,
+        "sub": user_id,
         "exp": exp,
         "iss": "auth.example.com",
         "aud": ["api.example.com", "dashboard.example.com"]

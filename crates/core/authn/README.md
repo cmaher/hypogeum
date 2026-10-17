@@ -54,7 +54,7 @@ struct MyDbAuthBackend;
 
 #[async_trait]
 impl AuthBackend for MyDbAuthBackend {
-    async fn resolve_principal(&self, auth_id: Uuid) -> Option<Principal> {
+    async fn resolve_principal(&self, auth_id: Uuid) -> Result<Option<Principal>, hypgm_authn::AuthError> {
         // Query user/credential by auth_id...
         todo!()
     }
@@ -71,8 +71,8 @@ let login_backend = PrincipalAuthBackend::new(MyDbAuthBackend);
 Endpoints consume `RequireAuth` or `OptionalAuth`:
 
 ```rust
-use axum::{Router, routing::get};
-use hypgm_authn::{OptionalAuth, RequireAuth};
+use axum::{Extension, Router, routing::get};
+use hypgm_authn::{JwtValidator, OptionalAuth, RequireAuth};
 
 async fn protected_handler(RequireAuth(principal): RequireAuth) -> String {
     format!("Authenticated user: {}", principal.user_id)
@@ -85,7 +85,10 @@ async fn optional_handler(OptionalAuth(principal): OptionalAuth) -> String {
     }
 }
 
+let validator = JwtValidator::from_hs256_secret(b"your-secret-key");
+
 let app = Router::new()
     .route("/protected", get(protected_handler))
-    .route("/optional", get(optional_handler));
+    .route("/optional", get(optional_handler))
+    .layer(Extension(validator));
 ```

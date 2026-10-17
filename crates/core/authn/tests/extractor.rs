@@ -17,7 +17,7 @@ const TEST_SECRET: &[u8] = b"super-secret-test-key-32-bytes-long!";
 
 fn create_token(user_id: Uuid, auth_id: Uuid) -> String {
     let exp = chrono::Utc::now().timestamp() as usize + 3600;
-    let claims = Claims::new(user_id, auth_id, exp);
+    let claims = Claims::new(auth_id, user_id, exp);
     encode(
         &Header::default(),
         &claims,
@@ -47,6 +47,31 @@ async fn test_require_auth_valid_bearer_header() {
     assert_eq!(principal.user_id, user_id);
     assert_eq!(principal.auth_id, auth_id);
     assert_eq!(principal.method, AuthMethod::BearerJwt);
+
+    // Verify principal is now in parts.extensions
+    assert_eq!(parts.extensions.get::<Principal>(), Some(&principal));
+}
+
+#[tokio::test]
+async fn test_require_auth_case_insensitive_bearer_header() {
+    let user_id = Uuid::new_v4();
+    let auth_id = Uuid::new_v4();
+    let token = create_token(user_id, auth_id);
+
+    let validator = JwtValidator::from_hs256_secret(TEST_SECRET);
+    let mut req = Request::builder()
+        .header(header::AUTHORIZATION, format!("BEARER {token}"))
+        .body(())
+        .unwrap();
+    req.extensions_mut().insert(validator);
+
+    let (mut parts, ()) = req.into_parts();
+    let result = RequireAuth::from_request_parts(&mut parts, &()).await;
+
+    assert!(result.is_ok());
+    let principal = result.unwrap().into_inner();
+    assert_eq!(principal.user_id, user_id);
+    assert_eq!(principal.auth_id, auth_id);
 }
 
 #[tokio::test]
@@ -78,6 +103,10 @@ async fn test_require_auth_missing_credentials_returns_401_json() {
     let response = rejection.into_response();
 
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        response.headers().get(header::WWW_AUTHENTICATE).unwrap(),
+        "Bearer"
+    );
 
     let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
     let json: Value = serde_json::from_slice(&body_bytes).expect("valid json response");
@@ -103,10 +132,35 @@ async fn test_require_auth_invalid_token_returns_401_json() {
     let response = rejection.into_response();
 
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        response.headers().get(header::WWW_AUTHENTICATE).unwrap(),
+        "Bearer"
+    );
 
     let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
     let json: Value = serde_json::from_slice(&body_bytes).expect("valid json response");
 
+    assert_eq!(json["code"], "unauthenticated");
+    assert_eq!(json["message"], "Invalid authentication credentials");
+}
+
+#[tokio::test]
+async fn test_require_auth_missing_validator_returns_401_not_500() {
+    let req = Request::builder()
+        .header(header::AUTHORIZATION, "Bearer some-token")
+        .body(())
+        .unwrap();
+
+    let (mut parts, ()) = req.into_parts();
+    let result = RequireAuth::from_request_parts(&mut parts, &()).await;
+
+    assert!(result.is_err());
+    let rejection = result.unwrap_err();
+    let response = rejection.into_response();
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let json: Value = serde_json::from_slice(&body_bytes).expect("valid json response");
     assert_eq!(json["code"], "unauthenticated");
     assert_eq!(json["message"], "Invalid authentication credentials");
 }
@@ -141,6 +195,9 @@ async fn test_optional_auth_authenticated_yields_some() {
     let principal = result.unwrap().into_inner().expect("principal present");
     assert_eq!(principal.user_id, user_id);
     assert_eq!(principal.auth_id, auth_id);
+
+    // Verify principal is now in parts.extensions
+    assert_eq!(parts.extensions.get::<Principal>(), Some(&principal));
 }
 
 #[tokio::test]
@@ -219,11 +276,14 @@ async fn test_require_auth_with_axum_login_auth_session() {
 
     #[async_trait::async_trait]
     impl hypgm_authn::AuthBackend for MockBackend {
-        async fn resolve_principal(&self, auth_id: Uuid) -> Option<Principal> {
+        async fn resolve_principal(
+            &self,
+            auth_id: Uuid,
+        ) -> Result<Option<Principal>, hypgm_authn::AuthError> {
             if auth_id == self.0.auth_id {
-                Some(self.0.clone())
+                Ok(Some(self.0.clone()))
             } else {
-                None
+                Ok(None)
             }
         }
     }
