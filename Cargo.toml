@@ -9,6 +9,7 @@ members = [
     "crates/env-config",
     "crates/errors",
     "crates/file-storage",
+    "crates/logging",
     "crates/postgres",
     "crates/rpc",
     "crates/tasks",
