@@ -11,5 +11,8 @@ hypgm-authn = { path = "../authn" }
 hypgm-errors = { path = "../errors" }
 thiserror.workspace = true
 
+[dev-dependencies]
+uuid = { workspace = true, features = ["v4"] }
+
 [lints]
 workspace = true
