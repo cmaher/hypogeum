@@ -1,11 +1,13 @@
+#![allow(deprecated)]
 use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode, header};
 use axum::response::IntoResponse;
 use axum::routing::post;
-use hypgm_errors::{RepoError, ServiceError};
+use hypgm_errors::{PublicError, PublicErrorInfo, RepoError, ServiceError};
 use hypgm_http::{
-    AppJson, ErrorClassification, HttpError, MAX_BODY_BYTES, render_method_not_allowed,
+    AppJson, ErrorClassification, ErrorCode, HttpError, MAX_BODY_BYTES, render_method_not_allowed,
+    render_public_error,
 };
 use tower::ServiceExt;
 
@@ -136,6 +138,62 @@ async fn test_error_mappings_and_no_leakage() {
         assert!(!body_str.contains("SELECT"));
         assert!(!body_str.contains("backend"));
     }
+}
+
+#[tokio::test]
+async fn test_custom_domain_public_error_rendering() {
+    #[derive(Debug, thiserror::Error)]
+    enum CustomDomainError {
+        #[error("Item not found")]
+        NotFound,
+        #[error("Item already exists")]
+        Conflict,
+    }
+
+    impl PublicError for CustomDomainError {
+        fn public_error(&self) -> PublicErrorInfo {
+            match self {
+                Self::NotFound => PublicErrorInfo::NOT_FOUND,
+                Self::Conflict => PublicErrorInfo::CONFLICT,
+            }
+        }
+    }
+
+    // 1. Using From<E: PublicError> for HttpError
+    let resp = HttpError::from(CustomDomainError::NotFound).into_response();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        resp.extensions().get::<PublicErrorInfo>(),
+        Some(&PublicErrorInfo::NOT_FOUND)
+    );
+    assert_eq!(
+        resp.extensions().get::<StatusCode>(),
+        Some(&StatusCode::NOT_FOUND)
+    );
+    assert_eq!(
+        resp.extensions().get::<ErrorCode>(),
+        Some(&ErrorCode("not_found"))
+    );
+    let bytes = to_bytes(resp.into_body(), 1024).await.unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(json["code"], "not_found");
+    assert_eq!(json["message"], "Resource not found");
+
+    // 2. Using render_public_error
+    let resp = render_public_error(&CustomDomainError::Conflict);
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        resp.extensions().get::<PublicErrorInfo>(),
+        Some(&PublicErrorInfo::CONFLICT)
+    );
+    assert_eq!(
+        resp.extensions().get::<ErrorCode>(),
+        Some(&ErrorCode("conflict"))
+    );
+    let bytes = to_bytes(resp.into_body(), 1024).await.unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(json["code"], "conflict");
+    assert_eq!(json["message"], "Conflict");
 }
 
 #[tokio::test]

@@ -1,3 +1,4 @@
+#![allow(deprecated)]
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use axum::response::IntoResponse;

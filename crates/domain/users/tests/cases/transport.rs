@@ -1,9 +1,9 @@
-use hypgm_errors::{RepoError, ServiceError};
 use hypgm_rpc::users::{GetUserRequest, ListUsersRequest, users_client::UsersClient};
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use std::sync::Arc;
 use hypgm_test_support::TestDatabase;
 use hypgm_dmn_users::{
+    UserError,
     client::GrpcUserClient,
     models::PageRequest,
     repo::PgUserRepo,
@@ -62,11 +62,11 @@ async fn user_client_round_trip_uses_real_repository(
     client.delete(second.id).await.unwrap();
     assert!(matches!(
         client.get(first.id).await,
-        Err(ServiceError::Repo(RepoError::NotFound))
+        Err(UserError::NotFound)
     ));
     assert!(matches!(
         client.create(" ").await,
-        Err(ServiceError::Validation(_))
+        Err(UserError::Validation(_))
     ));
     let mut raw = UsersClient::connect(endpoint).await.unwrap();
     assert_eq!(

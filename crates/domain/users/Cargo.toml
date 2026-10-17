@@ -21,6 +21,7 @@ prost-types.workspace = true
 anyhow = "1"
 hypgm-env-config = { path = "../../core/env-config" }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+thiserror.workspace = true
 
 [dev-dependencies]
 hypgm-ext-db = { path = "../../ext/rdbms/db" }

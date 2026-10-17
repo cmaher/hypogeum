@@ -1,4 +1,5 @@
 #![cfg(feature = "tonic")]
+#![allow(deprecated)]
 use hypgm_errors::{RepoError, ServiceError};
 
 #[test]

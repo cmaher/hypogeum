@@ -45,6 +45,46 @@ impl PublicErrorInfo {
         message: "Internal server error",
     };
 
+    pub const INVALID_REQUEST: Self = Self {
+        status: StatusCode::BAD_REQUEST,
+        code: "invalid_request",
+        message: "Invalid request",
+    };
+
+    pub const METHOD_NOT_ALLOWED: Self = Self {
+        status: StatusCode::METHOD_NOT_ALLOWED,
+        code: "method_not_allowed",
+        message: "Method not allowed",
+    };
+
+    pub const PAYLOAD_TOO_LARGE: Self = Self {
+        status: StatusCode::PAYLOAD_TOO_LARGE,
+        code: "payload_too_large",
+        message: "Payload too large",
+    };
+
+    pub const UNSUPPORTED_MEDIA_TYPE: Self = Self {
+        status: StatusCode::UNSUPPORTED_MEDIA_TYPE,
+        code: "unsupported_media_type",
+        message: "Unsupported media type",
+    };
+
+    pub const fn invalid_request(message: &'static str) -> Self {
+        Self { status: StatusCode::BAD_REQUEST, code: "invalid_request", message }
+    }
+
+    pub const fn method_not_allowed(message: &'static str) -> Self {
+        Self { status: StatusCode::METHOD_NOT_ALLOWED, code: "method_not_allowed", message }
+    }
+
+    pub const fn payload_too_large(message: &'static str) -> Self {
+        Self { status: StatusCode::PAYLOAD_TOO_LARGE, code: "payload_too_large", message }
+    }
+
+    pub const fn unsupported_media_type(message: &'static str) -> Self {
+        Self { status: StatusCode::UNSUPPORTED_MEDIA_TYPE, code: "unsupported_media_type", message }
+    }
+
     pub const fn not_found(message: &'static str) -> Self {
         Self { status: StatusCode::NOT_FOUND, code: "not_found", message }
     }
@@ -63,6 +103,20 @@ impl PublicErrorInfo {
 
     pub const fn internal_error(message: &'static str) -> Self {
         Self { status: StatusCode::INTERNAL_SERVER_ERROR, code: "internal_error", message }
+    }
+}
+
+impl std::fmt::Display for PublicErrorInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.code, self.message)
+    }
+}
+
+impl std::error::Error for PublicErrorInfo {}
+
+impl PublicError for PublicErrorInfo {
+    fn public_error(&self) -> PublicErrorInfo {
+        *self
     }
 }
 
@@ -144,6 +198,7 @@ impl PublicError for RepoError {
     }
 }
 
+#[deprecated(note = "Domain crates should define their own errors implementing PublicError")]
 #[derive(Debug, Error)]
 pub enum ServiceError {
     #[error("Invalid service response: {0}")]
@@ -155,12 +210,14 @@ pub enum ServiceError {
     #[error("Remote service failed")]
     Remote(#[source] Cause),
 }
+#[allow(deprecated)]
 impl ServiceError {
     pub fn remote<E: std::error::Error + Send + Sync + 'static>(error: E) -> Self {
         Self::Remote(Box::new(error))
     }
 }
 
+#[allow(deprecated)]
 impl PublicError for ServiceError {
     fn public_error(&self) -> PublicErrorInfo {
         match self {
@@ -190,6 +247,7 @@ impl From<RepoError> for tonic::Status {
     }
 }
 #[cfg(feature = "tonic")]
+#[allow(deprecated)]
 impl From<ServiceError> for tonic::Status {
     fn from(error: ServiceError) -> Self {
         error.to_tonic_status()
@@ -347,6 +405,43 @@ mod tests {
             StatusCode::INTERNAL_SERVER_ERROR
         );
         assert_eq!(PublicErrorInfo::INTERNAL_ERROR.code, "internal_error");
+
+        assert_eq!(
+            PublicErrorInfo::INVALID_REQUEST.status,
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(PublicErrorInfo::INVALID_REQUEST.code, "invalid_request");
+
+        assert_eq!(
+            PublicErrorInfo::METHOD_NOT_ALLOWED.status,
+            StatusCode::METHOD_NOT_ALLOWED
+        );
+        assert_eq!(
+            PublicErrorInfo::METHOD_NOT_ALLOWED.code,
+            "method_not_allowed"
+        );
+
+        assert_eq!(
+            PublicErrorInfo::PAYLOAD_TOO_LARGE.status,
+            StatusCode::PAYLOAD_TOO_LARGE
+        );
+        assert_eq!(
+            PublicErrorInfo::PAYLOAD_TOO_LARGE.code,
+            "payload_too_large"
+        );
+
+        assert_eq!(
+            PublicErrorInfo::UNSUPPORTED_MEDIA_TYPE.status,
+            StatusCode::UNSUPPORTED_MEDIA_TYPE
+        );
+        assert_eq!(
+            PublicErrorInfo::UNSUPPORTED_MEDIA_TYPE.code,
+            "unsupported_media_type"
+        );
+
+        let info = PublicErrorInfo::NOT_FOUND;
+        assert_eq!(info.public_error(), PublicErrorInfo::NOT_FOUND);
+        assert_eq!(info.to_string(), "not_found: Resource not found");
     }
 
     #[test]

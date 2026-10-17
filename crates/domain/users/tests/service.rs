@@ -1,7 +1,8 @@
 use async_trait::async_trait;
-use hypgm_errors::{RepoError, ServiceError};
+use hypgm_errors::RepoError;
 use std::sync::{Arc, Mutex};
 use hypgm_dmn_users::{
+    UserError,
     models::{PageRequest, User, UserPage},
     repo::UserRepo,
     service::{DefaultUserService, UserService},
@@ -67,20 +68,20 @@ async fn rejects_invalid_input_before_persistence_and_preserves_not_found() {
     ] {
         assert!(matches!(
             service.create(&bad).await,
-            Err(ServiceError::Validation(_))
+            Err(UserError::Validation(_))
         ));
         assert!(matches!(
             service.update_name(Uuid::new_v4(), &bad).await,
-            Err(ServiceError::Validation(_))
+            Err(UserError::Validation(_))
         ));
     }
     assert!(matches!(
         service.get(Uuid::new_v4()).await,
-        Err(ServiceError::Repo(RepoError::NotFound))
+        Err(UserError::NotFound)
     ));
     assert!(matches!(
         service.delete(Uuid::new_v4()).await,
-        Err(ServiceError::Repo(RepoError::NotFound))
+        Err(UserError::NotFound)
     ));
     assert!(
         service
