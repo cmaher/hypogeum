@@ -1,0 +1,37 @@
+[package]
+name = "hypgm-ext-rdbms"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[features]
+default = ["postgres"]
+postgres = [
+    "dep:apalis-postgres",
+    "sqlx/postgres",
+    "sea-orm/sqlx-postgres",
+    "sea-orm-migration/sqlx-postgres",
+]
+
+[dependencies]
+async-trait.workspace = true
+hypgm-errors = { path = "../../core/errors", default-features = false }
+serde = { version = "1.0", features = ["derive"] }
+serde_json.workspace = true
+tokio.workspace = true
+
+sqlx = { workspace = true, default-features = false, features = ["migrate", "macros", "runtime-tokio", "tls-rustls", "chrono", "json", "uuid"] }
+sea-orm = { workspace = true, default-features = false, features = ["runtime-tokio-rustls", "macros", "with-chrono", "with-uuid", "with-json"] }
+sea-orm-migration = { workspace = true, default-features = false, features = ["runtime-tokio-rustls"] }
+
+apalis-postgres = { workspace = true, features = ["migrate"], optional = true }
+
+[dev-dependencies]
+hypgm-test-support = { path = "../../core/test-support" }
+sea-query.workspace = true
+sea-query-sqlx.workspace = true
+chrono = "0.4"
+uuid = "1"
+
+[lints]
+workspace = true

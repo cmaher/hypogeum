@@ -1,8 +1,9 @@
 //! Read-only administrative checks, separate from applying migrations.
-use crate::{DatabaseConfig, Result, apalis, require};
+use crate::contract::{DatabaseConfig, Result, require};
+use crate::postgres::apalis;
 use hypgm_errors::MigrationError;
 use sqlx::{
-    PgConnection,
+    AssertSqlSafe, PgConnection,
     migrate::{Migrate, Migrator},
 };
 
@@ -14,7 +15,7 @@ pub(crate) async fn connection(
 
     for contract in &config.service_contracts {
         let version_query = format!("SELECT {}.schema_version()", contract.schema);
-        let version: i64 = sqlx::query_scalar(&version_query)
+        let version: i64 = sqlx::query_scalar(AssertSqlSafe(version_query))
             .fetch_one(&mut *connection)
             .await
             .map_err(MigrationError::database)?;
@@ -28,11 +29,12 @@ pub(crate) async fn connection(
                 "SELECT version FROM {}.seaql_migrations WHERE version = $1",
                 contract.schema
             );
-            let migration_recorded: Option<String> = sqlx::query_scalar(&history_query)
-                .bind(mig_ver)
-                .fetch_optional(&mut *connection)
-                .await
-                .map_err(MigrationError::database)?;
+            let migration_recorded: Option<String> =
+                sqlx::query_scalar(AssertSqlSafe(history_query))
+                    .bind(mig_ver)
+                    .fetch_optional(&mut *connection)
+                    .await
+                    .map_err(MigrationError::database)?;
             require(
                 migration_recorded.is_some(),
                 &format!("{} migration history drift", contract.schema),
@@ -56,7 +58,7 @@ pub(crate) async fn connection(
              OR has_table_privilege($1, '{seaql_migrations}', 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') \
              OR EXISTS(SELECT FROM pg_catalog.pg_auth_members m JOIN pg_catalog.pg_roles r ON r.oid=m.member WHERE r.rolname=$1)"
         );
-        let unsafe_service: bool = sqlx::query_scalar(&service_query)
+        let unsafe_service: bool = sqlx::query_scalar(AssertSqlSafe(service_query))
             .bind(&contract.service_role)
             .bind(&contract.schema)
             .fetch_one(&mut *connection)
@@ -74,7 +76,7 @@ pub(crate) async fn connection(
              OR has_table_privilege($1, '{seaql_migrations}', 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') \
              OR EXISTS(SELECT FROM pg_catalog.pg_auth_members m JOIN pg_catalog.pg_roles r ON r.oid=m.member WHERE r.rolname=$1)"
         );
-        let unsafe_tasks: bool = sqlx::query_scalar(&tasks_query)
+        let unsafe_tasks: bool = sqlx::query_scalar(AssertSqlSafe(tasks_query))
             .bind(&config.tasks_role)
             .bind(&sample_table_qual)
             .fetch_one(&mut *connection)

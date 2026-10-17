@@ -33,7 +33,15 @@ async fn repeated_migrations_do_not_rewrite_objects_and_corrupt_history_is_rejec
         .execute(&admin)
         .await
         .unwrap();
-    assert!(hypgm_ext_db::migrate(&db.migration_url, &config).await.is_err());
-    assert!(hypgm_ext_db::verify(&db.migration_url, &config).await.is_err());
+    assert!(
+        hypgm_ext_rdbms::migrate(&db.migration_url, &config)
+            .await
+            .is_err()
+    );
+    assert!(
+        hypgm_ext_rdbms::verify(&db.migration_url, &config)
+            .await
+            .is_err()
+    );
     admin.close().await;
 }

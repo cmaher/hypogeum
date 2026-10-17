@@ -1,4 +1,5 @@
-use crate::{Result, require, verify::check_history};
+use crate::contract::{Result, require};
+use crate::postgres::verify::check_history;
 use apalis_postgres::PostgresStorage;
 use hypgm_errors::MigrationError;
 use sqlx::{PgConnection, migrate::Migrator};

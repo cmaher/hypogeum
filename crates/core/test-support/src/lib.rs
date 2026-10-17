@@ -30,10 +30,7 @@ pub fn run_suite() {
                 "\\getenv tasks_password TASKS_PASSWORD",
                 "\\set tasks_password 'test-tasks'",
             )
-            .replace(
-                "\\ir database.sql",
-                DATABASE_SQL,
-            );
+            .replace("\\ir database.sql", DATABASE_SQL);
         let container = Postgres::default()
             .with_user("hypogeum_admin")
             .with_password("test-admin")
@@ -75,10 +72,7 @@ impl TestDatabase {
     /// grants/defaults here. Cluster roles were provisioned once at startup.
     pub async fn provision(options: PgConnectOptions) -> Self {
         let admin = PgPool::connect_with(options.clone()).await.unwrap();
-        sqlx::raw_sql(DATABASE_SQL)
-            .execute(&admin)
-            .await
-            .unwrap();
+        sqlx::raw_sql(DATABASE_SQL).execute(&admin).await.unwrap();
         admin.close().await;
         let url = |user, password| {
             options
@@ -102,18 +96,18 @@ impl TestDatabase {
         self.migrate_with(&test_config()).await;
     }
 
-    pub async fn migrate_with(&self, config: &hypgm_ext_db::DatabaseConfig) {
+    pub async fn migrate_with(&self, config: &hypgm_ext_rdbms::DatabaseConfig) {
         let migration_url = if config.migrator_role == "exemplum_migrator" {
             &self.exemplum_migration_url
         } else {
             &self.migration_url
         };
-        hypgm_ext_db::migrate(migration_url, config).await.unwrap();
+        hypgm_ext_rdbms::migrate(migration_url, config).await.unwrap();
     }
 }
 
-pub fn test_config() -> hypgm_ext_db::DatabaseConfig {
-    hypgm_ext_db::DatabaseConfig {
+pub fn test_config() -> hypgm_ext_rdbms::DatabaseConfig {
+    hypgm_ext_rdbms::DatabaseConfig {
         migrator_role: "hypogeum_migrator".into(),
         owner_role: "hypogeum_owner".into(),
         tasks_role: "hypogeum_tasks".into(),

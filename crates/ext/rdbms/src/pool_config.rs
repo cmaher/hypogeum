@@ -1,10 +1,9 @@
+//! Generic relational database connection pool configuration.
 use serde::{Deserialize, Serialize};
-pub use sqlx::PgPool;
-use sqlx::postgres::PgPoolOptions;
 use std::time::Duration;
 
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
-pub struct PostgresConfig {
+pub struct PoolConfig {
     pub url: String,
     pub max_connections: u32,
     pub min_connections: u32,
@@ -12,9 +11,9 @@ pub struct PostgresConfig {
     pub idle_timeout: Duration,
 }
 
-impl std::fmt::Debug for PostgresConfig {
+impl std::fmt::Debug for PoolConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PostgresConfig")
+        f.debug_struct("PoolConfig")
             .field("url", &"[redacted]")
             .field("max_connections", &self.max_connections)
             .field("min_connections", &self.min_connections)
@@ -24,7 +23,7 @@ impl std::fmt::Debug for PostgresConfig {
     }
 }
 
-impl PostgresConfig {
+impl PoolConfig {
     pub fn new(url: impl Into<String>) -> Self {
         Self {
             url: url.into(),
@@ -56,30 +55,13 @@ impl PostgresConfig {
     }
 }
 
-pub fn pool_options(config: &PostgresConfig) -> PgPoolOptions {
-    PgPoolOptions::new()
-        .max_connections(config.max_connections)
-        .min_connections(config.min_connections)
-        .acquire_timeout(config.connect_timeout)
-        .idle_timeout(Some(config.idle_timeout))
-}
-
-pub fn create_pool(config: &PostgresConfig) -> Result<PgPool, sqlx::Error> {
-    pool_options(config).connect_lazy(&config.url)
-}
-
-pub async fn ping(pool: &PgPool) -> Result<(), sqlx::Error> {
-    sqlx::query("SELECT 1").execute(pool).await?;
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn test_config_construction() {
-        let config = PostgresConfig::new("postgres://user:pass@localhost:5432/testdb")
+        let config = PoolConfig::new("postgres://user:pass@localhost:5432/testdb")
             .with_max_connections(20)
             .with_min_connections(2)
             .with_connect_timeout(Duration::from_secs(10))
@@ -93,27 +75,9 @@ mod tests {
     }
 
     #[test]
-    fn test_pool_options() {
-        let config = PostgresConfig::new("postgres://user:pass@localhost:5432/testdb")
-            .with_max_connections(15)
-            .with_min_connections(3);
-
-        let _opts = pool_options(&config);
-    }
-
-    #[tokio::test]
-    async fn test_pool_creation() {
-        let config = PostgresConfig::new("postgres://user:pass@localhost:5432/testdb")
-            .with_max_connections(5);
-
-        let pool = create_pool(&config);
-        assert!(pool.is_ok());
-    }
-
-    #[test]
-    fn test_postgres_config_debug_redacts_url() {
+    fn test_pool_config_debug_redacts_url() {
         let config =
-            PostgresConfig::new("postgres://user:super_secret_password@localhost:5432/testdb");
+            PoolConfig::new("postgres://user:super_secret_password@localhost:5432/testdb");
         let debug_str = format!("{config:?}");
         assert!(!debug_str.contains("super_secret_password"));
         assert!(!debug_str.contains("postgres://"));

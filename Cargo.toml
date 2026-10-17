@@ -8,8 +8,7 @@ members = [
     "crates/core/rpc",
     "crates/core/test-support",
     "crates/ext/file-storage",
-    "crates/ext/rdbms/db",
-    "crates/ext/rdbms/postgres",
+    "crates/ext/rdbms",
     "crates/ext/tasks",
 ]
 exclude = ["example"]

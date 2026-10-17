@@ -1,6 +1,6 @@
-use crate::{DatabaseConfig, Result};
+use crate::contract::{DatabaseConfig, Result};
 use hypgm_errors::MigrationError;
-use sqlx::{Executor, PgConnection};
+use sqlx::{AssertSqlSafe, PgConnection};
 
 pub async fn apply_contracts(conn: &mut PgConnection, config: &DatabaseConfig) -> Result<()> {
     let already_applied: bool = sqlx::query_scalar(
@@ -47,7 +47,8 @@ pub async fn apply_contracts(conn: &mut PgConnection, config: &DatabaseConfig) -
          GRANT EXECUTE ON FUNCTION apalis.schema_version() TO {tasks};"
     );
 
-    conn.execute(sql.as_str())
+    sqlx::raw_sql(AssertSqlSafe(sql))
+        .execute(&mut *conn)
         .await
         .map_err(MigrationError::database)?;
 
