@@ -1,0 +1,27 @@
+[package]
+name = "app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+hello-world = { path = "../hello-world" }
+axum = { version = "0.8", default-features = false, features = ["tokio", "http2"] }
+http-support = { path = "../../http-support" }
+tower = "0.5"
+
+[dev-dependencies]
+tokio.workspace = true
+errors = { path = "../../errors" }
+reqwest = { version = "0.12", default-features = false }
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+tower = { version = "0.5", features = ["util"] }
+logging = { path = "../../logging" }
+tracing = "0.1"
+async-trait.workspace = true
+futures-util = "0.3"
+
+[lints]
+workspace = true

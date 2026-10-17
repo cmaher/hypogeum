@@ -1,128 +1,129 @@
 # Architecture and coding standards
 
-The workspace favors stateless components operating on plain data. Dependencies
-flow from binary composition roots through transport adapters and services to
-repositories. Services can delegate directly to repositories; add managers only
-when business behavior needs a distinct component.
+These standards describe reusable engineering practices. Keep project names,
+concrete domain types, routes, mount points, crate paths, listener addresses,
+environment variable names, and deployment topology in project documentation.
 
-Executable composition roots for the public web server, Apalis dashboard and
-`hypogeum-db` CLI belong in `cmd/web-server`, `cmd/apalis-dashboard` and `cmd/db`.
-Reusable infrastructure belongs in `crates/`; domain crates belong in `crates/domain/`.
-The generic example is `crates/domain/users/`. See the README's project customization
-section before renaming a fresh project and its database schema.
+## Architecture and boundaries
 
-## Boundaries
+Favor stateless components operating on plain data. Dependencies flow from
+binary composition roots through transport adapters and services to repositories.
+Services can delegate directly to repositories; add managers only when business
+behavior needs a distinct component.
 
-- **Objects:** data without pools, clients, or workflows. `User` is an example.
+- **Objects:** plain data without pools, clients, or workflows.
 - **Repository:** a trait accepting and returning plain objects, with an injected
-  PostgreSQL implementation. Only repositories query application tables.
+  persistence implementation. Only repositories query application tables.
 - **Service:** a trait exposing application behavior independently of transport.
   Implementations validate inputs and coordinate injected dependencies.
 - **Manager:** optional business logic component with injected trait dependencies.
-- **Server:** gRPC adapter translating messages, plain objects and typed errors.
-- **Client:** remote implementation behind a trait. The User client implements the
-  same plain-object service contract, so callers can inject local or remote services.
-- **Binary:** loads config, constructs pools and dependencies, checks readiness,
+- **Transport adapter:** translates HTTP or RPC requests, plain objects, and typed
+  errors. Keep handlers thin and business logic in services.
+- **Client:** a remote implementation behind a trait. Local and remote services
+  should expose the same plain-object contract when they are interchangeable.
+- **Binary:** loads configuration, constructs dependencies, checks readiness,
   starts servers, and handles shutdown.
 
-Use public constructors and keep internal dependency fields private. Unit tests
-use trait implementations without live infrastructure; integration tests exercise
-real adapters and PostgreSQL through the User repository and transport.
+Use constructor injection and keep dependency fields private. Libraries receive
+typed configuration, pools, and dependencies explicitly. Separate reusable
+infrastructure from domain behavior, and keep executable composition separate
+from reusable libraries.
 
-## Public HTTP and RPC composition
+## HTTP and RPC composition
 
-`crates/domain/hello-world` is the database-independent public example. Its
-`HelloWorldService` accepts plain arguments; its Tonic adapter injects
-`Arc<dyn HelloWorldService>` and uses shared typed status mappings. Generated
-Tonic clients suffice for this example. No repository is needed.
+Compose HTTP adapters using native Axum routing and nesting. Domain adapters own
+local routes; the application composition layer owns global mount points and
+shared transport policies. Avoid custom protocol dispatch when upstream routing
+already provides the required behavior.
 
-`crates/web-server` merges Axum health routes with Tonic
-`Routes::into_axum_router()` and wraps each explicitly registered public service
-in `tonic_web::GrpcWebLayer`. Axum HTTP/2 support is enabled so HTTP/1.1 health,
-native HTTP/2 gRPC and binary/text gRPC-Web share a listener. Keep protobuf RPC
-semantics and use upstream routing; no custom protocol dispatcher is needed.
+Public exposure must be explicit. Register only intended public services and
+keep internal services isolated. Apply CORS deliberately to the intended routes
+and origins; do not infer public exposure from registration on another listener.
 
-Public service registration is an explicit boundary: User CRUD and the task
-Board remain on their own listeners. When adding a public service, register its
-wrapped adapter in the public Tonic routes before applying route-scoped CORS,
-and test its native/browser behavior. CORS allows any origin without credentials
-for this unauthenticated example; it applies only to registered public RPC routes,
-never ordinary health routes or the unknown-service fallback.
+Define payload limits and document their scope. Extractor limits apply only to
+cooperating extractors; a limit on every request requires enforcement at the
+request boundary. Test both fixed-length and streamed payload boundaries.
 
-The executable composition root lives in `cmd/web-server/src/main.rs`; the
-reusable router stays in `crates/web-server`. Only main loads `EnvSource` once
-and deserializes `HYPOGEUM_WEB_` configuration and `HYPOGEUM_` logging.
-`HYPOGEUM_WEB_BIND` defaults to `127.0.0.1:8080`, using the existing `HYPOGEUM_ENV_FILE` semantics. Library constructors receive dependencies
-explicitly. Shutdown drains active requests on Ctrl-C/SIGTERM. Deployment owns
-TLS/ALPN and ingress HTTP/2 forwarding. No frontend or JSON transcoding is needed.
+Validate media types before parsing bodies. Use consistent, safe transport error
+responses, including routing and serialization failures. Preserve required
+protocol headers when translating errors. Define method and trailing-slash
+behavior explicitly and test it through the composed router.
 
-Loopback tests use the same socket for HTTP, native gRPC and both gRPC-Web
-encodings, decoding protobuf replies and embedded status trailers. Immediate
-errors may use trailers-only status headers; check those too. Text chunks may
-be independently base64 padded. Test validation, CORS boundaries, unknown methods,
-absence of private services, and graceful shutdown without database infrastructure.
+Keep health checks independent of infrastructure unless they explicitly represent
+readiness. Handle shutdown signals in the binary and drain active requests before
+exit. Document TLS termination and ingress protocol requirements separately.
 
 ## SQL and migrations
 
-Repositories build typed database queries with SeaORM entities and active models,
-integrating with SQLx pool ownership via `SqlxPostgresConnector`. Strongly typed
-domain migrations are collocated inside each domain crate (`src/pg/migrations/`) using
-SeaORM's `MigratorTrait` and `MigrationTrait`. Raw SQL remains appropriate for
-PostgreSQL-specific administration, readiness functions, and upstream infrastructure APIs.
-Audit `AssertSqlSafe` boundaries: interpolating caller values into SQL remains forbidden.
+Build typed database queries with SeaORM entities and active models, integrating
+with SQLx pool ownership through `SqlxPostgresConnector`. Keep domain migrations
+with the domain that owns the schema, using SeaORM migration traits. Raw SQL
+remains appropriate for database administration, readiness functions, and upstream
+infrastructure APIs. Bind caller-supplied values rather than interpolating them.
 
-Use schema-qualified names. `hypogeum.users` belongs to the User service; `apalis`
-belongs to upstream task infrastructure. The explicit migration runner (`hypogeum-db`)
-uses a dedicated `hypogeum_migrator` connection (selecting role `hypogeum_owner`) and
-orchestrates migrations in order:
-1. Upstream Apalis SQLx migrations run first (`apalis._sqlx_migrations`).
-2. Infrastructure runtime contracts and privilege hardening apply to `infra` and `apalis`.
-3. Domain SeaORM migrators (`users::pg::migrations::Migrator::up`) install domain schemas,
-   tables, check constraints, grants, and readiness functions, tracking history under
-   domain-qualified tables (e.g. `hypogeum.seaql_migrations`).
+Use schema-qualified names and explicit schema ownership. Run migrations through
+a dedicated administration entry point with credentials separate from runtime
+accounts. Apply upstream migrations before infrastructure contracts and dependent
+domain migrations. Provisioning owns roles and initial default privileges.
 
 Never edit an applied migration. Add a new one and update the matching readiness
-contract. Keep DDL, functions and grants versioned within migration definitions rather than
-reconciling them from Rust on each service invocation. Provisioning owns roles and initial
-default privileges.
+contract when compatibility changes. Version DDL, functions, and grants in
+migrations rather than reconciling them during service startup.
 
-`hypogeum_migrator` may select `hypogeum_owner` for DDL. `hypogeum_users`
-and `hypogeum_tasks` receive deliberately limited runtime privileges. They
-cannot read migration ledgers or each other's data. Readiness uses narrow
-version functions instead of ledger access or runtime migrations. These return
-an explicit compatibility version; adding an unrelated migration does not change
-readiness by changing a ledger row count. The separate `verify` command checks
-history and runtime boundaries without applying or repairing schema changes.
+Give runtime accounts only the privileges their services need. Readiness should
+use narrow compatibility checks rather than migration-ledger access or runtime
+migrations. Return an explicit compatibility version; unrelated migrations must
+not change readiness merely by increasing a ledger row count. Verification must
+check history and runtime privilege boundaries without applying or repairing
+schema changes.
 
-For operations needing multiple atomic statements, keep transaction management
-inside the repository boundary. Do not thread SQLx transaction handles through
+Keep transaction management inside the repository boundary for operations needing
+multiple atomic statements. Do not thread SQLx transaction handles through
 service APIs. Add a unit-of-work abstraction only when an operation needs one.
 
 ## Errors and configuration
 
-Shared `thiserror` types live in `crates/errors`. Map validation to InvalidArgument,
-missing entities to NotFound and internal/database failures to redacted Internal
-responses. `ServiceError::Remote` represents downstream gRPC client failures;
-`RepoError::Database` covers PostgreSQL regardless of its location.
+Define shared typed errors with `thiserror` and map them to transport responses at
+adapter boundaries. Distinguish validation failures, missing entities, downstream
+failures, and persistence failures. Redact internal details in public responses,
+including errors encountered while rendering a response. Never expose connection
+URLs, credentials, or internal queries. Use `anyhow` for binary-level context.
 
-Only binary composition roots load environment configuration. Binaries load environment
-once via `env-config` (`EnvSource::load`), deserialize a per-binary `Config` with `envy`,
-use `Secret` for credentials, and never mutate process environment. Libraries accept
-explicit values and injected dependencies. Use `anyhow` for binary-level context.
-Do not include connection URLs, credentials or internal queries in public errors.
+Only binary composition roots load environment configuration. Load it once,
+deserialize typed configuration, and use types that redact credentials when
+formatted. Never mutate process environment. Libraries accept explicit values and
+injected dependencies.
+
+## Logging and tracing
+
+Initialize logging once at the binary boundary. Support typed logging
+configuration and structured output without reading environment variables inside
+libraries.
+
+Generate request identifiers at the trust boundary and propagate them through
+responses and tracing context. Use matched route templates rather than raw paths
+or query strings. Keep shared middleware independent of application route names.
+Ensure error events retain request context at supported logging thresholds and
+propagate spans explicitly into spawned tasks.
+
+Record request completion status and duration with appropriate severity. Do not
+log request bodies, credentials, authorization headers, or sensitive user input.
 
 ## Verification
 
-`cargo make ci` checks format, denies Clippy warnings, builds and runs the entire
-workspace. Git and Python 3.9 or newer run the rename-script tests; Docker is the only
-infrastructure prerequisite.
-`cargo test --locked --workspace --all-features` runs every integration suite.
+Run the project's formatting, lint, build, and test checks before committing.
+Test observable behavior and meaningful failure cases rather than constructors,
+private implementation details, or values merely passed through mocks.
 
-Each suite launcher owns one Testcontainers PostgreSQL instance. It launches its
-ignored SQLx cases with a child-only `DATABASE_URL`; `sqlx::test` creates a fresh
-database for every case. This avoids process-global environment mutation and
-parallel-test interference. Provisioning and migrations match the runtime role
-boundaries used by the application. Use synthetic data and temporary storage.
+Unit tests use injected trait implementations without live infrastructure.
+Integration tests exercise real adapters and persistence. Test composed transport
+behavior over loopback connections, including failure responses, required headers,
+payload limits, request correlation, and graceful shutdown. Exercise exported
+middleware helpers as consumers install them.
 
-Add tests for observable behavior and meaningful failure cases. Avoid tests that
-merely restate constructors or private implementation details.
+Database integration suites own their Testcontainers instances and isolate each
+test's database. Where SQLx cases run in child processes, pass database
+configuration only to the child. Avoid process-global environment mutation,
+ambient database URLs, and shared development databases. Match provisioning and
+migrations to runtime privilege boundaries. Use synthetic data and temporary
+storage.

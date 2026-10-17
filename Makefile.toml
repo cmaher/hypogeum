@@ -75,7 +75,7 @@ args = ["run", "--locked", "-p", "users"]
 command = "cargo"
 args = ["run", "--locked", "-p", "apalis-dashboard"]
 
-[tasks.web-server]
-description = "Run public HTTP, native gRPC and gRPC-Web without a database"
+[tasks.app]
+description = "Run the public HTTP application without a database"
 command = "cargo"
-args = ["run", "--locked", "-p", "web-server-cli", "--bin", "web-server"]
+args = ["run", "--locked", "-p", "app-cli", "--bin", "app"]

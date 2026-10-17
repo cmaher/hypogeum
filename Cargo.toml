@@ -2,18 +2,20 @@
 members = [
     "cmd/apalis-dashboard",
     "cmd/db",
-    "cmd/web-server",
+    "cmd/app",
     "crates/db",
+    "crates/domain/app",
     "crates/domain/hello-world",
     "crates/domain/users",
     "crates/env-config",
     "crates/errors",
     "crates/file-storage",
+    "crates/http-support",
+    "crates/logging",
     "crates/postgres",
     "crates/rpc",
     "crates/tasks",
     "crates/test-support",
-    "crates/web-server",
 ]
 resolver = "3"
 

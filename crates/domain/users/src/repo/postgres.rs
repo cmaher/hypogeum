@@ -3,6 +3,7 @@ use super::entity::{ActiveModel, Column, Entity};
 use crate::models::{PageRequest, User, UserPage, validate_name};
 use async_trait::async_trait;
 use errors::RepoError;
+use sea_orm::sea_query::{Alias, Expr, Func};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder,
     QuerySelect, SqlxPostgresConnector,
@@ -77,13 +78,21 @@ impl UserRepo for PgUserRepo {
 
     async fn update_name(&self, id: Uuid, name: &str) -> Result<User, RepoError> {
         validate_name(name)?;
-        let active = ActiveModel {
-            id: sea_orm::ActiveValue::Unchanged(id),
-            display_name: sea_orm::ActiveValue::Set(name.to_string()),
-            updated_at: sea_orm::ActiveValue::Set(chrono::Utc::now()),
-            created_at: sea_orm::ActiveValue::NotSet,
-        };
-        let model = active.update(self.db()).await.map_err(map_db_err)?;
+        // Use the database clock without moving an existing timestamp backwards.
+        let updated_at = Func::greatest([
+            Expr::col(Column::UpdatedAt),
+            Func::cust(Alias::new("statement_timestamp")).into(),
+        ]);
+        let model = Entity::update_many()
+            .col_expr(Column::DisplayName, Expr::value(name))
+            .col_expr(Column::UpdatedAt, updated_at.into())
+            .filter(Column::Id.eq(id))
+            .exec_with_returning(self.db())
+            .await
+            .map_err(map_db_err)?
+            .into_iter()
+            .next()
+            .ok_or(RepoError::NotFound)?;
         Ok(model.into())
     }
 

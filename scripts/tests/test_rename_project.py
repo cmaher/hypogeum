@@ -22,7 +22,9 @@ def display(name):
 
 class RenameProjectTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
+        target_dir = SCRIPT.parents[1] / "target/tmp"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        self.temp = tempfile.TemporaryDirectory(dir=target_dir)
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.git("init", "--quiet")
@@ -39,7 +41,7 @@ class RenameProjectTests(unittest.TestCase):
         self.git("add", ".")
 
     def git(self, *args):
-        return subprocess.check_output(["git", "-C", str(self.root), *args])
+        return subprocess.check_output(["git", *args], cwd=self.root)
 
     def run_script(self, *args, success=True, cwd=None):
         result = subprocess.run(
@@ -83,18 +85,18 @@ class RenameProjectTests(unittest.TestCase):
         self.assertIn("NextProject", self.fixture.read_text())
         self.assertNotIn(TARGET, self.fixture.read_text())
 
-    def test_public_rpc_and_web_configuration_stay_aligned(self):
+    def test_app_and_rpc_configuration_stay_aligned(self):
         repository = SCRIPT.parent.parent
         paths = [
-            "proto/public_hello_world.proto",
+            "proto/users.proto",
             "crates/rpc/src/lib.rs",
-            "cmd/web-server/src/main.rs",
-            "crates/web-server/tests/transport.rs",
+            "cmd/app/src/main.rs",
+            "crates/domain/app/tests/transport.rs",
             "env/local.env.example",
         ]
         for relative in paths:
             source = repository / relative
-            self.assertTrue(source.is_file(), f"missing public web surface: {relative}")
+            self.assertTrue(source.is_file(), f"missing app surface: {relative}")
             target = self.root / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, target)
@@ -105,13 +107,12 @@ class RenameProjectTests(unittest.TestCase):
         main = (self.root / paths[2]).read_text()
         transport = (self.root / paths[3]).read_text()
         env = (self.root / paths[4]).read_text()
-        package = f"{TARGET}.public.v1"
+        package = f"{TARGET}.users.v1"
         self.assertIn(f"package {package};", proto)
         self.assertIn(f'tonic::include_proto!("{package}")', bindings)
-        self.assertIn(f"/{package}.PublicHelloWorld/SayHello", transport)
-        self.assertIn(f'"{TARGET.upper()}_WEB_"', main)
-        self.assertIn(f"{TARGET.upper()}_WEB_BIND", main)
-        self.assertIn(f"{TARGET.upper()}_WEB_BIND=127.0.0.1:8080", env)
+        self.assertIn(f'"{TARGET.upper()}_APP_"', main)
+        self.assertIn(f"{TARGET.upper()}_APP_BIND", main)
+        self.assertIn(f"{TARGET.upper()}_APP_BIND=127.0.0.1:8080", env)
         self.assertIn(f"/{TARGET}.users.v1.Users/GetUser", transport)
         for relative in paths:
             self.assertNotIn(SOURCE, (self.root / relative).read_text().lower())
@@ -191,7 +192,7 @@ class RenameProjectTests(unittest.TestCase):
         outside.write_text(SOURCE)
         self.addCleanup(outside.unlink)
         link = self.root / "link"
-        link.symlink_to(outside)
+        link.symlink_to(f"../{outside.name}")
         self.git("add", "link")
         self.run_script(TARGET)
         self.assertEqual(outside.read_text(), SOURCE)

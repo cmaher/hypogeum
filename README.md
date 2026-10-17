@@ -1,8 +1,8 @@
 # Hypogeum
 
-A Rust workspace for starting services with PostgreSQL, gRPC, typed background
-tasks, and streamed byte storage. User CRUD and a public HelloWorld service
-demonstrate the layers.
+A Rust workspace for starting services with PostgreSQL, internal gRPC,
+composed Axum JSON APIs, typed background tasks, and streamed byte storage.
+User CRUD and a public HelloWorld service demonstrate the layers.
 
 ## Project customization
 
@@ -124,10 +124,12 @@ starting with the generic User example in `crates/domain/users/`.
 | Crate | Responsibility |
 | --- | --- |
 | `users` | Plain User objects, repository, service, gRPC server and client |
-| `hello-world` | Database-independent greeting service and public Tonic adapter |
-| `web-server` | Reusable router for HTTP health, native gRPC and gRPC-Web |
-| `web-server-cli` (`cmd/web-server`) | Public web executable configuration and startup |
-| `rpc` | Generated protobuf client/server bindings |
+| `hello-world` | Database-independent greeting service and thin JSON controller |
+| `app` | Composed public router, health endpoint, and domain mounts |
+| `app-cli` (`cmd/app`) | Public app executable configuration, logging and startup |
+| `http-support` | Shared Axum error mapping, 16KiB JSON extraction, and request tracing |
+| `logging` | Typed subscriber builder and tracing subscriber initialization |
+| `rpc` | Generated protobuf client/server bindings (internal Users RPC) |
 | `hypogeum-db` | Reusable migrations, verification and database inspection |
 | `hypogeum-db-cli` (`cmd/db`) | The `hypogeum-db` administration executable |
 | `postgres` | Constructor-injected pool configuration |
@@ -217,54 +219,38 @@ The administration CLI returns JSON and exits nonzero on failure. Errors redact
 connection details. Migration and runtime accounts are separate; runtime roles
 cannot perform DDL, inspect migration ledgers, or access each other's data.
 
-## Public HelloWorld example
+## Public App and HelloWorld example
 
 ```sh
-cargo make web-server
+cargo make app
 ```
 
-The executable entry point lives in `cmd/web-server/src/main.rs`; the reusable
-router lives in `crates/web-server`. This server needs no database, migrations,
-Docker, or database configuration.
-`HYPOGEUM_WEB_BIND` defaults to `127.0.0.1:8080`. It uses the same environment-file
-precedence and `HYPOGEUM_ENV_FILE` behavior described above; `HYPOGEUM_ENV_FILE=`
-disables file loading. Ctrl-C and SIGTERM drain active requests before exit.
+The executable entry point lives in `cmd/app/src/main.rs`; the composed router
+lives in `crates/domain/app`. This server needs no database, migrations, Docker,
+or database configuration.
 
-One socket serves all of these:
+`HYPOGEUM_APP_BIND` defaults to `127.0.0.1:8080`. Logging is configured via
+`HYPOGEUM_LOG` (default `info`) and `HYPOGEUM_LOG_FORMAT` (`text` or `json`,
+default `text`). It uses the same environment-file precedence and
+`HYPOGEUM_ENV_FILE` behavior described above; `HYPOGEUM_ENV_FILE=` disables file
+loading. Ctrl-C and SIGTERM drain active requests before exit.
 
-| Route / protocol | Client behavior |
-| --- | --- |
-| `GET /healthz`, ordinary HTTP | HTTP 200 with text `ok` |
-| `/hypogeum.public.v1.PublicHelloWorld/SayHello`, native gRPC | Generated Rust Tonic client using HTTP/2 |
-| The same RPC path, gRPC-Web | Browser protobuf client using binary or base64 text framing over HTTP/1.1 or HTTP/2 |
+Composed HTTP routes:
 
-`proto/public_hello_world.proto` defines the unary request and reply. Names are
-trimmed; blank greets `world`. Names may contain up to 200 Unicode scalar values
-and must not contain NUL. The response is `Hello, {name}!`. Validation reports
-`InvalidArgument`. Clients must check RPC statuses, including gRPC-Web trailer
-frames or trailers-only status headers; HTTP 200 alone does not mean success.
-There is no JSON transcoding or frontend build step.
+| Route / method | Request payload | Response behavior |
+| --- | --- | --- |
+| `GET /healthz` | None | HTTP 200 `text/plain; charset=utf-8` body `ok` |
+| `HEAD /healthz` | None | HTTP 200 with empty body and identical headers |
+| `POST /api/hello` | JSON `{"name": "Ada"}` | HTTP 200 `{"message": "Hello, Ada!"}` |
 
-Only PublicHelloWorld is registered on this public listener. User CRUD remains
-on `127.0.0.1:50051`; the task Board remains on `127.0.0.1:8082`. CORS applies only
-to registered public RPC routes: any origin, no credentials, POST/OPTIONS, and
-gRPC-Web request/status headers. Health and unregistered services receive no CORS
-permission. Keep the default loopback bind for local development.
+Key features:
+- **16KiB Body Limit:** Raw request payloads are bounded to 16KiB; exceeding bodies receive `413 Payload Too Large`.
+- **Typed Error Envelope:** All errors return uniform JSON (`{"code": "...", "message": "..."}`).
+- **Request Tracing:** Generates a UUID v4 `X-Request-Id` header on every response, rejects untrusted caller IDs, and logs exactly one structured completion event with duration and status.
+- **Strict Method Routing:** Mismatched methods return JSON `405 Method Not Allowed` with valid `Allow` headers.
+- **Trailing Slash Discipline:** `/api/hello` is canonical; `/api/hello/` returns JSON `404 Not Found` with no redirect.
 
-Axum enables HTTP/2 explicitly and merges ordinary routes with Tonic
-[`Routes::into_axum_router`](https://docs.rs/tonic/0.14.6/tonic/service/struct.Routes.html).
-[`tonic-web`](https://docs.rs/tonic-web/0.14.6/tonic_web/) wraps the public service
-for browser framing and passes native HTTP/2 gRPC through. A deployment must
-provide TLS/ALPN at its ingress and preserve HTTP/2 forwarding for native gRPC,
-along with gRPC-Web content types, bodies and status headers for browser clients.
-TLS and ingress configuration are external to this example.
-
-To add another public service, define its protobuf API and injected plain service,
-then explicitly register its Tonic adapter with a gRPC-Web layer in
-`crates/web-server/src/lib.rs` before the public CORS layer. Add loopback tests for
-both native and browser calls. Registration in another server does not make a
-service public. Workspace CI automatically runs the new crates and their tests;
-HelloWorld tests themselves need no database, while full CI requires Docker.
+See [docs/app.md](docs/app.md) for full architectural documentation, route nesting, error mapping, and steps to add new domain endpoints.
 
 ## User example
 
@@ -279,5 +265,5 @@ The example leaves authentication and application-specific permissions to the
 project built from it. Keep development endpoints bound to loopback until a
 deployment supplies its access controls.
 
-See [architecture and coding standards](docs/coding_standards.md),
+See [app architecture](docs/app.md), [architecture and coding standards](docs/coding_standards.md),
 [tasks](docs/tasks.md), and [file storage](docs/file-storage.md).
