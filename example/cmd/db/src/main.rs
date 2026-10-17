@@ -45,19 +45,22 @@ async fn run() -> Result<Value, String> {
         .map_err(|e| e.to_string())?;
     let url = config.database_url.expose();
 
-    let db_config =
-        hypgm_ext_rdbms::DatabaseConfig::new("exemplum_migrator", "exemplum_owner", "exemplum_tasks")
-            .with_app_schema("exemplum")
-            .with_domain_migrator(<dyn hypgm_ext_rdbms::DomainMigrator>::from_sea_orm::<
-                exemplum_dmn_users::pg::migrations::Migrator,
-            >())
-            .with_service_contract(hypgm_ext_rdbms::ServiceContract::new(
-                "exemplum",
-                "exemplum_users",
-                1,
-                Some("m20260101_000001_create_users"),
-                "users",
-            ));
+    let db_config = hypgm_ext_rdbms::DatabaseConfig::new(
+        "exemplum_migrator",
+        "exemplum_owner",
+        "exemplum_tasks",
+    )
+    .with_app_schema("exemplum")
+    .with_domain_migrator(<dyn hypgm_ext_rdbms::DomainMigrator>::from_sea_orm::<
+        exemplum_dmn_users::pg::migrations::Migrator,
+    >())
+    .with_service_contract(hypgm_ext_rdbms::ServiceContract::new(
+        "exemplum",
+        "exemplum_users",
+        1,
+        Some("m20260101_000001_create_users"),
+        "users",
+    ));
 
     match args[0].as_str() {
         "migrate" => {

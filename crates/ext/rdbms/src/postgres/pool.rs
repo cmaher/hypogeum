@@ -35,8 +35,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_pool_creation() {
-        let config = PoolConfig::new("postgres://user:pass@localhost:5432/testdb")
-            .with_max_connections(5);
+        let config =
+            PoolConfig::new("postgres://user:pass@localhost:5432/testdb").with_max_connections(5);
 
         let pool = create_pool(&config);
         assert!(pool.is_ok());

@@ -13,14 +13,18 @@ async fn explicit_cli_migrates_verifies_and_inspects(
     for command in ["migrate", "migrate", "verify", "inspect"] {
         let output = tokio::process::Command::new(env!("CARGO_BIN_EXE_exemplum-db"))
             .args([command, "--output", "json"])
-            .env("EXEMPLUM_MIGRATION_DATABASE_URL", &db.migration_url)
+            .env(
+                "EXEMPLUM_MIGRATION_DATABASE_URL",
+                &db.exemplum_migration_url,
+            )
             .env("EXEMPLUM_ENV_FILE", "")
             .output()
             .await
             .unwrap();
         assert!(
             output.status.success(),
-            "{}",
+            "command {} failed: stderr={}",
+            command,
             String::from_utf8_lossy(&output.stderr)
         );
         let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -28,21 +32,9 @@ async fn explicit_cli_migrates_verifies_and_inspects(
         if command == "inspect" {
             let tables = result["data"]["tables"].as_array().unwrap();
             assert!(tables.len() >= 4);
-            assert!(
-                tables
-                    .iter()
-                    .any(|t| t["schema"] == "hypogeum" && t["table"] == "users")
-            );
-            assert!(
-                tables
-                    .iter()
-                    .any(|t| t["schema"] == "hypogeum" && t["table"] == "seaql_migrations")
-            );
-            assert!(
-                tables
-                    .iter()
-                    .any(|t| t["schema"] == "apalis" && t["table"] == "_sqlx_migrations")
-            );
+            assert!(tables.iter().any(|t| t == "exemplum.users"));
+            assert!(tables.iter().any(|t| t == "exemplum.seaql_migrations"));
+            assert!(tables.iter().any(|t| t == "apalis._sqlx_migrations"));
         }
     }
 }

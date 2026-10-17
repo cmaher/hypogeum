@@ -103,11 +103,12 @@ async fn user_repository_connects_and_persists_under_runtime_privileges(
     );
     first.unwrap();
     second.unwrap();
-    hypgm_ext_rdbms::verify(&migration_url, &config).await.unwrap();
-    let pool = hypgm_ext_rdbms::create_pool(&hypgm_ext_rdbms::PoolConfig::new(
-        db.users_url.clone(),
-    ))
-    .unwrap();
+    hypgm_ext_rdbms::verify(&migration_url, &config)
+        .await
+        .unwrap();
+    let pool =
+        hypgm_ext_rdbms::create_pool(&hypgm_ext_rdbms::PoolConfig::new(db.users_url.clone()))
+            .unwrap();
     exemplum_dmn_users::repo::check_ready(&pool).await.unwrap();
     let repo = PgUserRepo::new(pool.clone());
     let id = Uuid::new_v4();
@@ -190,7 +191,11 @@ async fn user_repository_connects_and_persists_under_runtime_privileges(
         .await
         .unwrap();
     assert!(exemplum_dmn_users::repo::check_ready(&pool).await.is_err());
-    assert!(hypgm_ext_rdbms::verify(&migration_url, &config).await.is_err());
+    assert!(
+        hypgm_ext_rdbms::verify(&migration_url, &config)
+            .await
+            .is_err()
+    );
     pool.close().await;
     tasks.close().await;
 }

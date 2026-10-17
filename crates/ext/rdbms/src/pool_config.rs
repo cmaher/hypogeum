@@ -76,8 +76,7 @@ mod tests {
 
     #[test]
     fn test_pool_config_debug_redacts_url() {
-        let config =
-            PoolConfig::new("postgres://user:super_secret_password@localhost:5432/testdb");
+        let config = PoolConfig::new("postgres://user:super_secret_password@localhost:5432/testdb");
         let debug_str = format!("{config:?}");
         assert!(!debug_str.contains("super_secret_password"));
         assert!(!debug_str.contains("postgres://"));

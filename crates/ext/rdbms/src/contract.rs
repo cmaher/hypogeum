@@ -78,6 +78,7 @@ impl ServiceContract {
     }
 }
 
+#[derive(Default)]
 pub struct DatabaseConfig {
     pub migrator_role: String,
     pub owner_role: String,
@@ -85,19 +86,6 @@ pub struct DatabaseConfig {
     pub app_schemas: Vec<String>,
     pub domain_migrators: Vec<Box<dyn DomainMigrator>>,
     pub service_contracts: Vec<ServiceContract>,
-}
-
-impl Default for DatabaseConfig {
-    fn default() -> Self {
-        Self {
-            migrator_role: String::new(),
-            owner_role: String::new(),
-            tasks_role: String::new(),
-            app_schemas: Vec::new(),
-            domain_migrators: Vec::new(),
-            service_contracts: Vec::new(),
-        }
-    }
 }
 
 impl DatabaseConfig {

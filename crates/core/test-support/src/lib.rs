@@ -49,12 +49,18 @@ pub fn run_suite() {
             .args(["--ignored", "--nocapture"])
             .env("DATABASE_URL", url)
             .env("HYPOGEUM_TEST_CHILD", "1");
-        let status = child.status().await.expect("Launch SQLx integration cases");
+        let output = child.output().await.expect("Launch SQLx integration cases");
         container
             .rm()
             .await
             .expect("Remove PostgreSQL testcontainer");
-        assert!(status.success(), "SQLx integration suite failed: {status}");
+        assert!(
+            output.status.success(),
+            "SQLx integration suite failed with status {}\nSTDOUT:\n{}\nSTDERR:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
     });
 }
 
@@ -102,7 +108,9 @@ impl TestDatabase {
         } else {
             &self.migration_url
         };
-        hypgm_ext_rdbms::migrate(migration_url, config).await.unwrap();
+        hypgm_ext_rdbms::migrate(migration_url, config)
+            .await
+            .unwrap();
     }
 }
 
@@ -159,6 +167,7 @@ DO $$ DECLARE db text := current_database(); BEGIN
   EXECUTE format('ALTER DATABASE %I OWNER TO hypogeum_owner',db);
   EXECUTE format('REVOKE ALL ON DATABASE %I FROM PUBLIC',db);
   EXECUTE format('GRANT CONNECT ON DATABASE %I TO hypogeum_migrator,hypogeum_users,hypogeum_tasks,exemplum_owner,exemplum_migrator,exemplum_users,exemplum_tasks',db);
+  EXECUTE format('GRANT CREATE, TEMPORARY ON DATABASE %I TO exemplum_owner',db);
   EXECUTE format('ALTER ROLE hypogeum_users IN DATABASE %I SET search_path=pg_catalog',db);
   EXECUTE format('ALTER ROLE hypogeum_migrator IN DATABASE %I SET search_path=pg_catalog',db);
   EXECUTE format('ALTER ROLE hypogeum_tasks IN DATABASE %I SET search_path=pg_catalog,apalis',db);
@@ -167,6 +176,7 @@ DO $$ DECLARE db text := current_database(); BEGIN
   EXECUTE format('ALTER ROLE exemplum_tasks IN DATABASE %I SET search_path=pg_catalog,apalis',db);
 END $$;
 REVOKE ALL ON SCHEMA public FROM PUBLIC;
+GRANT ALL ON SCHEMA public TO hypogeum_owner, exemplum_owner;
 ALTER DEFAULT PRIVILEGES FOR ROLE hypogeum_owner REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES FOR ROLE hypogeum_owner REVOKE USAGE ON TYPES FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES FOR ROLE exemplum_owner REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;

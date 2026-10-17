@@ -152,10 +152,9 @@ pub async fn inspect(url: &str, config: &DatabaseConfig) -> Result<serde_json::V
     let mut contracts_info = serde_json::Map::new();
     for sc in &config.service_contracts {
         let version_query = format!("SELECT {}.schema_version()", sc.schema);
-        let version: std::result::Result<i64, _> =
-            sqlx::query_scalar(AssertSqlSafe(version_query))
-                .fetch_one(&mut connection)
-                .await;
+        let version: std::result::Result<i64, _> = sqlx::query_scalar(AssertSqlSafe(version_query))
+            .fetch_one(&mut connection)
+            .await;
         let ver_val = match version {
             Ok(v) => serde_json::json!(v),
             Err(_) => serde_json::json!(null),
