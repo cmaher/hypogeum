@@ -5,10 +5,10 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-tasks = { path = "../../crates/tasks" }
+hypgm-ext-tasks = { path = "../../crates/ext/tasks" }
 axum = "0.8"
 anyhow = "1"
-env-config = { path = "../../crates/env-config" }
+hypgm-env-config = { path = "../../crates/core/env-config" }
 sqlx.workspace = true
 tokio.workspace = true
 serde.workspace = true

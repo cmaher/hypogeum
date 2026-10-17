@@ -11,5 +11,5 @@ mod worker;
 
 #[test]
 fn integration_suite() {
-    test_support::run_suite();
+    hypgm_test_support::run_suite();
 }

@@ -17,7 +17,7 @@ pub fn run_suite() {
         .build()
         .unwrap();
     runtime.block_on(async {
-        let init = include_str!("../../../infra/postgres/provision.sql")
+        let init = include_str!("../../../../infra/postgres/provision.sql")
             .replace(
                 "\\getenv migration_password MIGRATION_PASSWORD",
                 "\\set migration_password 'test-migration'",
@@ -32,7 +32,7 @@ pub fn run_suite() {
             )
             .replace(
                 "\\ir database.sql",
-                include_str!("../../../infra/postgres/database.sql"),
+                include_str!("../../../../infra/postgres/database.sql"),
             );
         let container = Postgres::default()
             .with_user("hypogeum_admin")
@@ -72,7 +72,7 @@ impl TestDatabase {
     /// grants/defaults here. Cluster roles were provisioned once at startup.
     pub async fn provision(options: PgConnectOptions) -> Self {
         let admin = PgPool::connect_with(options.clone()).await.unwrap();
-        sqlx::raw_sql(include_str!("../../../infra/postgres/database.sql"))
+        sqlx::raw_sql(include_str!("../../../../infra/postgres/database.sql"))
             .execute(&admin)
             .await
             .unwrap();
@@ -93,6 +93,6 @@ impl TestDatabase {
         }
     }
     pub async fn migrate(&self) {
-        hypogeum_db::migrate(&self.migration_url).await.unwrap();
+        hypgm_ext_db::migrate(&self.migration_url).await.unwrap();
     }
 }

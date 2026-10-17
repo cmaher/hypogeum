@@ -1,6 +1,6 @@
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use errors::{RepoError, ServiceError};
+use hypgm_errors::{RepoError, ServiceError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ErrorClassification {

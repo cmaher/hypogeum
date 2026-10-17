@@ -12,7 +12,7 @@ use axum::{
     response::IntoResponse,
     routing::get,
 };
-use errors::TasksError;
+use hypgm_errors::TasksError;
 use serde::{Serialize, de::DeserializeOwned};
 use std::collections::HashSet;
 

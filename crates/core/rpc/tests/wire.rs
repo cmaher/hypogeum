@@ -1,5 +1,5 @@
 use prost::Message;
-use rpc::users::{ListUsersResponse, User};
+use hypgm_rpc::users::{ListUsersResponse, User};
 
 #[test]
 fn user_timestamps_and_pagination_round_trip() {

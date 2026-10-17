@@ -1,6 +1,6 @@
 //! Read-only administrative checks, separate from applying migrations.
 use crate::{Result, apalis, require};
-use errors::MigrationError;
+use hypgm_errors::MigrationError;
 use sqlx::{
     PgConnection,
     migrate::{Migrate, Migrator},

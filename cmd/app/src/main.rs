@@ -1,4 +1,4 @@
-use logging::LogFormat;
+use hypgm_logging::LogFormat;
 use serde::Deserialize;
 use std::net::SocketAddr;
 
@@ -23,8 +23,8 @@ struct AppLogConfig {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     use anyhow::Context;
-    use env_config::{EnvSource, LogConfig};
-    use hello_world::service::DefaultHelloWorldService;
+    use hypgm_dmn_hello_world::service::DefaultHelloWorldService;
+    use hypgm_env_config::{EnvSource, LogConfig};
     use std::sync::Arc;
 
     let env = EnvSource::load()?;
@@ -32,7 +32,7 @@ async fn main() -> anyhow::Result<()> {
     let log: LogConfig = env.deserialize("HYPOGEUM_")?;
     let log_format: AppLogConfig = env.deserialize("HYPOGEUM_")?;
 
-    logging::init(&log.log, log_format.log_format).context("Initialize logging subscriber")?;
+    hypgm_logging::init(&log.log, log_format.log_format).context("Initialize logging subscriber")?;
 
     tracing::info!(
         bind = %config.bind,
@@ -46,7 +46,7 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!(bind = %config.bind, "app listening");
 
-    axum::serve(listener, app::router(Arc::new(DefaultHelloWorldService)))
+    axum::serve(listener, hypgm_dmn_app::router(Arc::new(DefaultHelloWorldService)))
         .with_graceful_shutdown(async {
             shutdown().await;
             tracing::info!("app shutting down");
@@ -78,7 +78,7 @@ async fn shutdown() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use env_config::EnvSource;
+    use hypgm_env_config::EnvSource;
 
     #[test]
     fn bind_defaults_without_database_configuration() {

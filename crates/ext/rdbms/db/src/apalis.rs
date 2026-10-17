@@ -1,6 +1,6 @@
 use crate::{Result, require, verify::check_history};
 use apalis_postgres::PostgresStorage;
-use errors::MigrationError;
+use hypgm_errors::MigrationError;
 use sqlx::{PgConnection, migrate::Migrator};
 
 pub(crate) fn migrations() -> Migrator {

@@ -1,6 +1,6 @@
 use crate::WorkerConfig;
 use apalis::prelude::*;
-use errors::TasksError;
+use hypgm_errors::TasksError;
 use sqlx::{
     PgPool,
     postgres::{PgConnectOptions, PgPoolOptions},

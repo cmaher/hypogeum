@@ -7,7 +7,7 @@ pub use apalis::prelude::{Status, Task, TaskId};
 use apalis::prelude::{TaskBuilder, WorkerBuilder, WorkerBuilderExt};
 pub use apalis_postgres::{self, PgTask, PgTaskId, PostgresStorage};
 pub use config::WorkerConfig;
-use errors::TasksError;
+use hypgm_errors::TasksError;
 use sqlx::PgPool;
 
 pub struct Queue<Args> {

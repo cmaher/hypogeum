@@ -3,8 +3,8 @@ use axum::http::header;
 use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::{Extension, Router};
-use hello_world::service::HelloWorldService;
-use http_support::{HealthCheck, MAX_BODY_BYTES, not_found_handler, trace_layer};
+use hypgm_dmn_hello_world::service::HelloWorldService;
+use hypgm_http::{HealthCheck, MAX_BODY_BYTES, not_found_handler, trace_layer};
 use std::sync::Arc;
 
 async fn healthz() -> impl IntoResponse {
@@ -16,7 +16,7 @@ async fn healthz() -> impl IntoResponse {
 }
 
 pub fn router(hello_service: Arc<dyn HelloWorldService>) -> Router<()> {
-    let hello = hello_world::controller::router(hello_service);
+    let hello = hypgm_dmn_hello_world::controller::router(hello_service);
     let api = Router::new().nest("/hello", hello);
 
     Router::new()

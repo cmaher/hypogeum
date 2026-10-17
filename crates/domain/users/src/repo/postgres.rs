@@ -2,7 +2,7 @@ use super::UserRepo;
 use super::entity::{ActiveModel, Column, Entity};
 use crate::models::{PageRequest, User, UserPage, validate_name};
 use async_trait::async_trait;
-use errors::RepoError;
+use hypgm_errors::RepoError;
 use sea_orm::sea_query::{Alias, Expr, Func};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder,

@@ -1,5 +1,5 @@
 use crate::{models::PageRequest, service::UserService, wire};
-use rpc::users::{
+use hypgm_rpc::users::{
     self as pb,
     users_server::{Users, UsersServer},
 };

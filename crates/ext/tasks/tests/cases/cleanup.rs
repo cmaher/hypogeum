@@ -5,7 +5,7 @@ use std::{
     task::Poll,
     time::Duration,
 };
-use tasks::worker::Lifecycle;
+use hypgm_ext_tasks::worker::Lifecycle;
 
 #[sqlx::test(migrations = false)]
 #[ignore = "run by integration_suite"]
@@ -13,7 +13,7 @@ async fn stalled_pool_cleanup_obeys_shutdown_deadline(
     _options: PgPoolOptions,
     options: PgConnectOptions,
 ) {
-    let db = test_support::TestDatabase::provision(options).await;
+    let db = hypgm_test_support::TestDatabase::provision(options).await;
     for mode in ["signal", "deadline", "completed", "error", "cancel-cleanup"] {
         let options: PgConnectOptions = db.tasks_url.parse().unwrap();
         let mut barrier =

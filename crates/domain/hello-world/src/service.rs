@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use errors::ServiceError;
+use hypgm_errors::ServiceError;
 
 #[async_trait]
 pub trait HelloWorldService: Send + Sync {

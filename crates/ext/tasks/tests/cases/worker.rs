@@ -1,7 +1,7 @@
 use apalis::prelude::*;
 use sqlx::PgPool;
 use std::time::Duration;
-use tasks::{Queue, WorkerConfig};
+use hypgm_ext_tasks::{Queue, WorkerConfig};
 
 #[tokio::test]
 async fn named_queue_and_task_use_upstream_configuration() {
@@ -27,7 +27,7 @@ async fn named_queue_and_task_use_upstream_configuration() {
 
 #[tokio::test]
 async fn shutdown_stops_claiming_and_bounds_drain() {
-    let lifecycle = tasks::worker::Lifecycle::new(
+    let lifecycle = hypgm_ext_tasks::worker::Lifecycle::new(
         "fixture-shutdown",
         sqlx::postgres::PgPoolOptions::new(),
         "postgres://unused:unused@localhost/unused".parse().unwrap(),
@@ -54,7 +54,7 @@ async fn typed_handler_executes_retries_and_exhausts(
     _options: sqlx::postgres::PgPoolOptions,
     options: sqlx::postgres::PgConnectOptions,
 ) {
-    let db = test_support::TestDatabase::provision(options).await;
+    let db = hypgm_test_support::TestDatabase::provision(options).await;
     db.migrate().await;
     let pool = PgPool::connect(&db.tasks_url).await.unwrap();
     let admin = PgPool::connect(&db.admin_url).await.unwrap();
@@ -88,7 +88,7 @@ async fn typed_handler_executes_retries_and_exhausts(
         };
         let id = task.task_id().unwrap().clone();
         queue.storage().push_task(task).await.unwrap();
-        let lifecycle = tasks::worker::Lifecycle::new(
+        let lifecycle = hypgm_ext_tasks::worker::Lifecycle::new(
             suffix,
             sqlx::postgres::PgPoolOptions::new().max_connections(2),
             db.tasks_url.parse().unwrap(),
@@ -205,7 +205,7 @@ async fn shutdown_retires_pending_fetch_connections(
     _options: sqlx::postgres::PgPoolOptions,
     options: sqlx::postgres::PgConnectOptions,
 ) {
-    let db = test_support::TestDatabase::provision(options).await;
+    let db = hypgm_test_support::TestDatabase::provision(options).await;
     db.migrate().await;
     let producer = PgPool::connect(&db.tasks_url).await.unwrap();
     let admin = PgPool::connect(&db.admin_url).await.unwrap();
@@ -215,7 +215,7 @@ async fn shutdown_retires_pending_fetch_connections(
             let mut barrier =
                 super::begin_barrier::BeginBarrier::start(options.get_host(), options.get_port())
                     .await;
-            let lifecycle = tasks::worker::Lifecycle::new(
+            let lifecycle = hypgm_ext_tasks::worker::Lifecycle::new(
                 "shutdown-fetch",
                 sqlx::postgres::PgPoolOptions::new().max_connections(1),
                 options
@@ -348,7 +348,7 @@ async fn shutdown_drains_acknowledgments_and_recovers_forced_claims(
 ) {
     use std::sync::Arc;
     use tokio::sync::Notify;
-    let db = test_support::TestDatabase::provision(options).await;
+    let db = hypgm_test_support::TestDatabase::provision(options).await;
     db.migrate().await;
     let producer = PgPool::connect(&db.tasks_url).await.unwrap();
     let config = WorkerConfig {
@@ -364,7 +364,7 @@ async fn shutdown_drains_acknowledgments_and_recovers_forced_claims(
         });
         let id = task.task_id().unwrap().clone();
         queue.storage().push_task(task).await.unwrap();
-        let lifecycle = tasks::worker::Lifecycle::new(
+        let lifecycle = hypgm_ext_tasks::worker::Lifecycle::new(
             mode,
             sqlx::postgres::PgPoolOptions::new().max_connections(2),
             db.tasks_url.parse().unwrap(),
@@ -433,7 +433,7 @@ async fn shutdown_drains_acknowledgments_and_recovers_forced_claims(
             );
         } else {
             assert_ne!(persisted.status(), Status::Done);
-            let replacement = tasks::worker::Lifecycle::new(
+            let replacement = hypgm_ext_tasks::worker::Lifecycle::new(
                 &format!("{mode}-replacement"),
                 sqlx::postgres::PgPoolOptions::new().max_connections(2),
                 db.tasks_url.parse().unwrap(),
@@ -464,7 +464,7 @@ async fn shutdown_requeues_committed_buffered_claims(
 ) {
     use std::{future::poll_fn, sync::Arc};
     use tokio::sync::Notify;
-    let db = test_support::TestDatabase::provision(options).await;
+    let db = hypgm_test_support::TestDatabase::provision(options).await;
     db.migrate().await;
     let producer = PgPool::connect(&db.tasks_url).await.unwrap();
     let config = WorkerConfig {
@@ -478,7 +478,7 @@ async fn shutdown_requeues_committed_buffered_claims(
         ids.push(task.task_id().unwrap().clone());
         queue.storage().push_task(task).await.unwrap();
     }
-    let lifecycle = tasks::worker::Lifecycle::new(
+    let lifecycle = hypgm_ext_tasks::worker::Lifecycle::new(
         "buffered",
         sqlx::postgres::PgPoolOptions::new().max_connections(1),
         db.tasks_url.parse().unwrap(),
@@ -562,7 +562,7 @@ async fn unpolled_and_error_workers_retire_the_pool_before_drop() {
         }
     }
     for poll in [false, true] {
-        let lifecycle = tasks::worker::Lifecycle::new(
+        let lifecycle = hypgm_ext_tasks::worker::Lifecycle::new(
             "drop-order",
             sqlx::postgres::PgPoolOptions::new(),
             "postgres://unused:unused@localhost/unused".parse().unwrap(),
@@ -590,13 +590,13 @@ async fn stopped_backend_discards_cancelled_begin_before_pool_closure(
     options: sqlx::postgres::PgConnectOptions,
 ) {
     use std::future::poll_fn;
-    let db = test_support::TestDatabase::provision(options).await;
+    let db = hypgm_test_support::TestDatabase::provision(options).await;
     db.migrate().await;
     let admin = PgPool::connect(&db.admin_url).await.unwrap();
     let options: sqlx::postgres::PgConnectOptions = db.tasks_url.parse().unwrap();
     let mut barrier =
         super::begin_barrier::BeginBarrier::start(options.get_host(), options.get_port()).await;
-    let lifecycle = tasks::worker::Lifecycle::new(
+    let lifecycle = hypgm_ext_tasks::worker::Lifecycle::new(
         "return-during-drain",
         sqlx::postgres::PgPoolOptions::new().max_connections(1),
         options
@@ -661,7 +661,7 @@ async fn stopped_backend_discards_cancelled_begin_before_pool_closure(
 #[tokio::test]
 async fn overflowing_shutdown_deadline_returns_config_error_and_retires_pool() {
     for signal_ready in [false, true] {
-        let lifecycle = tasks::worker::Lifecycle::new(
+        let lifecycle = hypgm_ext_tasks::worker::Lifecycle::new(
             "deadline-overflow",
             sqlx::postgres::PgPoolOptions::new(),
             "postgres://unused:unused@localhost/unused".parse().unwrap(),

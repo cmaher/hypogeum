@@ -2,7 +2,7 @@
 mod apalis;
 pub mod infra;
 mod verify;
-use errors::MigrationError;
+use hypgm_errors::MigrationError;
 use sea_orm_migration::MigratorTrait;
 use sqlx::{Connection, PgConnection, Row, postgres::PgConnectOptions};
 use std::str::FromStr;

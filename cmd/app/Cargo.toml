@@ -9,13 +9,13 @@ name = "app"
 path = "src/main.rs"
 
 [dependencies]
-app = { path = "../../crates/domain/app" }
-hello-world = { path = "../../crates/domain/hello-world" }
+hypgm-dmn-app = { path = "../../crates/domain/app" }
+hypgm-dmn-hello-world = { path = "../../crates/domain/hello-world" }
 axum = { version = "0.8", features = ["http2"] }
 tokio.workspace = true
 anyhow = "1"
-env-config = { path = "../../crates/env-config" }
-logging = { path = "../../crates/logging" }
+hypgm-env-config = { path = "../../crates/core/env-config" }
+hypgm-logging = { path = "../../crates/core/logging" }
 serde.workspace = true
 tracing = "0.1"
 

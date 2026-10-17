@@ -8,7 +8,7 @@ use std::{
     process::{Child, Command},
     time::Duration,
 };
-use tasks::{Queue, WorkerConfig, board::Board};
+use hypgm_ext_tasks::{Queue, WorkerConfig, board::Board};
 use tower::ServiceExt;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -77,7 +77,7 @@ async fn fixture_worker_process() {
     };
     let pool = pool("TASKS_FIXTURE_DATABASE_URL").await;
     let queue = Queue::<Effect>::new(pool.clone(), "fixture-recovery", config()).unwrap();
-    let lifecycle = tasks::worker::Lifecycle::new(
+    let lifecycle = hypgm_ext_tasks::worker::Lifecycle::new(
         &format!("fixture-process-{}", std::process::id()),
         sqlx::postgres::PgPoolOptions::new().max_connections(2),
         std::env::var("TASKS_FIXTURE_DATABASE_URL")
@@ -123,7 +123,7 @@ async fn atomicity(pool: &PgPool, admin: &PgPool, url: &str) {
         });
         let id = task.task_id().unwrap().clone();
         let compact = task.try_map_args(|args| serde_json::to_vec(&args)).unwrap();
-        tasks::apalis_postgres::queries::push_tasks(&mut *tx, "fixture-atomic", vec![compact])
+        hypgm_ext_tasks::apalis_postgres::queries::push_tasks(&mut *tx, "fixture-atomic", vec![compact])
             .await
             .unwrap();
         match outcome {
@@ -192,7 +192,7 @@ async fn recovery_acceptance(
     _options: sqlx::postgres::PgPoolOptions,
     options: sqlx::postgres::PgConnectOptions,
 ) {
-    let db = test_support::TestDatabase::provision(options).await;
+    let db = hypgm_test_support::TestDatabase::provision(options).await;
     db.migrate().await;
     let pool = PgPool::connect(&db.tasks_url).await.unwrap();
     let admin = PgPool::connect(&db.admin_url).await.unwrap();

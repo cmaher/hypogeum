@@ -9,15 +9,15 @@ name = "hypogeum-db"
 path = "src/main.rs"
 
 [dependencies]
-hypogeum-db = { path = "../../crates/db" }
-env-config = { path = "../../crates/env-config" }
+hypgm-ext-db = { path = "../../crates/ext/rdbms/db" }
+hypgm-env-config = { path = "../../crates/core/env-config" }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
 sqlx = { workspace = true, features = ["macros"] }
-test-support = { path = "../../crates/test-support" }
+hypgm-test-support = { path = "../../crates/core/test-support" }
 
 [lints]
 workspace = true

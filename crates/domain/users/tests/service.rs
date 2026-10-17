@@ -1,7 +1,7 @@
 use async_trait::async_trait;
-use errors::{RepoError, ServiceError};
+use hypgm_errors::{RepoError, ServiceError};
 use std::sync::{Arc, Mutex};
-use users::{
+use hypgm_dmn_users::{
     models::{PageRequest, User, UserPage},
     repo::UserRepo,
     service::{DefaultUserService, UserService},

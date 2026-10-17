@@ -1,15 +1,15 @@
 [package]
-name = "hello-world"
+name = "hypgm-dmn-hello-world"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-errors = { path = "../../errors" }
+hypgm-errors = { path = "../../core/errors" }
 async-trait.workspace = true
 serde.workspace = true
 axum = { version = "0.8", default-features = false, features = ["tokio", "json"] }
-http-support = { path = "../../http-support" }
+hypgm-http = { path = "../../core/http" }
 
 [dev-dependencies]
 tokio.workspace = true

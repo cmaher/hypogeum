@@ -3,11 +3,11 @@ use axum::http::{Request, StatusCode, header};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Extension, Router};
-use errors::ServiceError;
-use http_support::{
+use hypgm_errors::ServiceError;
+use hypgm_http::{
     AppJson, HealthCheck, HttpError, REQUEST_ID_HEADER, RequestId, not_found_handler,
 };
-use logging::{LogFormat, create_test_subscriber};
+use hypgm_logging::{LogFormat, create_test_subscriber};
 use tower::ServiceExt;
 use tracing::Instrument;
 
@@ -58,7 +58,7 @@ fn create_test_app() -> Router {
             }),
         )
         .fallback(not_found_handler)
-        .layer(http_support::trace_layer())
+        .layer(hypgm_http::trace_layer())
 }
 
 #[tokio::test]
@@ -68,7 +68,7 @@ async fn test_tracing_preserves_nested_route_templates() {
     let routes = Router::new().route("/widgets/{id}", get(|| async { "ok" }));
     let app = Router::new()
         .nest("/api", routes)
-        .layer(http_support::trace_layer());
+        .layer(hypgm_http::trace_layer());
     let request = Request::builder()
         .uri("/api/widgets/private-id?token=private-query")
         .body(Body::empty())
@@ -92,7 +92,7 @@ async fn test_unmatched_route_never_uses_raw_uri_as_template() {
     let _guard = tracing::subscriber::set_default(subscriber);
     let app = Router::new()
         .fallback(not_found_handler)
-        .layer(http_support::trace_layer());
+        .layer(hypgm_http::trace_layer());
     let request = Request::builder()
         .uri("/api/hello")
         .body(Body::empty())
@@ -117,7 +117,7 @@ async fn test_health_response_marker_controls_success_logging_on_any_route() {
             "/probe-failed",
             get(|| async { (Extension(HealthCheck), HttpError::internal_error()) }),
         )
-        .layer(http_support::trace_layer());
+        .layer(hypgm_http::trace_layer());
 
     for (path, status) in [
         ("/probe", StatusCode::OK),
@@ -333,12 +333,12 @@ async fn test_context_inheritance_in_service_and_spawned_task() {
 
 #[tokio::test]
 async fn test_trace_layer_installation_and_execution() {
-    use http_support::TraceLayer;
+    use hypgm_http::TraceLayer;
 
     // Verify both trace_layer() and TraceLayer::new() are installable and functional
     let app1 = Router::new()
         .route("/healthz", get(|| async { "ok" }))
-        .layer(http_support::trace_layer());
+        .layer(hypgm_http::trace_layer());
 
     let req1 = Request::builder()
         .method("GET")
@@ -375,7 +375,7 @@ async fn test_trace_layer_preserves_concurrency_limiter_readiness() {
     let inner = tower::service_fn(|_: Request<Body>| async {
         Ok::<_, Infallible>(StatusCode::OK.into_response())
     });
-    let mut service = http_support::trace_layer().layer(ConcurrencyLimit::new(inner, 1));
+    let mut service = hypgm_http::trace_layer().layer(ConcurrencyLimit::new(inner, 1));
 
     for _ in 0..2 {
         let ready = tokio::time::timeout(Duration::from_secs(1), service.ready())

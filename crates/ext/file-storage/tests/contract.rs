@@ -2,8 +2,8 @@
 //! Backend-neutral cases: add adapters by constructing an isolated client and
 //! passing it to these functions. No filesystem assumptions inside the cases.
 use bytes::Bytes;
-use file_storage::filesystem::{FilesystemConfig, FilesystemStorage};
-use file_storage::{ByteStream, ExpectedIntegrity, FileStorage, ObjectRef, StorageError};
+use hypgm_ext_file_storage::filesystem::{FilesystemConfig, FilesystemStorage};
+use hypgm_ext_file_storage::{ByteStream, ExpectedIntegrity, FileStorage, ObjectRef, StorageError};
 use futures_util::{StreamExt, stream};
 use sha2::{Digest, Sha256};
 use std::sync::{
@@ -192,7 +192,7 @@ impl FileStorage for FragmentedReads {
         &self,
         input: ByteStream,
         expected: ExpectedIntegrity,
-    ) -> Result<file_storage::StoredObject, StorageError> {
+    ) -> Result<hypgm_ext_file_storage::StoredObject, StorageError> {
         self.0.write(input, expected).await
     }
     async fn read(
@@ -214,7 +214,7 @@ impl FileStorage for FragmentedReads {
     async fn inspect(
         &self,
         reference: &ObjectRef,
-    ) -> Result<file_storage::ObjectInfo, StorageError> {
+    ) -> Result<hypgm_ext_file_storage::ObjectInfo, StorageError> {
         self.0.inspect(reference).await
     }
     async fn delete(&self, reference: &ObjectRef) -> Result<(), StorageError> {

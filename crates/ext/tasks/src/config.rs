@@ -1,4 +1,4 @@
-use errors::TasksError;
+use hypgm_errors::TasksError;
 use std::time::Duration;
 
 /// Explicit infrastructure policy supplied by the composition root.

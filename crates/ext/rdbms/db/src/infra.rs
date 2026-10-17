@@ -1,5 +1,5 @@
 use crate::Result;
-use errors::MigrationError;
+use hypgm_errors::MigrationError;
 use sqlx::{Executor, PgConnection};
 
 pub async fn apply_contracts(conn: &mut PgConnection) -> Result<()> {

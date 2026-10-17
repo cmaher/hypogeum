@@ -1,6 +1,6 @@
-use app::router;
-use hello_world::service::{DefaultHelloWorldService, HelloWorldService};
-use logging::{LogFormat, create_test_dispatch};
+use hypgm_dmn_app::router;
+use hypgm_dmn_hello_world::service::{DefaultHelloWorldService, HelloWorldService};
+use hypgm_logging::{LogFormat, create_test_dispatch};
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;

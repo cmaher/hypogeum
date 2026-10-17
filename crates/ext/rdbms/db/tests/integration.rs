@@ -1,6 +1,6 @@
 #[test]
 fn integration_suite() {
-    test_support::run_suite();
+    hypgm_test_support::run_suite();
 }
 
 #[sqlx::test(migrations = false)]
@@ -9,7 +9,7 @@ async fn repeated_migrations_do_not_rewrite_objects_and_corrupt_history_is_rejec
     _pool: sqlx::postgres::PgPoolOptions,
     options: sqlx::postgres::PgConnectOptions,
 ) {
-    let db = test_support::TestDatabase::provision(options).await;
+    let db = hypgm_test_support::TestDatabase::provision(options).await;
     db.migrate().await;
     let admin = sqlx::PgPool::connect(&db.admin_url).await.unwrap();
     let versions = "SELECT xmin::text FROM pg_catalog.pg_proc WHERE oid IN ('hypogeum.schema_version()'::regprocedure,'apalis.schema_version()'::regprocedure) ORDER BY oid";
@@ -32,7 +32,7 @@ async fn repeated_migrations_do_not_rewrite_objects_and_corrupt_history_is_rejec
         .execute(&admin)
         .await
         .unwrap();
-    assert!(hypogeum_db::migrate(&db.migration_url).await.is_err());
-    assert!(hypogeum_db::verify(&db.migration_url).await.is_err());
+    assert!(hypgm_ext_db::migrate(&db.migration_url).await.is_err());
+    assert!(hypgm_ext_db::verify(&db.migration_url).await.is_err());
     admin.close().await;
 }

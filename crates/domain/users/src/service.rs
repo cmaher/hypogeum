@@ -3,7 +3,7 @@ use crate::{
     repo::UserRepo,
 };
 use async_trait::async_trait;
-use errors::ServiceError;
+use hypgm_errors::ServiceError;
 use std::sync::Arc;
 use uuid::Uuid;
 

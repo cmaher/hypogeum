@@ -3,8 +3,8 @@ use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode, header};
 use axum::response::IntoResponse;
 use axum::routing::post;
-use errors::{RepoError, ServiceError};
-use http_support::{
+use hypgm_errors::{RepoError, ServiceError};
+use hypgm_http::{
     AppJson, ErrorClassification, HttpError, MAX_BODY_BYTES, render_method_not_allowed,
 };
 use tower::ServiceExt;

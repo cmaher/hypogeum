@@ -4,8 +4,8 @@ use crate::{
     wire,
 };
 use async_trait::async_trait;
-use errors::{RepoError, ServiceError};
-use rpc::users::{self as pb, users_client::UsersClient};
+use hypgm_errors::{RepoError, ServiceError};
+use hypgm_rpc::users::{self as pb, users_client::UsersClient};
 use tonic::{Code, Status, transport::Channel};
 use uuid::Uuid;
 

@@ -1,12 +1,12 @@
 [package]
-name = "users"
+name = "hypgm-dmn-users"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-errors = { path = "../../errors" }
-postgres = { path = "../../postgres" }
+hypgm-errors = { path = "../../core/errors" }
+hypgm-ext-postgres = { path = "../../ext/rdbms/postgres" }
 sqlx = { workspace = true, features = ["macros"] }
 sea-orm.workspace = true
 sea-orm-migration.workspace = true
@@ -15,16 +15,16 @@ chrono.workspace = true
 serde.workspace = true
 async-trait.workspace = true
 tokio.workspace = true
-rpc = { path = "../../rpc" }
+hypgm-rpc = { path = "../../core/rpc" }
 tonic.workspace = true
 prost-types.workspace = true
 anyhow = "1"
-env-config = { path = "../../env-config" }
+hypgm-env-config = { path = "../../core/env-config" }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
-hypogeum-db = { path = "../../db" }
-test-support = { path = "../../test-support" }
+hypgm-ext-db = { path = "../../ext/rdbms/db" }
+hypgm-test-support = { path = "../../core/test-support" }
 tokio-stream = { version = "0.1", features = ["net"] }
 
 [lints]

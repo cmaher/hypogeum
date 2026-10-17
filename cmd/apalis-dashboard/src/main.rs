@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
-use env_config::EnvSource;
+use hypgm_env_config::EnvSource;
 use serde::Deserialize;
 use std::{net::SocketAddr, time::Duration};
-use tasks::board::Board;
+use hypgm_ext_tasks::board::Board;
 
 fn default_board_bind() -> SocketAddr {
     "127.0.0.1:8082"
@@ -16,7 +16,7 @@ fn default_shutdown_seconds() -> u64 {
 
 #[derive(Debug, Deserialize)]
 struct Config {
-    database_url: env_config::Secret,
+    database_url: hypgm_env_config::Secret,
     #[serde(default = "default_board_bind")]
     board_bind: SocketAddr,
     #[serde(default = "default_shutdown_seconds")]
@@ -42,7 +42,7 @@ async fn main() -> Result<()> {
     let pool = sqlx::PgPool::connect(config.database_url.expose())
         .await
         .map_err(|_| anyhow::anyhow!("Tasks connection failed (URL redacted)"))?;
-    tasks::check_ready(&pool).await?;
+    hypgm_ext_tasks::check_ready(&pool).await?;
     let listener = tokio::net::TcpListener::bind(config.board_bind)
         .await
         .context("Cannot bind Board")?;
@@ -81,7 +81,7 @@ async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use env_config::EnvSource;
+    use hypgm_env_config::EnvSource;
 
     #[test]
     fn test_config_defaults() {

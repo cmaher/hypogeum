@@ -1,5 +1,5 @@
 #![cfg(feature = "tonic")]
-use errors::{RepoError, ServiceError};
+use hypgm_errors::{RepoError, ServiceError};
 
 #[test]
 fn transport_reports_input_and_missing_records_without_exposing_internals() {

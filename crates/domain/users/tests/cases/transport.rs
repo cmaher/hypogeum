@@ -1,9 +1,9 @@
-use errors::{RepoError, ServiceError};
-use rpc::users::{GetUserRequest, ListUsersRequest, users_client::UsersClient};
+use hypgm_errors::{RepoError, ServiceError};
+use hypgm_rpc::users::{GetUserRequest, ListUsersRequest, users_client::UsersClient};
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use std::sync::Arc;
-use test_support::TestDatabase;
-use users::{
+use hypgm_test_support::TestDatabase;
+use hypgm_dmn_users::{
     client::GrpcUserClient,
     models::PageRequest,
     repo::PgUserRepo,

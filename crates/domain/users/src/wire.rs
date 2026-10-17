@@ -1,7 +1,7 @@
 use crate::models::User;
 use chrono::{DateTime, Utc};
-use errors::{RepoError, ServiceError};
-use rpc::users as pb;
+use hypgm_errors::{RepoError, ServiceError};
+use hypgm_rpc::users as pb;
 use uuid::Uuid;
 
 pub(crate) fn id(value: &str) -> Result<Uuid, RepoError> {

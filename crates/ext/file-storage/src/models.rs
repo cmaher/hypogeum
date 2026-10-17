@@ -1,5 +1,5 @@
 //! Backend-neutral data. Only the matching adapter interprets an object's key.
-use errors::StorageError;
+use hypgm_errors::StorageError;
 use serde::{Deserialize, Serialize};
 
 /// A complete byte object. Preserve the store alias when moving/restoring storage.
