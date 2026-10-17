@@ -37,7 +37,7 @@ follow the README's project customization workflow.
 - Repositories own application SQL. Build typed entity queries with SeaORM,
   integrating with SQLx pool ownership via `SqlxPostgresConnector`. Keep tables schema-qualified.
 - Define shared errors in `crates/errors`; use `anyhow` at binary boundaries.
-  Database and internal details must not enter gRPC responses.
+  Database and internal details must not enter HTTP or gRPC responses.
 - Binaries load environment once via `env-config` (`EnvSource::load`), deserialize
   per-binary `Config` with `envy`, use `Secret` for credentials, and never mutate
   process env. Libraries receive typed values, pools and dependencies explicitly.

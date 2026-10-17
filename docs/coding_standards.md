@@ -5,8 +5,8 @@ flow from binary composition roots through transport adapters and services to
 repositories. Services can delegate directly to repositories; add managers only
 when business behavior needs a distinct component.
 
-Executable composition roots for the public web server, Apalis dashboard and
-`hypogeum-db` CLI belong in `cmd/web-server`, `cmd/apalis-dashboard` and `cmd/db`.
+Executable composition roots for the public app server, Apalis dashboard and
+`hypogeum-db` CLI belong in `cmd/app`, `cmd/apalis-dashboard` and `cmd/db`.
 Reusable infrastructure belongs in `crates/`; domain crates belong in `crates/domain/`.
 The generic example is `crates/domain/users/`. See the README's project customization
 section before renaming a fresh project and its database schema.
@@ -19,7 +19,10 @@ section before renaming a fresh project and its database schema.
 - **Service:** a trait exposing application behavior independently of transport.
   Implementations validate inputs and coordinate injected dependencies.
 - **Manager:** optional business logic component with injected trait dependencies.
-- **Server:** gRPC adapter translating messages, plain objects and typed errors.
+- **Controller:** thin Axum adapter mapping HTTP requests and responses, extracting
+  `AppJson`, invoking services, and returning `Result<AppJson<T>, HttpError>`.
+- **Server:** gRPC adapter translating messages, plain objects and typed errors for
+  internal services.
 - **Client:** remote implementation behind a trait. The User client implements the
   same plain-object service contract, so callers can inject local or remote services.
 - **Binary:** loads config, constructs pools and dependencies, checks readiness,
@@ -29,38 +32,36 @@ Use public constructors and keep internal dependency fields private. Unit tests
 use trait implementations without live infrastructure; integration tests exercise
 real adapters and PostgreSQL through the User repository and transport.
 
-## Public HTTP and RPC composition
+## Public HTTP and internal RPC composition
 
 `crates/domain/hello-world` is the database-independent public example. Its
-`HelloWorldService` accepts plain arguments; its Tonic adapter injects
-`Arc<dyn HelloWorldService>` and uses shared typed status mappings. Generated
-Tonic clients suffice for this example. No repository is needed.
+`HelloWorldService` accepts plain arguments; its thin Axum controller injects
+`Arc<dyn HelloWorldService>`, extracts `AppJson`, and uses shared typed error
+mappings via `HttpError`. No repository is needed.
 
-`crates/web-server` merges Axum health routes with Tonic
-`Routes::into_axum_router()` and wraps each explicitly registered public service
-in `tonic_web::GrpcWebLayer`. Axum HTTP/2 support is enabled so HTTP/1.1 health,
-native HTTP/2 gRPC and binary/text gRPC-Web share a listener. Keep protobuf RPC
-semantics and use upstream routing; no custom protocol dispatcher is needed.
+`crates/domain/app` composes public HTTP routes using native Axum nesting:
+`GET /healthz` for health checks, and `/api` nesting domain controllers (such as
+`/hello` -> controller `POST /`). It applies a strict 16KiB body limit
+(`DefaultBodyLimit`), request tracing middleware (`trace_middleware`), and JSON
+fallback handlers for 404 and 405. Domains own no global mount prefixes; the app
+router owns all mount points.
 
-Public service registration is an explicit boundary: User CRUD and the task
-Board remain on their own listeners. When adding a public service, register its
-wrapped adapter in the public Tonic routes before applying route-scoped CORS,
-and test its native/browser behavior. CORS allows any origin without credentials
-for this unauthenticated example; it applies only to registered public RPC routes,
-never ordinary health routes or the unknown-service fallback.
+Internal service boundaries remain isolated: User CRUD (`crates/domain/users`)
+retains internal Tonic gRPC on its private listener (`127.0.0.1:50051`), and the
+task Board remains on `127.0.0.1:8082`. No CORS permission headers are emitted
+by the public app listener by default.
 
-The executable composition root lives in `cmd/web-server/src/main.rs`; the
-reusable router stays in `crates/web-server`. Only main loads `EnvSource` once
-and deserializes `HYPOGEUM_WEB_` configuration and `HYPOGEUM_` logging.
-`HYPOGEUM_WEB_BIND` defaults to `127.0.0.1:8080`, using the existing `HYPOGEUM_ENV_FILE` semantics. Library constructors receive dependencies
-explicitly. Shutdown drains active requests on Ctrl-C/SIGTERM. Deployment owns
-TLS/ALPN and ingress HTTP/2 forwarding. No frontend or JSON transcoding is needed.
+The executable composition root lives in `cmd/app/src/main.rs`. Main loads
+`EnvSource` once, initializes structured logging (`crates/logging`), and
+deserializes `HYPOGEUM_APP_` and `HYPOGEUM_LOG` configuration. `HYPOGEUM_APP_BIND`
+defaults to `127.0.0.1:8080`, using standard `HYPOGEUM_ENV_FILE` semantics.
+Shutdown drains active requests on Ctrl-C/SIGTERM. See [docs/app.md](app.md)
+for full architectural details.
 
-Loopback tests use the same socket for HTTP, native gRPC and both gRPC-Web
-encodings, decoding protobuf replies and embedded status trailers. Immediate
-errors may use trailers-only status headers; check those too. Text chunks may
-be independently base64 padded. Test validation, CORS boundaries, unknown methods,
-absence of private services, and graceful shutdown without database infrastructure.
+Loopback tests verify the public HTTP contract: health probes (GET and HEAD),
+canonical routing and trailing-slash 404s, JSON error payloads, 16KiB limits on
+both fixed-length and chunked transfers, method enforcement with Allow headers,
+request ID propagation, structured log timing, and graceful shutdown draining.
 
 ## SQL and migrations
 
@@ -104,6 +105,10 @@ Shared `thiserror` types live in `crates/errors`. Map validation to InvalidArgum
 missing entities to NotFound and internal/database failures to redacted Internal
 responses. `ServiceError::Remote` represents downstream gRPC client failures;
 `RepoError::Database` covers PostgreSQL regardless of its location.
+For HTTP controllers, `crates/http-support` automatically maps these domain
+errors via `HttpError` into safe JSON error responses (`validation_error`,
+`not_found`, `internal_error`). Database and internal details are never leaked
+to HTTP clients.
 
 Only binary composition roots load environment configuration. Binaries load environment
 once via `env-config` (`EnvSource::load`), deserialize a per-binary `Config` with `envy`,
