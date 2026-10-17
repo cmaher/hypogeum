@@ -1,0 +1,58 @@
+[config]
+default_to_workspace = false
+
+[tasks.fmt]
+command = "cargo"
+args = ["fmt", "--all", "--", "--check"]
+
+[tasks.fmt-fix]
+command = "cargo"
+args = ["fmt", "--all"]
+
+[tasks.clippy]
+command = "cargo"
+args = ["clippy", "--locked", "--workspace", "--all-targets", "--all-features", "--", "-D", "warnings"]
+
+[tasks.build]
+command = "cargo"
+args = ["build", "--locked", "--workspace", "--all-features"]
+
+[tasks.test]
+description = "All tests; Docker must be running for self-contained integration suites"
+command = "cargo"
+args = ["test", "--locked", "--workspace", "--all-features"]
+
+[tasks.ci]
+dependencies = ["fmt", "clippy", "build", "test"]
+
+[tasks.ci-fmt-fix]
+dependencies = ["fmt-fix", "clippy", "build", "test"]
+
+[tasks.db-up]
+script_runner = "@shell"
+script = ['set --; if [ -n "${EXEMPLUM_ENV_FILE+x}" ]; then [ -z "$EXEMPLUM_ENV_FILE" ] || set -- --env-file "$EXEMPLUM_ENV_FILE"; elif [ -f env/local.env ]; then set -- --env-file env/local.env; fi; docker compose "$@" up --detach --wait']
+
+[tasks.db-down]
+script_runner = "@shell"
+script = ['set --; if [ -n "${EXEMPLUM_ENV_FILE+x}" ]; then [ -z "$EXEMPLUM_ENV_FILE" ] || set -- --env-file "$EXEMPLUM_ENV_FILE"; elif [ -f env/local.env ]; then set -- --env-file env/local.env; fi; docker compose "$@" down']
+
+[tasks.db-status]
+script_runner = "@shell"
+script = ['set --; if [ -n "${EXEMPLUM_ENV_FILE+x}" ]; then [ -z "$EXEMPLUM_ENV_FILE" ] || set -- --env-file "$EXEMPLUM_ENV_FILE"; elif [ -f env/local.env ]; then set -- --env-file env/local.env; fi; docker compose "$@" ps']
+
+[tasks.db-provision]
+script_runner = "@shell"
+script = ['set --; if [ -n "${EXEMPLUM_ENV_FILE+x}" ]; then [ -z "$EXEMPLUM_ENV_FILE" ] || set -- --env-file "$EXEMPLUM_ENV_FILE"; elif [ -f env/local.env ]; then set -- --env-file env/local.env; fi; docker compose "$@" exec -T postgres psql -X -U admin -d exemplum -f /provision/provision.sql']
+
+[tasks.db-migrate]
+command = "cargo"
+args = ["run", "--locked", "-p", "exemplum-db-cli", "--bin", "exemplum-db", "--", "migrate"]
+
+[tasks.db-verify]
+command = "cargo"
+args = ["run", "--locked", "-p", "exemplum-db-cli", "--bin", "exemplum-db", "--", "verify"]
+
+[tasks.app]
+description = "Run the public HTTP application without a database"
+command = "cargo"
+args = ["run", "--locked", "-p", "exemplum-app-cli", "--bin", "app"]
