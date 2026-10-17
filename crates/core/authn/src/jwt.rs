@@ -42,8 +42,8 @@ impl From<Vec<String>> for Audience {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Claims {
-    pub sub: Uuid,
     pub auth_id: Uuid,
+    pub sub: Uuid,
     pub exp: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub iss: Option<String>,
@@ -52,10 +52,10 @@ pub struct Claims {
 }
 
 impl Claims {
-    pub fn new(sub: Uuid, auth_id: Uuid, exp: usize) -> Self {
+    pub fn new(auth_id: Uuid, sub: Uuid, exp: usize) -> Self {
         Self {
-            sub,
             auth_id,
+            sub,
             exp,
             iss: None,
             aud: None,
@@ -63,15 +63,15 @@ impl Claims {
     }
 
     pub fn with_iss_aud<A: Into<Audience>>(
-        sub: Uuid,
         auth_id: Uuid,
+        sub: Uuid,
         exp: usize,
         iss: Option<String>,
         aud: Option<A>,
     ) -> Self {
         Self {
-            sub,
             auth_id,
+            sub,
             exp,
             iss,
             aud: aud.map(Into::into),
@@ -83,7 +83,7 @@ impl Claims {
 pub struct JwtConfig {
     pub algorithm: Algorithm,
     pub issuer: Option<String>,
-    pub audience: Option<String>,
+    pub audience: Option<Audience>,
     pub leeway_seconds: u64,
 }
 
@@ -113,7 +113,10 @@ impl JwtValidator {
             validation.set_issuer(&[iss]);
         }
         if let Some(ref aud) = config.audience {
-            validation.set_audience(&[aud]);
+            match aud {
+                Audience::Single(s) => validation.set_audience(&[s]),
+                Audience::Multiple(list) => validation.set_audience(list),
+            }
         } else {
             validation.validate_aud = false;
         }
@@ -126,16 +129,25 @@ impl JwtValidator {
     }
 
     pub fn from_hs256_secret(secret: &[u8]) -> Self {
-        Self::new(DecodingKey::from_secret(secret), JwtConfig::default())
+        Self::from_hs256_secret_with_config(secret, JwtConfig::default())
+    }
+
+    pub fn from_hs256_secret_with_config(secret: &[u8], mut config: JwtConfig) -> Self {
+        config.algorithm = Algorithm::HS256;
+        Self::new(DecodingKey::from_secret(secret), config)
     }
 
     pub fn from_rs256_pem(pem: &[u8]) -> Result<Self, AuthError> {
+        Self::from_rs256_pem_with_config(pem, JwtConfig::default())
+    }
+
+    pub fn from_rs256_pem_with_config(
+        pem: &[u8],
+        mut config: JwtConfig,
+    ) -> Result<Self, AuthError> {
         let key = DecodingKey::from_rsa_pem(pem)
             .map_err(|e| AuthError::Internal(format!("Invalid RSA public key: {e}")))?;
-        let config = JwtConfig {
-            algorithm: Algorithm::RS256,
-            ..Default::default()
-        };
+        config.algorithm = Algorithm::RS256;
         Ok(Self::new(key, config))
     }
 
@@ -144,11 +156,19 @@ impl JwtValidator {
     }
 
     pub fn decode_claims(&self, token: &str) -> Result<Claims, AuthError> {
-        let token = token
-            .strip_prefix("Bearer ")
-            .or_else(|| token.strip_prefix("bearer "))
-            .unwrap_or(token)
-            .trim();
+        let trimmed = token.trim();
+        let token =
+            if let Some((scheme, rest)) = trimmed.split_once(|c: char| c.is_ascii_whitespace()) {
+                if scheme.eq_ignore_ascii_case("bearer") {
+                    rest.trim()
+                } else {
+                    trimmed
+                }
+            } else if trimmed.eq_ignore_ascii_case("bearer") {
+                ""
+            } else {
+                trimmed
+            };
 
         if token.is_empty() {
             return Err(AuthError::MissingCredentials);

@@ -35,6 +35,12 @@ impl IntoResponse for AuthRejection {
             "message": info.message,
         });
         let mut response = (info.status, axum::Json(body)).into_response();
+        if info.status == axum::http::StatusCode::UNAUTHORIZED {
+            response.headers_mut().insert(
+                header::WWW_AUTHENTICATE,
+                header::HeaderValue::from_static("Bearer"),
+            );
+        }
         response.extensions_mut().insert(info);
         response.extensions_mut().insert(info.status);
         response
@@ -87,31 +93,23 @@ pub fn extract_principal_from_parts(parts: &Parts) -> Result<Option<Principal>, 
             .to_str()
             .map_err(|_| AuthError::InvalidCredentials)?;
 
-        if let Some(token) = auth_str
-            .strip_prefix("Bearer ")
-            .or_else(|| auth_str.strip_prefix("bearer "))
-        {
-            let token = token.trim();
-            if token.is_empty() {
-                return Err(AuthError::MissingCredentials);
+        let trimmed = auth_str.trim();
+        if let Some((scheme, rest)) = trimmed.split_once(|c: char| c.is_ascii_whitespace()) {
+            if scheme.eq_ignore_ascii_case("bearer") {
+                let token = rest.trim();
+
+                let principal = if let Some(validator) = parts.extensions.get::<JwtValidator>() {
+                    validator.verify_token(token)?
+                } else if let Some(validator) = parts.extensions.get::<Arc<JwtValidator>>() {
+                    validator.verify_token(token)?
+                } else {
+                    return Err(AuthError::InvalidCredentials);
+                };
+
+                return Ok(Some(principal));
             }
-
-            let validator = parts
-                .extensions
-                .get::<JwtValidator>()
-                .cloned()
-                .or_else(|| {
-                    parts
-                        .extensions
-                        .get::<Arc<JwtValidator>>()
-                        .map(|v| (**v).clone())
-                })
-                .ok_or_else(|| {
-                    AuthError::Internal("JwtValidator not found in request extensions".to_string())
-                })?;
-
-            let principal = validator.verify_token(token)?;
-            return Ok(Some(principal));
+        } else if trimmed.eq_ignore_ascii_case("bearer") {
+            return Err(AuthError::MissingCredentials);
         }
     }
 
@@ -141,7 +139,10 @@ where
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
         match extract_principal_from_parts(parts) {
-            Ok(Some(principal)) => Ok(RequireAuth(principal)),
+            Ok(Some(principal)) => {
+                parts.extensions.insert(principal.clone());
+                Ok(RequireAuth(principal))
+            }
             Ok(None) => Err(AuthRejection(AuthError::MissingCredentials)),
             Err(err) => Err(AuthRejection(err)),
         }
@@ -156,7 +157,11 @@ where
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
         match extract_principal_from_parts(parts) {
-            Ok(principal_opt) => Ok(OptionalAuth(principal_opt)),
+            Ok(Some(principal)) => {
+                parts.extensions.insert(principal.clone());
+                Ok(OptionalAuth(Some(principal)))
+            }
+            Ok(None) => Ok(OptionalAuth(None)),
             Err(err) => Err(AuthRejection(err)),
         }
     }

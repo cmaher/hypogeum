@@ -1,7 +1,7 @@
+use crate::error::AuthError;
 use crate::principal::Principal;
 use async_trait::async_trait;
 use axum_login::AuthUser;
-use std::convert::Infallible;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -20,19 +20,19 @@ impl AuthUser for Principal {
 /// Generic trait allowing consuming applications to resolve authentication identities into live Principals.
 #[async_trait]
 pub trait AuthBackend: Send + Sync + 'static {
-    async fn resolve_principal(&self, auth_id: Uuid) -> Option<Principal>;
+    async fn resolve_principal(&self, auth_id: Uuid) -> Result<Option<Principal>, AuthError>;
 }
 
 #[async_trait]
 impl AuthBackend for () {
-    async fn resolve_principal(&self, _auth_id: Uuid) -> Option<Principal> {
-        None
+    async fn resolve_principal(&self, _auth_id: Uuid) -> Result<Option<Principal>, AuthError> {
+        Ok(None)
     }
 }
 
 #[async_trait]
 impl AuthBackend for Arc<dyn AuthBackend> {
-    async fn resolve_principal(&self, auth_id: Uuid) -> Option<Principal> {
+    async fn resolve_principal(&self, auth_id: Uuid) -> Result<Option<Principal>, AuthError> {
         self.as_ref().resolve_principal(auth_id).await
     }
 }
@@ -79,7 +79,7 @@ impl std::fmt::Debug for PrincipalAuthBackend {
 impl axum_login::AuthnBackend for PrincipalAuthBackend {
     type User = Principal;
     type Credentials = ();
-    type Error = Infallible;
+    type Error = AuthError;
 
     async fn authenticate(
         &self,
@@ -92,7 +92,7 @@ impl axum_login::AuthnBackend for PrincipalAuthBackend {
         &self,
         user_id: &axum_login::UserId<Self>,
     ) -> Result<Option<Self::User>, Self::Error> {
-        Ok(self.backend.resolve_principal(*user_id).await)
+        self.backend.resolve_principal(*user_id).await
     }
 }
 
@@ -111,8 +111,8 @@ mod tests {
 
     #[async_trait]
     impl AuthBackend for MockAuthBackend {
-        async fn resolve_principal(&self, auth_id: Uuid) -> Option<Principal> {
-            self.principals.read().await.get(&auth_id).cloned()
+        async fn resolve_principal(&self, auth_id: Uuid) -> Result<Option<Principal>, AuthError> {
+            Ok(self.principals.read().await.get(&auth_id).cloned())
         }
     }
 
@@ -133,14 +133,14 @@ mod tests {
         let principal = Principal::new(auth_id, user_id, AuthMethod::Session);
 
         let backend = MockAuthBackend::default();
-        assert_eq!(backend.resolve_principal(auth_id).await, None);
+        assert_eq!(backend.resolve_principal(auth_id).await.unwrap(), None);
 
         backend
             .principals
             .write()
             .await
             .insert(auth_id, principal.clone());
-        let resolved = backend.resolve_principal(auth_id).await;
+        let resolved = backend.resolve_principal(auth_id).await.unwrap();
         assert_eq!(resolved, Some(principal.clone()));
 
         // Also test through PrincipalAuthBackend (axum_login::AuthnBackend)
