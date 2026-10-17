@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
 use hypgm_env_config::EnvSource;
+use hypgm_ext_tasks::board::Board;
 use serde::Deserialize;
 use std::{net::SocketAddr, time::Duration};
-use hypgm_ext_tasks::board::Board;
 
 fn default_board_bind() -> SocketAddr {
     "127.0.0.1:8082"

@@ -12,7 +12,11 @@ pub struct PublicErrorInfo {
 
 impl PublicErrorInfo {
     pub const fn new(status: StatusCode, code: &'static str, message: &'static str) -> Self {
-        Self { status, code, message }
+        Self {
+            status,
+            code,
+            message,
+        }
     }
 
     pub const NOT_FOUND: Self = Self {
@@ -70,39 +74,75 @@ impl PublicErrorInfo {
     };
 
     pub const fn invalid_request(message: &'static str) -> Self {
-        Self { status: StatusCode::BAD_REQUEST, code: "invalid_request", message }
+        Self {
+            status: StatusCode::BAD_REQUEST,
+            code: "invalid_request",
+            message,
+        }
     }
 
     pub const fn method_not_allowed(message: &'static str) -> Self {
-        Self { status: StatusCode::METHOD_NOT_ALLOWED, code: "method_not_allowed", message }
+        Self {
+            status: StatusCode::METHOD_NOT_ALLOWED,
+            code: "method_not_allowed",
+            message,
+        }
     }
 
     pub const fn payload_too_large(message: &'static str) -> Self {
-        Self { status: StatusCode::PAYLOAD_TOO_LARGE, code: "payload_too_large", message }
+        Self {
+            status: StatusCode::PAYLOAD_TOO_LARGE,
+            code: "payload_too_large",
+            message,
+        }
     }
 
     pub const fn unsupported_media_type(message: &'static str) -> Self {
-        Self { status: StatusCode::UNSUPPORTED_MEDIA_TYPE, code: "unsupported_media_type", message }
+        Self {
+            status: StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            code: "unsupported_media_type",
+            message,
+        }
     }
 
     pub const fn not_found(message: &'static str) -> Self {
-        Self { status: StatusCode::NOT_FOUND, code: "not_found", message }
+        Self {
+            status: StatusCode::NOT_FOUND,
+            code: "not_found",
+            message,
+        }
     }
 
     pub const fn bad_request(message: &'static str) -> Self {
-        Self { status: StatusCode::BAD_REQUEST, code: "bad_request", message }
+        Self {
+            status: StatusCode::BAD_REQUEST,
+            code: "bad_request",
+            message,
+        }
     }
 
     pub const fn validation_error(message: &'static str) -> Self {
-        Self { status: StatusCode::BAD_REQUEST, code: "validation_error", message }
+        Self {
+            status: StatusCode::BAD_REQUEST,
+            code: "validation_error",
+            message,
+        }
     }
 
     pub const fn conflict(message: &'static str) -> Self {
-        Self { status: StatusCode::CONFLICT, code: "conflict", message }
+        Self {
+            status: StatusCode::CONFLICT,
+            code: "conflict",
+            message,
+        }
     }
 
     pub const fn internal_error(message: &'static str) -> Self {
-        Self { status: StatusCode::INTERNAL_SERVER_ERROR, code: "internal_error", message }
+        Self {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            code: "internal_error",
+            message,
+        }
     }
 }
 
@@ -361,11 +401,9 @@ impl PublicError for StorageError {
             StorageError::IntegrityMismatch => {
                 tonic::Status::already_exists("Storage integrity mismatch")
             }
-            StorageError::SizeLimit { limit } => {
-                tonic::Status::resource_exhausted(format!(
-                    "Storage object exceeds maximum of {limit} bytes"
-                ))
-            }
+            StorageError::SizeLimit { limit } => tonic::Status::resource_exhausted(format!(
+                "Storage object exceeds maximum of {limit} bytes"
+            )),
             StorageError::PermissionDenied(_)
             | StorageError::Unsupported { .. }
             | StorageError::Io { .. }
@@ -392,10 +430,7 @@ mod tests {
             PublicErrorInfo::VALIDATION_ERROR.status,
             StatusCode::BAD_REQUEST
         );
-        assert_eq!(
-            PublicErrorInfo::VALIDATION_ERROR.code,
-            "validation_error"
-        );
+        assert_eq!(PublicErrorInfo::VALIDATION_ERROR.code, "validation_error");
 
         assert_eq!(PublicErrorInfo::CONFLICT.status, StatusCode::CONFLICT);
         assert_eq!(PublicErrorInfo::CONFLICT.code, "conflict");
@@ -425,10 +460,7 @@ mod tests {
             PublicErrorInfo::PAYLOAD_TOO_LARGE.status,
             StatusCode::PAYLOAD_TOO_LARGE
         );
-        assert_eq!(
-            PublicErrorInfo::PAYLOAD_TOO_LARGE.code,
-            "payload_too_large"
-        );
+        assert_eq!(PublicErrorInfo::PAYLOAD_TOO_LARGE.code, "payload_too_large");
 
         assert_eq!(
             PublicErrorInfo::UNSUPPORTED_MEDIA_TYPE.status,
@@ -458,7 +490,10 @@ mod tests {
         #[cfg(feature = "tonic")]
         {
             assert_eq!(not_found.to_tonic_status().code(), tonic::Code::NotFound);
-            assert_eq!(invalid.to_tonic_status().code(), tonic::Code::InvalidArgument);
+            assert_eq!(
+                invalid.to_tonic_status().code(),
+                tonic::Code::InvalidArgument
+            );
             let status = db_err.to_tonic_status();
             assert_eq!(status.code(), tonic::Code::Internal);
             assert!(!status.message().contains("secret credentials"));
@@ -471,7 +506,10 @@ mod tests {
         assert_eq!(not_found.public_error(), PublicErrorInfo::NOT_FOUND);
 
         let invalid_input = StorageError::InvalidInput("too short".into());
-        assert_eq!(invalid_input.public_error(), PublicErrorInfo::VALIDATION_ERROR);
+        assert_eq!(
+            invalid_input.public_error(),
+            PublicErrorInfo::VALIDATION_ERROR
+        );
 
         let invalid_ref = StorageError::InvalidReference("../escape".into());
         assert_eq!(invalid_ref.public_error(), PublicErrorInfo::BAD_REQUEST);
@@ -493,9 +531,18 @@ mod tests {
         #[cfg(feature = "tonic")]
         {
             assert_eq!(not_found.to_tonic_status().code(), tonic::Code::NotFound);
-            assert_eq!(invalid_input.to_tonic_status().code(), tonic::Code::InvalidArgument);
-            assert_eq!(conflict.to_tonic_status().code(), tonic::Code::AlreadyExists);
-            assert_eq!(limit.to_tonic_status().code(), tonic::Code::ResourceExhausted);
+            assert_eq!(
+                invalid_input.to_tonic_status().code(),
+                tonic::Code::InvalidArgument
+            );
+            assert_eq!(
+                conflict.to_tonic_status().code(),
+                tonic::Code::AlreadyExists
+            );
+            assert_eq!(
+                limit.to_tonic_status().code(),
+                tonic::Code::ResourceExhausted
+            );
             let status = io_err.to_tonic_status();
             assert_eq!(status.code(), tonic::Code::Internal);
             assert!(!status.message().contains("/etc/shadow"));

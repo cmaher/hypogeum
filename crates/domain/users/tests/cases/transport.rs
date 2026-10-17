@@ -1,7 +1,3 @@
-use hypgm_rpc::users::{GetUserRequest, ListUsersRequest, users_client::UsersClient};
-use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
-use std::sync::Arc;
-use hypgm_test_support::TestDatabase;
 use hypgm_dmn_users::{
     UserError,
     client::GrpcUserClient,
@@ -10,6 +6,10 @@ use hypgm_dmn_users::{
     server::GrpcUserServer,
     service::{DefaultUserService, UserService},
 };
+use hypgm_rpc::users::{GetUserRequest, ListUsersRequest, users_client::UsersClient};
+use hypgm_test_support::TestDatabase;
+use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
+use std::sync::Arc;
 use uuid::Uuid;
 
 #[sqlx::test(migrations = false)]

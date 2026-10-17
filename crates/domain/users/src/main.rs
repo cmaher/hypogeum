@@ -1,12 +1,12 @@
 use anyhow::{Context, Result};
-use hypgm_env_config::{EnvSource, LogConfig};
-use serde::Deserialize;
-use std::{net::SocketAddr, sync::Arc};
 use hypgm_dmn_users::{
     repo::{PgUserRepo, check_ready},
     server::GrpcUserServer,
     service::DefaultUserService,
 };
+use hypgm_env_config::{EnvSource, LogConfig};
+use serde::Deserialize;
+use std::{net::SocketAddr, sync::Arc};
 
 fn default_bind() -> SocketAddr {
     "127.0.0.1:50051"
@@ -31,8 +31,10 @@ async fn main() -> Result<()> {
         .with_env_filter(tracing_subscriber::EnvFilter::try_new(&log.log)?)
         .init();
 
-    let pool = postgres::create_pool(&postgres::PostgresConfig::new(config.database_url.expose()))
-        .map_err(|_| anyhow::anyhow!("Invalid database configuration"))?;
+    let pool = hypgm_ext_postgres::create_pool(&hypgm_ext_postgres::PostgresConfig::new(
+        config.database_url.expose(),
+    ))
+    .map_err(|_| anyhow::anyhow!("Invalid database configuration"))?;
 
     check_ready(&pool)
         .await

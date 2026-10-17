@@ -118,27 +118,28 @@ an empty ledger would make existing migrations appear unapplied.
 
 ## Workspace overview
 
-Reusable infrastructure lives in `crates/`. Domain crates live in `crates/domain/`,
+Reusable infrastructure lives in `crates/core/` (foundation) and `crates/ext/`
+(external drivers and integrations). Domain crates live in `crates/domain/`,
 starting with the generic User example in `crates/domain/users/`.
 
 | Crate | Responsibility |
 | --- | --- |
-| `users` | Plain User objects, repository, service, gRPC server and client |
-| `hello-world` | Database-independent greeting service and thin JSON controller |
-| `app` | Composed public router, health endpoint, and domain mounts |
+| `hypgm-dmn-users` (`crates/domain/users`) | Plain User objects, repository, service, gRPC server and client |
+| `hypgm-dmn-hello-world` (`crates/domain/hello-world`) | Database-independent greeting service and thin JSON controller |
+| `hypgm-dmn-app` (`crates/domain/app`) | Composed public router, health endpoint, and domain mounts |
 | `app-cli` (`cmd/app`) | Public app executable configuration, logging and startup |
-| `http-support` | Shared Axum error mapping, 16KiB JSON extraction, and request tracing |
-| `logging` | Typed subscriber builder and tracing subscriber initialization |
-| `rpc` | Generated protobuf client/server bindings (internal Users RPC) |
-| `hypogeum-db` | Reusable migrations, verification and database inspection |
+| `hypgm-http` (`crates/core/http`) | Shared Axum error mapping, PublicError rendering, 16KiB JSON extraction, and request tracing |
+| `hypgm-logging` (`crates/core/logging`) | Typed subscriber builder and tracing subscriber initialization |
+| `hypgm-rpc` (`crates/core/rpc`) | Generated protobuf client/server bindings (internal Users RPC) |
+| `hypgm-ext-db` (`crates/ext/rdbms/db`) | Reusable migrations, verification and database inspection |
 | `hypogeum-db-cli` (`cmd/db`) | The `hypogeum-db` administration executable |
-| `postgres` | Constructor-injected pool configuration |
-| `errors` | Shared typed errors and transport mappings |
-| `tasks` | Apalis queues, workers, retry policy and Board |
+| `hypgm-ext-postgres` (`crates/ext/rdbms/postgres`) | Constructor-injected pool configuration |
+| `hypgm-errors` (`crates/core/errors`) | Shared typed errors, PublicError trait, and transport mappings |
+| `hypgm-ext-tasks` (`crates/ext/tasks`) | Apalis queues, workers, retry policy and Board |
 | `apalis-dashboard` (`cmd/apalis-dashboard`) | Standalone Apalis dashboard and API |
-| `file-storage` | Streamed immutable byte storage with integrity checks |
-| `env-config` | Binary-only env snapshot and typed deserialization |
-| `test-support` | Testcontainers suite bootstrap and SQLx test configuration |
+| `hypgm-ext-file-storage` (`crates/ext/file-storage`) | Streamed immutable byte storage with integrity checks |
+| `hypgm-env-config` (`crates/core/env-config`) | Binary-only env snapshot and typed deserialization |
+| `hypgm-test-support` (`crates/core/test-support`) | Testcontainers suite bootstrap and SQLx test configuration |
 
 ## Development
 

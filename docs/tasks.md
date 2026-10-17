@@ -1,6 +1,6 @@
 # Typed background tasks
 
-`crates/tasks` provides typed, explicitly named Apalis queues, worker policy,
+`crates/ext/tasks` (`hypgm-ext-tasks`) provides typed, explicitly named Apalis queues, worker policy,
 readiness, bounded shutdown, and upstream Board registration. Apalis owns task
 IDs, attempts, scheduling, claims, heartbeats and recovery. Application handlers
 belong in their owning services.
@@ -49,7 +49,7 @@ cargo make apalis-dashboard
 ```
 
 The standalone `apalis-dashboard` binary in `cmd/apalis-dashboard` uses the
-reusable `crates/tasks` Board router. It starts with no queues or handlers and binds
+reusable `crates/ext/tasks` Board router. It starts with no queues or handlers and binds
 `127.0.0.1:8082` by default. Configure `HYPOGEUM_TASKS_DATABASE_URL`, `HYPOGEUM_TASKS_BOARD_BIND`
 and `HYPOGEUM_TASKS_SHUTDOWN_SECONDS` at the composition root. It requires explicit
 migrations and `hypogeum_tasks` credentials. Its readiness function exposes

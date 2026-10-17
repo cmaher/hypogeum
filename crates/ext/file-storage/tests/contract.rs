@@ -2,9 +2,9 @@
 //! Backend-neutral cases: add adapters by constructing an isolated client and
 //! passing it to these functions. No filesystem assumptions inside the cases.
 use bytes::Bytes;
+use futures_util::{StreamExt, stream};
 use hypgm_ext_file_storage::filesystem::{FilesystemConfig, FilesystemStorage};
 use hypgm_ext_file_storage::{ByteStream, ExpectedIntegrity, FileStorage, ObjectRef, StorageError};
-use futures_util::{StreamExt, stream};
 use sha2::{Digest, Sha256};
 use std::sync::{
     Arc,

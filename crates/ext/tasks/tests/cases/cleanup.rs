@@ -1,11 +1,11 @@
 use apalis::prelude::*;
+use hypgm_ext_tasks::worker::Lifecycle;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions, PgSslMode};
 use std::{
     future::{Future, poll_fn},
     task::Poll,
     time::Duration,
 };
-use hypgm_ext_tasks::worker::Lifecycle;
 
 #[sqlx::test(migrations = false)]
 #[ignore = "run by integration_suite"]
@@ -88,7 +88,10 @@ async fn stalled_pool_cleanup_obeys_shutdown_deadline(
                 Poll::Pending => panic!("pool cleanup exceeded shutdown deadline ({mode})"),
             })
             .await;
-            assert!(matches!(result, Err(errors::TasksError::DrainTimeout)));
+            assert!(matches!(
+                result,
+                Err(hypgm_errors::TasksError::DrainTimeout)
+            ));
             assert!(pool.is_closed());
             assert!(
                 pool.acquire().await.is_err(),

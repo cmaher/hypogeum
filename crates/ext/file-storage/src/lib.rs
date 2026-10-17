@@ -6,7 +6,7 @@
 //! rename, path, resume, listing or distributed transaction contract.
 pub mod filesystem;
 pub mod models;
-pub use errors::StorageError;
+pub use hypgm_errors::StorageError;
 pub use models::{ExpectedIntegrity, ObjectInfo, ObjectRef, StoredObject};
 
 use async_trait::async_trait;

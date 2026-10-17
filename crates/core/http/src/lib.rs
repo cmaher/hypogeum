@@ -3,7 +3,7 @@ pub mod json;
 pub mod trace;
 
 pub use error::{
-    ErrorCode, ErrorClassification, HttpError, not_found_handler, not_found_response,
+    ErrorClassification, ErrorCode, HttpError, not_found_handler, not_found_response,
     render_error_response, render_method_not_allowed, render_public_error,
 };
 pub use hypgm_errors::{PublicError, PublicErrorInfo};

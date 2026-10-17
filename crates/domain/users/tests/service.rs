@@ -1,12 +1,12 @@
 use async_trait::async_trait;
-use hypgm_errors::RepoError;
-use std::sync::{Arc, Mutex};
 use hypgm_dmn_users::{
     UserError,
     models::{PageRequest, User, UserPage},
     repo::UserRepo,
     service::{DefaultUserService, UserService},
 };
+use hypgm_errors::RepoError;
+use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
 #[derive(Default)]

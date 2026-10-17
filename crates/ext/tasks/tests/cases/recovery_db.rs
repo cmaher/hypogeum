@@ -2,13 +2,13 @@
 use apalis::prelude::*;
 use axum::{body::Body, http::Request};
 use http_body_util::BodyExt;
+use hypgm_ext_tasks::{Queue, WorkerConfig, board::Board};
 use serde::{Deserialize, Serialize};
 use sqlx::{Connection, PgConnection, PgPool};
 use std::{
     process::{Child, Command},
     time::Duration,
 };
-use hypgm_ext_tasks::{Queue, WorkerConfig, board::Board};
 use tower::ServiceExt;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -123,9 +123,13 @@ async fn atomicity(pool: &PgPool, admin: &PgPool, url: &str) {
         });
         let id = task.task_id().unwrap().clone();
         let compact = task.try_map_args(|args| serde_json::to_vec(&args)).unwrap();
-        hypgm_ext_tasks::apalis_postgres::queries::push_tasks(&mut *tx, "fixture-atomic", vec![compact])
-            .await
-            .unwrap();
+        hypgm_ext_tasks::apalis_postgres::queries::push_tasks(
+            &mut *tx,
+            "fixture-atomic",
+            vec![compact],
+        )
+        .await
+        .unwrap();
         match outcome {
             "commit" => tx.commit().await.unwrap(),
             "rollback" => tx.rollback().await.unwrap(),

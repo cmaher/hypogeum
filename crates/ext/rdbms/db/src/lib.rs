@@ -79,7 +79,7 @@ pub async fn migrate(url: &str) -> Result<()> {
     // Domain SeaORM migrators
     let pool = owner_pool(url).await?;
     let db = sea_orm::SqlxPostgresConnector::from_sqlx_postgres_pool(pool.clone());
-    let sea_result = users::pg::migrations::Migrator::up(&db, None).await;
+    let sea_result = hypgm_dmn_users::pg::migrations::Migrator::up(&db, None).await;
     pool.close().await;
 
     let _ = sqlx::query("SELECT pg_catalog.pg_advisory_unlock($1)")

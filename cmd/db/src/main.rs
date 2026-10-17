@@ -47,7 +47,9 @@ async fn run() -> Result<Value, String> {
 
     match args[0].as_str() {
         "migrate" => {
-            hypgm_ext_db::migrate(url).await.map_err(|e| e.to_string())?;
+            hypgm_ext_db::migrate(url)
+                .await
+                .map_err(|e| e.to_string())?;
             Ok(json!({"migrated":true}))
         }
         "verify" => {

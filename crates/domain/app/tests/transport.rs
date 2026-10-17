@@ -400,7 +400,10 @@ struct PausedService {
 
 #[async_trait::async_trait]
 impl HelloWorldService for PausedService {
-    async fn say_hello(&self, name: &str) -> Result<String, hypgm_dmn_hello_world::HelloWorldError> {
+    async fn say_hello(
+        &self,
+        name: &str,
+    ) -> Result<String, hypgm_dmn_hello_world::HelloWorldError> {
         self.started.notify_one();
         self.release.notified().await;
         DefaultHelloWorldService.say_hello(name).await

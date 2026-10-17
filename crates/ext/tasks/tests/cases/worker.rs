@@ -1,7 +1,7 @@
 use apalis::prelude::*;
+use hypgm_ext_tasks::{Queue, WorkerConfig};
 use sqlx::PgPool;
 use std::time::Duration;
-use hypgm_ext_tasks::{Queue, WorkerConfig};
 
 #[tokio::test]
 async fn named_queue_and_task_use_upstream_configuration() {
@@ -415,7 +415,10 @@ async fn shutdown_drains_acknowledgments_and_recovers_forced_claims(
         } else {
             let result = future.await;
             if mode == "deadline" {
-                assert!(matches!(result, Err(errors::TasksError::DrainTimeout)));
+                assert!(matches!(
+                    result,
+                    Err(hypgm_errors::TasksError::DrainTimeout)
+                ));
             } else {
                 result.unwrap();
             }
@@ -681,7 +684,7 @@ async fn overflowing_shutdown_deadline_returns_config_error_and_retires_pool() {
             }
         };
         let result = lifecycle.run_until(worker, signal, Duration::MAX).await;
-        assert!(matches!(result, Err(errors::TasksError::Config(_))));
+        assert!(matches!(result, Err(hypgm_errors::TasksError::Config(_))));
         assert!(context.is_shutting_down());
         assert!(pool.is_closed());
     }

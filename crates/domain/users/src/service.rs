@@ -37,9 +37,7 @@ impl PublicError for UserError {
             UserError::Validation(_) => PublicErrorInfo::VALIDATION_ERROR,
             UserError::NotFound => PublicErrorInfo::NOT_FOUND,
             UserError::Repo(repo) => repo.public_error(),
-            UserError::Remote(_) | UserError::InvalidResponse(_) => {
-                PublicErrorInfo::INTERNAL_ERROR
-            }
+            UserError::Remote(_) | UserError::InvalidResponse(_) => PublicErrorInfo::INTERNAL_ERROR,
         }
     }
 

@@ -1,11 +1,11 @@
-use hypgm_errors::RepoError;
-use sea_orm_migration::MigratorTrait;
-use sqlx::{Connection, PgConnection, postgres::PgConnectOptions};
-use hypgm_test_support::TestDatabase;
 use hypgm_dmn_users::{
     models::PageRequest,
     repo::{PgUserRepo, UserRepo},
 };
+use hypgm_errors::RepoError;
+use hypgm_test_support::TestDatabase;
+use sea_orm_migration::MigratorTrait;
+use sqlx::{Connection, PgConnection, postgres::PgConnectOptions};
 use uuid::Uuid;
 
 #[sqlx::test(migrations = false)]
@@ -86,7 +86,10 @@ async fn user_repository_connects_and_persists_under_runtime_privileges(
     first.unwrap();
     second.unwrap();
     hypgm_ext_db::verify(&migration_url).await.unwrap();
-    let pool = hypgm_ext_postgres::create_pool(&hypgm_ext_postgres::PostgresConfig::new(db.users_url.clone())).unwrap();
+    let pool = hypgm_ext_postgres::create_pool(&hypgm_ext_postgres::PostgresConfig::new(
+        db.users_url.clone(),
+    ))
+    .unwrap();
     hypgm_dmn_users::repo::check_ready(&pool).await.unwrap();
     let repo = PgUserRepo::new(pool.clone());
     let id = Uuid::new_v4();

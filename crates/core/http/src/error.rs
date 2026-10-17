@@ -87,7 +87,9 @@ pub fn render_error_response(classification: PublicErrorInfo) -> Response {
     let mut response = (classification.status, axum::Json(body)).into_response();
     response.extensions_mut().insert(classification);
     response.extensions_mut().insert(classification.status);
-    response.extensions_mut().insert(ErrorCode(classification.code));
+    response
+        .extensions_mut()
+        .insert(ErrorCode(classification.code));
     response
 }
 

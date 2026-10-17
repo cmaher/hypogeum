@@ -1,4 +1,6 @@
-use hypgm_logging::{LogFormat, LoggingError, TestWriter, create_subscriber, create_test_subscriber};
+use hypgm_logging::{
+    LogFormat, LoggingError, TestWriter, create_subscriber, create_test_subscriber,
+};
 
 #[test]
 fn test_valid_text_subscriber_construction() {
