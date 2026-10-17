@@ -22,6 +22,20 @@ pub trait AuthBackend: Send + Sync + 'static {
     async fn resolve_principal(&self, auth_id: Uuid) -> Option<Principal>;
 }
 
+#[async_trait]
+impl AuthBackend for () {
+    async fn resolve_principal(&self, _auth_id: Uuid) -> Option<Principal> {
+        None
+    }
+}
+
+#[async_trait]
+impl AuthBackend for std::sync::Arc<dyn AuthBackend> {
+    async fn resolve_principal(&self, auth_id: Uuid) -> Option<Principal> {
+        self.as_ref().resolve_principal(auth_id).await
+    }
+}
+
 /// Adapter wrapping an [`AuthBackend`] to implement [`axum_login::AuthnBackend`].
 #[derive(Debug, Clone, Default)]
 pub struct PrincipalAuthBackend<B> {

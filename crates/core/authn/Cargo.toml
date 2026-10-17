@@ -6,19 +6,23 @@ rust-version.workspace = true
 
 [dependencies]
 async-trait.workspace = true
+axum = { version = "0.8", default-features = false, features = ["tokio", "json"] }
 axum-login = "0.18"
 chrono.workspace = true
 http = "1"
 hypgm-errors = { path = "../errors" }
 jsonwebtoken = "9"
 serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 tower-sessions = "0.14"
 uuid.workspace = true
 
 [dev-dependencies]
+http-body-util = "0.1"
 serde_json.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tower = { version = "0.5", features = ["util"] }
 
 [lints]
 workspace = true
