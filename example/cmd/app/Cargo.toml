@@ -9,6 +9,7 @@ name = "app"
 path = "src/main.rs"
 
 [dependencies]
+hypgm-authn = { path = "../../../crates/core/authn" }
 exemplum-app = { path = "../../crates/app" }
 exemplum-dmn-users = { path = "../../crates/domain/users" }
 hypgmx-rdbms = { path = "../../../crates/ext/rdbms" }
@@ -26,7 +27,6 @@ tracing = "0.1"
 [dev-dependencies]
 hypgm-test-support = { path = "../../../crates/core/test-support" }
 exemplum-dmn-auth = { path = "../../crates/domain/auth" }
-hypgm-authn = { path = "../../../crates/core/authn" }
 sqlx.workspace = true
 serde_json.workspace = true
 reqwest = { version = "0.12", default-features = false }

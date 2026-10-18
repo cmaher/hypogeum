@@ -97,6 +97,9 @@ async fn main() -> anyhow::Result<()> {
         "app starting"
     );
 
+    hypgm_authn::JwtValidator::from_hs256_secret(config.jwt_secret.expose().as_bytes())
+        .context("Validate JWT signing configuration")?;
+
     let pool =
         hypgmx_rdbms::create_pool(&hypgmx_rdbms::PoolConfig::new(config.database_url.expose()))
             .context("Create application database pool")?;

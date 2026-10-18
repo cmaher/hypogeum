@@ -31,7 +31,7 @@ Validate `Authorization: Bearer <token>` tokens containing `sub` (user_id), `aut
 use hypgm_authn::{JwtConfig, JwtValidator};
 
 // HS256 secret key
-let validator = JwtValidator::from_hs256_secret(b"your-secret-key");
+let validator = JwtValidator::from_hs256_secret(b"example-only-key-at-least-32-bytes!")?;
 
 // RS256 public key PEM
 let validator = JwtValidator::from_rs256_pem(rsa_pem_bytes)?;
@@ -85,7 +85,7 @@ async fn optional_handler(OptionalAuth(principal): OptionalAuth) -> String {
     }
 }
 
-let validator = JwtValidator::from_hs256_secret(b"your-secret-key");
+let validator = JwtValidator::from_hs256_secret(b"example-only-key-at-least-32-bytes!")?;
 
 let app = Router::new()
     .route("/protected", get(protected_handler))
@@ -98,3 +98,8 @@ let app = Router::new()
 `generate_api_key(prefix)` returns a `GeneratedApiKey` with named `raw_key` and
 `secret_hash` fields. Return the raw key to the credential owner once and persist
 only the hash. Verify future requests with `verify_api_key(raw_key, secret_hash)`.
+
+HS256 secret constructors return `Result` and reject secrets shorter than 32 bytes.
+Supply at least 32 cryptographically random bytes in production. The low-level
+`JwtValidator::new(DecodingKey, JwtConfig)` accepts opaque keys; its caller must
+ensure key strength and algorithm compatibility.

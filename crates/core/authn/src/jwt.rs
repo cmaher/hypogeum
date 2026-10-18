@@ -106,6 +106,8 @@ pub struct JwtValidator {
 }
 
 impl JwtValidator {
+    /// Low-level constructor. Callers supplying an opaque `DecodingKey` are responsible
+    /// for algorithm compatibility and key strength (at least 32 random bytes for HS256).
     pub fn new(decoding_key: DecodingKey, config: JwtConfig) -> Self {
         let mut validation = Validation::new(config.algorithm);
         validation.leeway = config.leeway_seconds;
@@ -130,13 +132,21 @@ impl JwtValidator {
         }
     }
 
-    pub fn from_hs256_secret(secret: &[u8]) -> Self {
+    pub fn from_hs256_secret(secret: &[u8]) -> Result<Self, AuthError> {
         Self::from_hs256_secret_with_config(secret, JwtConfig::default())
     }
 
-    pub fn from_hs256_secret_with_config(secret: &[u8], mut config: JwtConfig) -> Self {
+    pub fn from_hs256_secret_with_config(
+        secret: &[u8],
+        mut config: JwtConfig,
+    ) -> Result<Self, AuthError> {
+        if secret.len() < 32 {
+            return Err(AuthError::Internal(
+                "HS256 secret must contain at least 32 bytes".into(),
+            ));
+        }
         config.algorithm = Algorithm::HS256;
-        Self::new(DecodingKey::from_secret(secret), config)
+        Ok(Self::new(DecodingKey::from_secret(secret), config))
     }
 
     pub fn from_rs256_pem(pem: &[u8]) -> Result<Self, AuthError> {

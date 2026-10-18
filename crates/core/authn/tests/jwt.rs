@@ -61,7 +61,7 @@ fn test_decode_valid_hs256_token() {
     )
     .expect("encoding should succeed");
 
-    let validator = JwtValidator::from_hs256_secret(TEST_SECRET);
+    let validator = JwtValidator::from_hs256_secret(TEST_SECRET).unwrap();
     let principal = validator
         .verify_token(&token)
         .expect("verification should succeed");
@@ -158,7 +158,7 @@ fn test_expired_token_rejected() {
     )
     .unwrap();
 
-    let validator = JwtValidator::from_hs256_secret(TEST_SECRET);
+    let validator = JwtValidator::from_hs256_secret(TEST_SECRET).unwrap();
     let result = validator.verify_token(&token);
 
     match result {
@@ -181,7 +181,7 @@ fn test_tampered_token_rejected() {
     )
     .unwrap();
 
-    let validator = JwtValidator::from_hs256_secret(TEST_SECRET);
+    let validator = JwtValidator::from_hs256_secret(TEST_SECRET).unwrap();
     let result = validator.verify_token(&token);
 
     match result {
@@ -192,7 +192,7 @@ fn test_tampered_token_rejected() {
 
 #[test]
 fn test_malformed_token_rejected() {
-    let validator = JwtValidator::from_hs256_secret(TEST_SECRET);
+    let validator = JwtValidator::from_hs256_secret(TEST_SECRET).unwrap();
 
     assert!(matches!(
         validator.verify_token("not-a-valid-token"),
@@ -202,7 +202,7 @@ fn test_malformed_token_rejected() {
 
 #[test]
 fn test_empty_token_rejected() {
-    let validator = JwtValidator::from_hs256_secret(TEST_SECRET);
+    let validator = JwtValidator::from_hs256_secret(TEST_SECRET).unwrap();
 
     assert!(matches!(
         validator.verify_token(""),
@@ -448,6 +448,36 @@ fn configured_identity_claims_are_required() {
                         "{algorithm:?}: issuer={issuer}, audience={audience}, claims={claims}"
                     );
                 }
+            }
+        }
+    }
+}
+
+#[test]
+fn hs256_secret_constructors_reject_short_keys() {
+    for length in [0, 1, 16, 31, 32, 64] {
+        let secret = vec![b'k'; length];
+        for result in [
+            JwtValidator::from_hs256_secret(&secret),
+            JwtValidator::from_hs256_secret_with_config(&secret, JwtConfig::default()),
+        ] {
+            if length < 32 {
+                let err = match result {
+                    Err(err) => err,
+                    Ok(_) => panic!("short secret accepted"),
+                };
+                assert!(matches!(err, AuthError::Internal(_)));
+                assert!(!format!("{err:?}").contains("kkkk"));
+            } else {
+                let validator = result.unwrap();
+                let claims = Claims::new(Uuid::new_v4(), Uuid::new_v4(), now_epoch() + 3600);
+                let token = encode(
+                    &Header::default(),
+                    &claims,
+                    &EncodingKey::from_secret(&secret),
+                )
+                .unwrap();
+                assert!(validator.verify_token(&token).is_ok());
             }
         }
     }

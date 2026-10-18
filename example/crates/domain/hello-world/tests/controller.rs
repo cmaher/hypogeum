@@ -10,7 +10,9 @@ use tower::ServiceExt;
 fn test_app(service: Arc<dyn HelloWorldService>) -> axum::Router {
     let (schema, policies) =
         hypgm_authz::load_schema_and_policies(CEDAR_SCHEMA, PERMIT_POLICY).unwrap();
-    let authorizer = Arc::new(hypgm_authz::Authorizer::new(schema, policies).expect("valid authorization entities"));
+    let authorizer = Arc::new(
+        hypgm_authz::Authorizer::new(schema, policies).expect("valid authorization entities"),
+    );
     let user_service = Arc::new(MockUserService {
         user: exemplum_dmn_users::models::User {
             id: uuid::Uuid::new_v4(),
@@ -246,7 +248,9 @@ forbid(
 async fn test_hello_me_requires_auth() {
     let (schema, policies) =
         hypgm_authz::load_schema_and_policies(CEDAR_SCHEMA, PERMIT_POLICY).unwrap();
-    let authorizer = Arc::new(hypgm_authz::Authorizer::new(schema, policies).expect("valid authorization entities"));
+    let authorizer = Arc::new(
+        hypgm_authz::Authorizer::new(schema, policies).expect("valid authorization entities"),
+    );
     let user_id = uuid::Uuid::new_v4();
     let user_service = Arc::new(MockUserService {
         user: exemplum_dmn_users::models::User {
@@ -279,7 +283,9 @@ async fn test_hello_me_requires_auth() {
 async fn test_hello_me_evaluates_cedar_policy_and_returns_display_name() {
     let (schema, policies) =
         hypgm_authz::load_schema_and_policies(CEDAR_SCHEMA, PERMIT_POLICY).unwrap();
-    let permit_authorizer = Arc::new(hypgm_authz::Authorizer::new(schema, policies).expect("valid authorization entities"));
+    let permit_authorizer = Arc::new(
+        hypgm_authz::Authorizer::new(schema, policies).expect("valid authorization entities"),
+    );
     let user_id = uuid::Uuid::new_v4();
     let auth_id = uuid::Uuid::new_v4();
     let user_service = Arc::new(MockUserService {
@@ -316,7 +322,10 @@ async fn test_hello_me_evaluates_cedar_policy_and_returns_display_name() {
     // Test with forbidden policy -> 403
     let (forbid_schema, forbid_policies) =
         hypgm_authz::load_schema_and_policies(CEDAR_SCHEMA, FORBID_POLICY).unwrap();
-    let forbid_authorizer = Arc::new(hypgm_authz::Authorizer::new(forbid_schema, forbid_policies).expect("valid authorization entities"));
+    let forbid_authorizer = Arc::new(
+        hypgm_authz::Authorizer::new(forbid_schema, forbid_policies)
+            .expect("valid authorization entities"),
+    );
     let app_forbidden = exemplum_dmn_hello_world::controller::router(
         exemplum_dmn_hello_world::HelloComponents::new(
             Arc::new(DefaultHelloWorldService),

@@ -87,7 +87,9 @@ impl TestHarness {
 
         let (schema, policies) = hypgm_authz::load_schema_and_policies(&schema_content, policies)
             .expect("Failed to load Cedar schema and policies");
-        let authorizer = Arc::new(hypgm_authz::Authorizer::new(schema, policies).expect("valid authorization entities"));
+        let authorizer = Arc::new(
+            hypgm_authz::Authorizer::new(schema, policies).expect("valid authorization entities"),
+        );
 
         let user_service = Arc::new(InMemoryUserService::new());
         let auth_repo = Arc::new(InMemoryAuthRepo::new());
@@ -568,7 +570,9 @@ async fn postgres_e2e_auth_transport(
     let (schema, policies) =
         hypgm_authz::load_schema_and_policies(&schema_content, &policy_content)
             .expect("Failed to load Cedar schema and policies");
-    let authorizer = Arc::new(hypgm_authz::Authorizer::new(schema, policies).expect("valid authorization entities"));
+    let authorizer = Arc::new(
+        hypgm_authz::Authorizer::new(schema, policies).expect("valid authorization entities"),
+    );
     let token_config =
         exemplum_app::TokenConfig::new(b"test-jwt-secret-key-32-bytes-long!".to_vec());
 
