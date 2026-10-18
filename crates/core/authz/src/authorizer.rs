@@ -3,6 +3,7 @@ use cedar_policy::{
     EntityUid, PolicySet, Request, Schema,
 };
 use hypgm_authn::{AuthMethod, Principal};
+use std::borrow::Cow;
 use std::str::FromStr;
 
 use crate::error::AuthzError;
@@ -236,31 +237,17 @@ impl Authorizer {
             }
         };
 
-        let combined_entities;
-        let eval_entities = if self.entities.is_empty() {
-            entities
-        } else if entities.is_empty() {
-            &self.entities
-        } else {
-            match self
-                .entities
-                .clone()
-                .upsert_entities(entities.iter().cloned(), Some(&self.schema))
-            {
-                Ok(combined) => {
-                    combined_entities = combined;
-                    &combined_entities
-                }
-                Err(err) => {
-                    tracing::warn!(error = %err, "Failed to combine runtime entities with preloaded entities; failing closed");
-                    return Decision::Deny;
-                }
+        let eval_entities = match self.evaluation_entities(entities) {
+            Ok(entities) => entities,
+            Err(err) => {
+                tracing::warn!(error = %err, "Failed to combine runtime entities; failing closed");
+                return Decision::Deny;
             }
         };
 
         let response = self
             .cedar
-            .is_authorized(&request, &self.policies, eval_entities);
+            .is_authorized(&request, &self.policies, &eval_entities);
 
         let diagnostics = response.diagnostics();
         let mut has_errors = false;
@@ -274,6 +261,23 @@ impl Authorizer {
         }
 
         response.decision()
+    }
+
+    fn evaluation_entities<'a>(
+        &'a self,
+        entities: &'a Entities,
+    ) -> Result<Cow<'a, Entities>, AuthzError> {
+        if self.entities.is_empty() {
+            Ok(Cow::Borrowed(entities))
+        } else if entities.is_empty() || std::ptr::eq(entities, &self.entities) {
+            Ok(Cow::Borrowed(&self.entities))
+        } else {
+            self.entities
+                .clone()
+                .upsert_entities(entities.iter().cloned(), Some(&self.schema))
+                .map(Cow::Owned)
+                .map_err(AuthzError::evaluation)
+        }
     }
 
     /// Authorizes a request, returning `Ok(())` on `Decision::Allow` and `Err(AuthzError::Forbidden)`
@@ -361,5 +365,42 @@ fn build_context(
         })
     } else {
         Ok(base_ctx)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::load_schema_and_policies;
+
+    #[test]
+    fn ordinary_checks_borrow_the_preloaded_graph() {
+        let (schema, policies) = load_schema_and_policies(
+            r#"entity User; entity Document; action "View" appliesTo { principal: [User], resource: [Document] };"#,
+            "permit(principal, action, resource);",
+        ).unwrap();
+        let authorizer = Authorizer::new(schema, policies).unwrap();
+        // Ordinary and custom-context entry points pass this exact stored graph.
+        let entities = authorizer
+            .evaluation_entities(authorizer.entities())
+            .unwrap();
+        assert!(
+            matches!(entities, Cow::Borrowed(graph) if std::ptr::eq(graph, authorizer.entities()))
+        );
+        let empty = Entities::empty();
+        assert!(
+            matches!(authorizer.evaluation_entities(&empty).unwrap(), Cow::Borrowed(graph) if std::ptr::eq(graph, authorizer.entities()))
+        );
+        let runtime = Entities::from_json_value(
+            serde_json::json!([{
+                "uid": { "type": "Document", "id": "runtime" }, "attrs": {}, "parents": []
+            }]),
+            None,
+        )
+        .unwrap();
+        assert!(matches!(
+            authorizer.evaluation_entities(&runtime).unwrap(),
+            Cow::Owned(_)
+        ));
     }
 }
