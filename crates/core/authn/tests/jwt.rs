@@ -383,3 +383,72 @@ fn test_multi_value_audience_validation() {
         _ => panic!("expected Audience::Multiple"),
     }
 }
+
+fn signing_keys(algorithm: Algorithm) -> (EncodingKey, jsonwebtoken::DecodingKey) {
+    match algorithm {
+        Algorithm::HS256 => (
+            EncodingKey::from_secret(TEST_SECRET),
+            jsonwebtoken::DecodingKey::from_secret(TEST_SECRET),
+        ),
+        Algorithm::RS256 => (
+            EncodingKey::from_rsa_pem(RSA_PRIVATE_KEY_PEM).unwrap(),
+            jsonwebtoken::DecodingKey::from_rsa_pem(RSA_PUBLIC_KEY_PEM).unwrap(),
+        ),
+        _ => unreachable!(),
+    }
+}
+
+#[test]
+fn configured_identity_claims_are_required() {
+    for algorithm in [Algorithm::HS256, Algorithm::RS256] {
+        let (encoding, decoding) = signing_keys(algorithm);
+        for (issuer, audience) in [(true, false), (false, true), (true, true), (false, false)] {
+            let validator = JwtValidator::new(
+                decoding.clone(),
+                JwtConfig {
+                    algorithm,
+                    issuer: issuer.then(|| "issuer".into()),
+                    audience: audience.then(|| "audience".into()),
+                    ..Default::default()
+                },
+            );
+            for iss in [
+                None,
+                Some(serde_json::Value::Null),
+                Some(serde_json::json!("wrong")),
+                Some(serde_json::json!("issuer")),
+            ] {
+                for aud in [
+                    None,
+                    Some(serde_json::Value::Null),
+                    Some(serde_json::json!("wrong")),
+                    Some(serde_json::json!("audience")),
+                    Some(serde_json::json!(["other", "audience"])),
+                ] {
+                    let mut claims = serde_json::to_value(Claims::new(
+                        Uuid::new_v4(),
+                        Uuid::new_v4(),
+                        now_epoch() + 3600,
+                    ))
+                    .unwrap();
+                    if let Some(iss) = &iss {
+                        claims["iss"] = iss.clone();
+                    }
+                    if let Some(aud) = &aud {
+                        claims["aud"] = aud.clone();
+                    }
+                    let token = encode(&Header::new(algorithm), &claims, &encoding).unwrap();
+                    let valid_issuer = !issuer || iss == Some(serde_json::json!("issuer"));
+                    let valid_audience = !audience
+                        || aud == Some(serde_json::json!("audience"))
+                        || aud == Some(serde_json::json!(["other", "audience"]));
+                    assert_eq!(
+                        validator.verify_token(&token).is_ok(),
+                        valid_issuer && valid_audience,
+                        "{algorithm:?}: issuer={issuer}, audience={audience}, claims={claims}"
+                    );
+                }
+            }
+        }
+    }
+}

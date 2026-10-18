@@ -111,8 +111,10 @@ impl JwtValidator {
         validation.leeway = config.leeway_seconds;
         if let Some(ref iss) = config.issuer {
             validation.set_issuer(&[iss]);
+            validation.required_spec_claims.insert("iss".into());
         }
         if let Some(ref aud) = config.audience {
+            validation.required_spec_claims.insert("aud".into());
             match aud {
                 Audience::Single(s) => validation.set_audience(&[s]),
                 Audience::Multiple(list) => validation.set_audience(list),

@@ -25,7 +25,7 @@ assert_eq!(principal.method, AuthMethod::BearerJwt);
 
 ### Bearer JWT Validation
 
-Validate `Authorization: Bearer <token>` tokens containing `sub` (user_id), `auth_id`, `exp`, and optional issuer/audience claims:
+Validate `Authorization: Bearer <token>` tokens containing `sub` (user_id), `auth_id`, `exp`, and issuer/audience claims. Configured issuer or audience restrictions require the corresponding claim to be present and non-null; when unconfigured, these claims remain optional:
 
 ```rust
 use hypgm_authn::{JwtConfig, JwtValidator};
