@@ -4,6 +4,36 @@ use tower_sessions::SessionStore;
 use tower_sessions::session::{Id, Record};
 use tower_sessions::session_store::{self, Error, ExpiredDeletion};
 
+/// PostgreSQL-backed session store implementing [`tower_sessions::SessionStore`].
+///
+/// ### Why raw SQL (`sqlx`) is used instead of SeaORM:
+///
+/// 1. **Upstream Infrastructure Contract**:
+///    This struct is an HTTP middleware adapter satisfying [`SessionStore`] and
+///    [`ExpiredDeletion`], rather than a domain repository. Sessions are opaque key-value
+///    blobs (`(id, data BYTEA, expiry_date)`) serialized via MessagePack ([`rmp_serde`]),
+///    not relational domain entities with business rules or relations.
+///
+/// 2. **Per-Request Performance & Minimal Overhead**:
+///    Session loading and saving run on every authenticated HTTP request. Executing direct
+///    parameterized SQL statements against [`PgPool`] avoids ORM entity reflection,
+///    ActiveModel change tracking, and query generation overhead on the critical request path.
+///
+/// 3. **Dynamic Schema & Table Qualification**:
+///    SeaORM statically binds schemas and tables via compile-time derive macros
+///    (`#[sea_orm(schema_name = "...")]`). This store allows configuring the target schema
+///    and table dynamically at runtime (e.g. per-environment or multi-tenant namespaces),
+///    validating identifiers with [`hypgmx_rdbms::contract::validate_identifier`].
+///
+/// 4. **Database-Native Upsert and Expiration**:
+///    Session management relies on native PostgreSQL atomic upserts (`ON CONFLICT (id) DO UPDATE`)
+///    and server-evaluated timestamps (`statement_timestamp()`). Directly writing these 4 queries
+///    avoids ORM type-mapping impedance (such as `time::OffsetDateTime` vs `chrono::DateTime`).
+///
+/// 5. **Dependency Decoupling (`sqlx 0.9` compatibility)**:
+///    The official `tower-sessions-sqlx-store` crate was pinned to `sqlx 0.8`, which conflicted
+///    with the workspace's `sqlx 0.9` dependency. Maintaining this focused store in-tree ensures
+///    direct compatibility with the workspace connection pool without mismatched transitive dependencies.
 #[derive(Clone, Debug)]
 pub struct PostgresSessionStore {
     pool: PgPool,
