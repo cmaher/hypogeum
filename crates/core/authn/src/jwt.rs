@@ -111,6 +111,7 @@ impl JwtValidator {
     pub fn new(decoding_key: DecodingKey, config: JwtConfig) -> Self {
         let mut validation = Validation::new(config.algorithm);
         validation.leeway = config.leeway_seconds;
+        validation.validate_nbf = true;
         if let Some(ref iss) = config.issuer {
             validation.set_issuer(&[iss]);
             validation.required_spec_claims.insert("iss".into());

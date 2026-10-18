@@ -103,3 +103,6 @@ HS256 secret constructors return `Result` and reject secrets shorter than 32 byt
 Supply at least 32 cryptographically random bytes in production. The low-level
 `JwtValidator::new(DecodingKey, JwtConfig)` accepts opaque keys; its caller must
 ensure key strength and algorithm compatibility.
+
+JWT expiration is required. A present `nbf` (not-before) claim is checked using
+the same configured clock leeway as expiration; `nbf` may be omitted.

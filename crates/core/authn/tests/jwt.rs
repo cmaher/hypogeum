@@ -482,3 +482,41 @@ fn hs256_secret_constructors_reject_short_keys() {
         }
     }
 }
+
+#[test]
+fn not_before_and_expiration_use_configured_leeway() {
+    for algorithm in [Algorithm::HS256, Algorithm::RS256] {
+        let (encoding, decoding) = signing_keys(algorithm);
+        let now = now_epoch();
+        for leeway in [0, 120] {
+            let validator = JwtValidator::new(
+                decoding.clone(),
+                JwtConfig {
+                    algorithm,
+                    leeway_seconds: leeway,
+                    ..Default::default()
+                },
+            );
+            for (nbf, exp, valid) in [
+                (Some(now + 3600), now + 7200, false),
+                (Some(now - 3600), now + 7200, true),
+                (Some(now + 60), now + 7200, leeway > 0),
+                (None, now + 7200, true),
+                (None, now - 3600, false),
+                (None, now - 60, leeway > 0),
+            ] {
+                let mut claims =
+                    serde_json::to_value(Claims::new(Uuid::new_v4(), Uuid::new_v4(), exp)).unwrap();
+                if let Some(nbf) = nbf {
+                    claims["nbf"] = serde_json::json!(nbf);
+                }
+                let token = encode(&Header::new(algorithm), &claims, &encoding).unwrap();
+                assert_eq!(
+                    validator.verify_token(&token).is_ok(),
+                    valid,
+                    "{algorithm:?}, leeway={leeway}, claims={claims}"
+                );
+            }
+        }
+    }
+}
