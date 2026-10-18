@@ -110,46 +110,64 @@ async fn token(
         .get(axum::http::header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
-
+    let mime = content_type.split(';').next().unwrap_or("").trim();
     let mut req: TokenRequest = if body.is_empty() {
         TokenRequest::default()
-    } else if content_type.contains("application/json") {
+    } else if mime.eq_ignore_ascii_case("application/json") {
         serde_json::from_slice(&body).map_err(|_| HttpError::invalid_request())?
-    } else if content_type.contains("application/x-www-form-urlencoded") {
+    } else if mime.eq_ignore_ascii_case("application/x-www-form-urlencoded") {
         serde_urlencoded::from_bytes(&body).map_err(|_| HttpError::invalid_request())?
     } else {
-        // Fall back to attempting JSON then URL-encoded
-        if let Ok(r) = serde_json::from_slice(&body) {
-            r
-        } else if let Ok(r) = serde_urlencoded::from_bytes(&body) {
-            r
-        } else {
-            return Err(HttpError::unsupported_media_type());
-        }
+        return Err(HttpError::unsupported_media_type());
     };
 
-    // Inspect Authorization header for HTTP Basic (RFC 6749 §2.3.1) or Bearer
-    if let Some(auth_header) = headers.get(axum::http::header::AUTHORIZATION)
-        && let Ok(header_str) = auth_header.to_str()
+    if let Some(ref gt) = req.grant_type
+        && gt != "client_credentials"
+        && gt != "api_key"
     {
+        return Err(HttpError::custom(
+            axum::http::StatusCode::BAD_REQUEST,
+            "unsupported_grant_type",
+            "Unsupported grant type",
+        ));
+    }
+
+    // Inspect Authorization header for HTTP Basic (RFC 6749 §2.3.1) or Bearer
+    if let Some(auth_header) = headers.get(axum::http::header::AUTHORIZATION) {
+        let header_str = auth_header
+            .to_str()
+            .map_err(|_| HttpError::invalid_request())?;
         let trimmed = header_str.trim();
         if let Some((scheme, val)) = trimmed.split_once(|c: char| c.is_ascii_whitespace()) {
             if scheme.eq_ignore_ascii_case("basic") {
-                if let Ok(decoded_bytes) = BASE64_STANDARD.decode(val.trim())
-                    && let Ok(credentials) = String::from_utf8(decoded_bytes)
-                    && let Some((id, secret)) = credentials.split_once(':')
-                {
-                    if req.client_id.is_none() {
-                        req.client_id = Some(id.to_string());
-                    }
-                    if req.client_secret.is_none() {
-                        req.client_secret = Some(secret.to_string());
-                    }
+                // Reject if credentials were also provided in the request body (RFC 6749 §2.3)
+                if req.client_id.is_some() || req.client_secret.is_some() || req.api_key.is_some() {
+                    return Err(HttpError::invalid_request());
                 }
-            } else if scheme.eq_ignore_ascii_case("bearer")
-                && req.api_key.is_none()
-                && req.client_secret.is_none()
-            {
+
+                let decoded_bytes = BASE64_STANDARD
+                    .decode(val.trim())
+                    .map_err(|_| HttpError::invalid_request())?;
+                let credentials =
+                    String::from_utf8(decoded_bytes).map_err(|_| HttpError::invalid_request())?;
+                let (raw_id, raw_secret) = credentials
+                    .split_once(':')
+                    .ok_or_else(HttpError::invalid_request)?;
+
+                let id = urlencoding::decode(raw_id)
+                    .map_err(|_| HttpError::invalid_request())?
+                    .into_owned();
+                let secret = urlencoding::decode(raw_secret)
+                    .map_err(|_| HttpError::invalid_request())?
+                    .into_owned();
+
+                req.client_id = Some(id);
+                req.client_secret = Some(secret);
+            } else if scheme.eq_ignore_ascii_case("bearer") {
+                // Reject if credentials were also provided in the request body (RFC 6749 §2.3)
+                if req.client_id.is_some() || req.client_secret.is_some() || req.api_key.is_some() {
+                    return Err(HttpError::invalid_request());
+                }
                 req.api_key = Some(val.trim().to_string());
             }
         }

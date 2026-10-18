@@ -193,3 +193,81 @@ async fn test_token_exchange_http_basic_auth() {
     assert_eq!(token_resp.token_type, "Bearer");
     assert_eq!(token_resp.expires_in, 3600); // default TTL
 }
+
+#[tokio::test]
+async fn test_token_exchange_validates_media_type_and_grant_type() {
+    let repo = Arc::new(InMemoryAuthRepo::new());
+    let app = build_test_app(repo);
+
+    // Unsupported media type
+    let req = Request::builder()
+        .method("POST")
+        .uri("/token")
+        .header(header::CONTENT_TYPE, "text/plain")
+        .body(Body::from("api_key=exmpl_key_123"))
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+
+    // Unsupported grant type
+    let req = Request::builder()
+        .method("POST")
+        .uri("/token")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(r#"{"grant_type": "authorization_code"}"#))
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    // Conflicting credentials across Basic Auth and request body
+    let basic_header = format!("Basic {}", BASE64_STANDARD.encode("client:secret"));
+    let req = Request::builder()
+        .method("POST")
+        .uri("/token")
+        .header(header::AUTHORIZATION, basic_header)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(r#"{"client_secret": "conflict"}"#))
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn test_token_exchange_http_basic_url_encoded_credentials() {
+    let repo = Arc::new(InMemoryAuthRepo::new());
+    let user_id = Uuid::new_v4();
+    let auth_id = Uuid::new_v4();
+    let client_id = "client app";
+    let client_secret = "super secret/pass";
+    let secret_hash = hypgm_authn::api_key::hash_api_key(client_secret);
+
+    repo.create(
+        auth_id,
+        user_id,
+        "api_key",
+        client_id,
+        &secret_hash,
+        serde_json::json!({}),
+    )
+    .await
+    .unwrap();
+
+    let app = build_test_app(repo);
+
+    // URL-encoded in Basic credentials parameter per RFC 6749 §2.3.1
+    let encoded_id = urlencoding::encode(client_id);
+    let encoded_secret = urlencoding::encode(client_secret);
+    let basic_creds = format!("{encoded_id}:{encoded_secret}");
+    let basic_header = format!("Basic {}", BASE64_STANDARD.encode(basic_creds));
+
+    let req = Request::builder()
+        .method("POST")
+        .uri("/token")
+        .header(header::AUTHORIZATION, basic_header)
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from("grant_type=client_credentials"))
+        .unwrap();
+
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+}

@@ -7,9 +7,24 @@ use exemplum_dmn_hello_world::service::{DefaultHelloWorldService, HelloWorldServ
 use std::sync::Arc;
 use tower::ServiceExt;
 
+fn test_app(service: Arc<dyn HelloWorldService>) -> axum::Router {
+    let (schema, policies) =
+        hypgm_authz::load_schema_and_policies(CEDAR_SCHEMA, PERMIT_POLICY).unwrap();
+    let authorizer = Arc::new(hypgm_authz::Authorizer::new(schema, policies));
+    let user_service = Arc::new(MockUserService {
+        user: exemplum_dmn_users::models::User {
+            id: uuid::Uuid::new_v4(),
+            display_name: "Test User".into(),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        },
+    });
+    router(service, authorizer, user_service)
+}
+
 #[tokio::test]
 async fn test_say_hello_success_and_extra_fields_ignored() {
-    let app = router(Arc::new(DefaultHelloWorldService));
+    let app = test_app(Arc::new(DefaultHelloWorldService));
 
     // Normal greeting
     let req = Request::builder()
@@ -46,7 +61,7 @@ async fn test_say_hello_success_and_extra_fields_ignored() {
 
 #[tokio::test]
 async fn test_service_validation_errors_mapped_to_safe_400() {
-    let app = router(Arc::new(DefaultHelloWorldService));
+    let app = test_app(Arc::new(DefaultHelloWorldService));
 
     // NUL byte rejection in service
     let req = Request::builder()
@@ -87,7 +102,7 @@ async fn test_service_validation_errors_mapped_to_safe_400() {
 
 #[tokio::test]
 async fn test_missing_required_name_field() {
-    let app = router(Arc::new(DefaultHelloWorldService));
+    let app = test_app(Arc::new(DefaultHelloWorldService));
 
     let req = Request::builder()
         .method("POST")
@@ -120,7 +135,7 @@ impl HelloWorldService for FailingService {
 
 #[tokio::test]
 async fn test_injected_service_delegation_and_error_propagation() {
-    let app = router(Arc::new(FailingService));
+    let app = test_app(Arc::new(FailingService));
 
     // Internal service error mapped to 500 without leaking private details
     let req = Request::builder()
@@ -236,7 +251,7 @@ async fn test_hello_me_requires_auth() {
         },
     });
 
-    let app = exemplum_dmn_hello_world::controller::router_with_auth(
+    let app = exemplum_dmn_hello_world::controller::router(
         Arc::new(DefaultHelloWorldService),
         authorizer,
         user_service,
@@ -268,7 +283,7 @@ async fn test_hello_me_evaluates_cedar_policy_and_returns_display_name() {
         },
     });
 
-    let app = exemplum_dmn_hello_world::controller::router_with_auth(
+    let app = exemplum_dmn_hello_world::controller::router(
         Arc::new(DefaultHelloWorldService),
         permit_authorizer,
         user_service.clone(),
@@ -292,7 +307,7 @@ async fn test_hello_me_evaluates_cedar_policy_and_returns_display_name() {
     let (forbid_schema, forbid_policies) =
         hypgm_authz::load_schema_and_policies(CEDAR_SCHEMA, FORBID_POLICY).unwrap();
     let forbid_authorizer = Arc::new(hypgm_authz::Authorizer::new(forbid_schema, forbid_policies));
-    let app_forbidden = exemplum_dmn_hello_world::controller::router_with_auth(
+    let app_forbidden = exemplum_dmn_hello_world::controller::router(
         Arc::new(DefaultHelloWorldService),
         forbid_authorizer,
         user_service,

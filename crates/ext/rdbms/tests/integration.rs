@@ -101,10 +101,20 @@ async fn postgres_session_store_persists_and_expires_sessions(
     let reloaded = store.load(&session_id).await.unwrap().unwrap();
     assert_eq!(reloaded.data.get("role"), Some(&serde_json::json!("admin")));
 
-    // Delete session
-    store.delete(&session_id).await.unwrap();
-    let deleted = store.load(&session_id).await.unwrap();
-    assert!(deleted.is_none());
+    // Expired deletion test
+    let expired_id = Id::default();
+    let mut expired_record = Record {
+        id: expired_id,
+        data: HashMap::new(),
+        expiry_date: time::OffsetDateTime::now_utc() - time::Duration::hours(1),
+    };
+    store.create(&mut expired_record).await.unwrap();
+    store.delete_expired().await.unwrap();
+    assert!(store.load(&expired_id).await.unwrap().is_none());
+
+    // Verify leading underscore is accepted as a valid identifier
+    let _store_underscore =
+        hypgmx_rdbms::PostgresSessionStore::new_with_schema(pool.clone(), "_app");
 
     pool.close().await;
 }

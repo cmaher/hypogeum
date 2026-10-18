@@ -12,28 +12,30 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub struct HelloState {
     pub hello_service: Arc<dyn HelloWorldService>,
-    pub authorizer: Option<Arc<Authorizer>>,
-    pub user_service: Option<Arc<dyn UserService>>,
+    pub authorizer: Arc<Authorizer>,
+    pub user_service: Arc<dyn UserService>,
 }
 
-pub fn router(service: Arc<dyn HelloWorldService>) -> Router<()> {
-    router_with_state(HelloState {
-        hello_service: service,
-        authorizer: None,
-        user_service: None,
-    })
+impl HelloState {
+    pub fn new(
+        hello_service: Arc<dyn HelloWorldService>,
+        authorizer: Arc<Authorizer>,
+        user_service: Arc<dyn UserService>,
+    ) -> Self {
+        Self {
+            hello_service,
+            authorizer,
+            user_service,
+        }
+    }
 }
 
-pub fn router_with_auth(
+pub fn router(
     service: Arc<dyn HelloWorldService>,
     authorizer: Arc<Authorizer>,
     user_service: Arc<dyn UserService>,
 ) -> Router<()> {
-    router_with_state(HelloState {
-        hello_service: service,
-        authorizer: Some(authorizer),
-        user_service: Some(user_service),
-    })
+    router_with_state(HelloState::new(service, authorizer, user_service))
 }
 
 pub fn router_with_state(state: HelloState) -> Router<()> {
@@ -55,20 +57,13 @@ async fn hello_me(
     State(state): State<HelloState>,
     RequireAuth(principal): RequireAuth,
 ) -> Result<AppJson<HelloResponse>, HttpError> {
-    let authorizer = state
+    state
         .authorizer
-        .as_ref()
-        .ok_or_else(HttpError::internal_error)?;
-    let user_service = state
-        .user_service
-        .as_ref()
-        .ok_or_else(HttpError::internal_error)?;
-
-    authorizer
         .authorize(&principal, ("Action", "greet"), ("Resource", "hello_world"))
         .map_err(HttpError::from)?;
 
-    let user = user_service
+    let user = state
+        .user_service
         .get(principal.user_id)
         .await
         .map_err(|e| match e {

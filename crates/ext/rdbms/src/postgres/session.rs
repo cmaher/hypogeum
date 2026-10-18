@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use sqlx::{AssertSqlSafe, PgPool};
 use tower_sessions::SessionStore;
 use tower_sessions::session::{Id, Record};
-use tower_sessions::session_store::{self, Error};
+use tower_sessions::session_store::{self, Error, ExpiredDeletion};
 
 #[derive(Clone, Debug)]
 pub struct PostgresSessionStore {
@@ -13,53 +13,46 @@ pub struct PostgresSessionStore {
 
 impl PostgresSessionStore {
     pub fn new(pool: PgPool) -> Self {
-        Self {
-            pool,
-            schema: "public".into(),
-            table: "sessions".into(),
-        }
+        Self::new_with_schema(pool, "public")
     }
 
     pub fn new_with_schema(pool: PgPool, schema: impl Into<String>) -> Self {
+        let schema = schema.into();
+        crate::contract::validate_identifier(&schema)
+            .unwrap_or_else(|e| panic!("invalid schema identifier {schema:?}: {e}"));
+        crate::contract::validate_identifier("sessions")
+            .unwrap_or_else(|e| panic!("invalid table identifier 'sessions': {e}"));
         Self {
             pool,
-            schema: schema.into(),
+            schema,
             table: "sessions".into(),
         }
     }
 
     pub fn with_schema_name(mut self, schema: impl Into<String>) -> Self {
-        self.schema = schema.into();
+        let schema = schema.into();
+        crate::contract::validate_identifier(&schema)
+            .unwrap_or_else(|e| panic!("invalid schema identifier {schema:?}: {e}"));
+        self.schema = schema;
         self
     }
 
     pub fn with_table_name(mut self, table: impl Into<String>) -> Self {
-        self.table = table.into();
+        let table = table.into();
+        crate::contract::validate_identifier(&table)
+            .unwrap_or_else(|e| panic!("invalid table identifier {table:?}: {e}"));
+        self.table = table;
         self
     }
 
-    fn check_identifiers(&self) -> Result<(), Error> {
-        validate_identifier(&self.schema)?;
-        validate_identifier(&self.table)?;
-        Ok(())
+    pub async fn delete_expired(&self) -> session_store::Result<()> {
+        <Self as ExpiredDeletion>::delete_expired(self).await
     }
-}
-
-fn validate_identifier(ident: &str) -> Result<(), Error> {
-    if ident.is_empty()
-        || ident.len() > 63
-        || !ident.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-        || !ident.chars().next().unwrap().is_ascii_alphabetic()
-    {
-        return Err(Error::Backend(format!("Invalid SQL identifier: {ident}")));
-    }
-    Ok(())
 }
 
 #[async_trait]
 impl SessionStore for PostgresSessionStore {
     async fn create(&self, record: &mut Record) -> session_store::Result<()> {
-        self.check_identifiers()?;
         let query = format!(
             "INSERT INTO \"{}\".\"{}\" (id, data, expiry_date) VALUES ($1, $2, $3)",
             self.schema, self.table
@@ -76,7 +69,6 @@ impl SessionStore for PostgresSessionStore {
     }
 
     async fn save(&self, record: &Record) -> session_store::Result<()> {
-        self.check_identifiers()?;
         let query = format!(
             "INSERT INTO \"{}\".\"{}\" (id, data, expiry_date) VALUES ($1, $2, $3) \
              ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, expiry_date = EXCLUDED.expiry_date",
@@ -94,7 +86,6 @@ impl SessionStore for PostgresSessionStore {
     }
 
     async fn load(&self, session_id: &Id) -> session_store::Result<Option<Record>> {
-        self.check_identifiers()?;
         let query = format!(
             "SELECT data FROM \"{}\".\"{}\" WHERE id = $1 AND expiry_date > statement_timestamp()",
             self.schema, self.table
@@ -116,13 +107,27 @@ impl SessionStore for PostgresSessionStore {
     }
 
     async fn delete(&self, session_id: &Id) -> session_store::Result<()> {
-        self.check_identifiers()?;
         let query = format!(
             "DELETE FROM \"{}\".\"{}\" WHERE id = $1",
             self.schema, self.table
         );
         sqlx::query(AssertSqlSafe(query))
             .bind(session_id.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(|e| Error::Backend(e.to_string()))?;
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl ExpiredDeletion for PostgresSessionStore {
+    async fn delete_expired(&self) -> session_store::Result<()> {
+        let query = format!(
+            "DELETE FROM \"{}\".\"{}\" WHERE expiry_date <= statement_timestamp()",
+            self.schema, self.table
+        );
+        sqlx::query(AssertSqlSafe(query))
             .execute(&self.pool)
             .await
             .map_err(|e| Error::Backend(e.to_string()))?;

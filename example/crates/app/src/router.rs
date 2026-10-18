@@ -25,7 +25,7 @@ pub fn router<S>(state: AppState<S>) -> Router<()>
 where
     S: tower_sessions::SessionStore + Clone + Send + Sync + 'static,
 {
-    let hello = exemplum_dmn_hello_world::controller::router_with_auth(
+    let hello = exemplum_dmn_hello_world::controller::router(
         state.hello_service,
         state.authorizer,
         state.user_service,
