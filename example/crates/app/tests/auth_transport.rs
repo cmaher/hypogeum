@@ -1,10 +1,10 @@
 use exemplum_dmn_auth::repo::{AuthRepo, InMemoryAuthRepo};
 use exemplum_dmn_auth::{LoginRequest, LoginResponse, TokenResponse};
-use hypgm_authn::api_key::generate_api_key;
-use hypgm_authn::password::hash_password;
 use exemplum_dmn_hello_world::service::DefaultHelloWorldService;
 use exemplum_dmn_users::models::{PageRequest, User, UserPage};
 use exemplum_dmn_users::service::{UserError, UserService};
+use hypgm_authn::api_key::generate_api_key;
+use hypgm_authn::password::hash_password;
 use reqwest::StatusCode;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, COOKIE, SET_COOKIE};
 use std::collections::HashMap;
@@ -518,4 +518,191 @@ async fn test_logout_invalidates_session_and_clears_cookie() {
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 
     harness.shutdown().await;
+}
+
+fn postgres_exemplum_config() -> hypgmx_rdbms::DatabaseConfig {
+    hypgmx_rdbms::DatabaseConfig::new("exemplum_migrator", "exemplum_owner", "exemplum_tasks")
+        .with_app_schema("exemplum")
+        .with_domain_migrator(<dyn hypgmx_rdbms::DomainMigrator>::from_sea_orm::<
+            exemplum_dmn_users::pg::migrations::Migrator,
+        >())
+}
+
+#[test]
+fn integration_suite() {
+    hypgm_test_support::run_suite();
+}
+
+#[sqlx::test(migrations = false)]
+#[ignore = "run by integration_suite"]
+async fn postgres_e2e_auth_transport(
+    _pool: sqlx::postgres::PgPoolOptions,
+    options: sqlx::postgres::PgConnectOptions,
+) {
+    use exemplum_dmn_auth::repo::PgAuthRepo;
+    use exemplum_dmn_users::repo::{PgUserRepo, UserRepo};
+    use hypgm_test_support::TestDatabase;
+
+    let db = TestDatabase::provision(options).await;
+    let config = postgres_exemplum_config();
+    db.migrate_with(&config).await;
+
+    let pool = sqlx::PgPool::connect(&db.users_url).await.unwrap();
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let schema_path = manifest_dir.join("../../config/schema.cedarschema");
+    let schema_content = std::fs::read_to_string(&schema_path)
+        .unwrap_or_else(|_| panic!("Failed to read {}", schema_path.display()));
+    let policies_path = manifest_dir.join("../../config/policies.cedar");
+    let policy_content = std::fs::read_to_string(&policies_path)
+        .unwrap_or_else(|_| panic!("Failed to read {}", policies_path.display()));
+
+    let (schema, policies) =
+        hypgm_authz::load_schema_and_policies(&schema_content, &policy_content)
+            .expect("Failed to load Cedar schema and policies");
+    let authorizer = Arc::new(hypgm_authz::Authorizer::new(schema, policies));
+    let jwt_secret = b"test-jwt-secret-key-32-bytes-long!".to_vec();
+
+    let state = exemplum_app::AppState::from_pool(authorizer, pool.clone(), jwt_secret);
+    let router = exemplum_app::router(state);
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let (stop, stopped) = oneshot::channel();
+    let serving = tokio::spawn(async move {
+        axum::serve(listener, router)
+            .with_graceful_shutdown(async {
+                let _ = stopped.await;
+            })
+            .await
+    });
+
+    // 1. Create user in PostgreSQL database
+    let user_repo = PgUserRepo::new(pool.clone());
+    let user_id = Uuid::new_v4();
+    let user = user_repo.create(user_id, "Postgres User").await.unwrap();
+
+    // 2. Create password credential identity
+    let auth_repo = PgAuthRepo::new(pool.clone());
+    let auth_id = Uuid::new_v4();
+    let password_hash = hash_password("secret-password").unwrap();
+    auth_repo
+        .create(
+            auth_id,
+            user.id,
+            "password",
+            "pguser",
+            &password_hash,
+            serde_json::json!({}),
+        )
+        .await
+        .unwrap();
+
+    // 3. Login with password and get session cookie
+    let client = reqwest::Client::new();
+    let login_req = LoginRequest {
+        username: "pguser".to_string(),
+        password: "secret-password".to_string(),
+    };
+    let login_resp = client
+        .post(format!("{endpoint}/api/auth/login"))
+        .header(CONTENT_TYPE, "application/json")
+        .body(serde_json::to_string(&login_req).unwrap())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(login_resp.status(), StatusCode::OK);
+
+    let cookie_header = login_resp
+        .headers()
+        .get(SET_COOKIE)
+        .expect("Set-Cookie header must be present")
+        .to_str()
+        .unwrap()
+        .to_string();
+
+    // 4. Verify session is persisted in exemplum.sessions table in PostgreSQL
+    let session_count: i64 = sqlx::query_scalar("SELECT count(*) FROM exemplum.sessions")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(
+        session_count >= 1,
+        "Session must be persisted in PostgreSQL sessions table"
+    );
+
+    // 5. Access /api/hello/me with session cookie
+    let me_resp = client
+        .get(format!("{endpoint}/api/hello/me"))
+        .header(COOKIE, &cookie_header)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(me_resp.status(), StatusCode::OK);
+    let me_bytes = me_resp.bytes().await.unwrap();
+    let me_body: serde_json::Value = serde_json::from_slice(&me_bytes).unwrap();
+    assert_eq!(me_body["message"], "Hello, Postgres User!");
+
+    // 6. Create API key in PostgreSQL database
+    let api_key_auth_id = Uuid::new_v4();
+    let (raw_key, key_hash) = generate_api_key("exmpl_key");
+    auth_repo
+        .create(
+            api_key_auth_id,
+            user.id,
+            "api_key",
+            &key_hash,
+            &key_hash,
+            serde_json::json!({}),
+        )
+        .await
+        .unwrap();
+
+    // 7. Exchange API key for JWT token via POST /api/auth/token
+    let token_req = serde_json::json!({
+        "grant_type": "api_key",
+        "api_key": raw_key,
+    });
+    let token_resp = client
+        .post(format!("{endpoint}/api/auth/token"))
+        .header(CONTENT_TYPE, "application/json")
+        .body(serde_json::to_string(&token_req).unwrap())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(token_resp.status(), StatusCode::OK);
+    let token_bytes = token_resp.bytes().await.unwrap();
+    let token_body: TokenResponse = serde_json::from_slice(&token_bytes).unwrap();
+
+    // 8. Access /api/hello/me with Bearer token
+    let bearer_resp = client
+        .get(format!("{endpoint}/api/hello/me"))
+        .header(AUTHORIZATION, format!("Bearer {}", token_body.access_token))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(bearer_resp.status(), StatusCode::OK);
+    let bearer_bytes = bearer_resp.bytes().await.unwrap();
+    let bearer_body: serde_json::Value = serde_json::from_slice(&bearer_bytes).unwrap();
+    assert_eq!(bearer_body["message"], "Hello, Postgres User!");
+
+    // 9. Logout session
+    let logout_resp = client
+        .post(format!("{endpoint}/api/auth/logout"))
+        .header(COOKIE, &cookie_header)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(logout_resp.status(), StatusCode::OK);
+
+    // Verify session removed from PostgreSQL sessions table
+    let session_count_after: i64 = sqlx::query_scalar("SELECT count(*) FROM exemplum.sessions")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(session_count_after, 0);
+
+    let _ = stop.send(());
+    let _ = serving.await;
+    pool.close().await;
 }

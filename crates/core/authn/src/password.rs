@@ -17,7 +17,11 @@ pub fn hash_password(password: &str) -> Result<String, AuthError> {
 pub fn verify_password(password: &str, stored_hash: &str) -> Result<bool, AuthError> {
     let parsed_hash = match PasswordHash::new(stored_hash) {
         Ok(h) => h,
-        Err(e) => return Err(AuthError::Internal(format!("Invalid password hash format: {e}"))),
+        Err(e) => {
+            return Err(AuthError::Internal(format!(
+                "Invalid password hash format: {e}"
+            )));
+        }
     };
     let argon2 = Argon2::default();
     Ok(argon2

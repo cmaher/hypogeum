@@ -99,10 +99,7 @@ async fn postgres_session_store_persists_and_expires_sessions(
     store.save(&updated_record).await.unwrap();
 
     let reloaded = store.load(&session_id).await.unwrap().unwrap();
-    assert_eq!(
-        reloaded.data.get("role"),
-        Some(&serde_json::json!("admin"))
-    );
+    assert_eq!(reloaded.data.get("role"), Some(&serde_json::json!("admin")));
 
     // Delete session
     store.delete(&session_id).await.unwrap();

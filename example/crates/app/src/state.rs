@@ -79,8 +79,9 @@ impl<S: SessionStore + Clone + Send + Sync + 'static> AppState<S> {
 pub fn default_authorizer() -> Arc<Authorizer> {
     const DEFAULT_SCHEMA: &str = include_str!("../../../config/schema.cedarschema");
     const DEFAULT_POLICIES: &str = include_str!("../../../config/policies.cedar");
-    let (schema, policies) = hypgm_authz::load_schema_and_policies(DEFAULT_SCHEMA, DEFAULT_POLICIES)
-        .expect("embedded Cedar schema and policies are valid");
+    let (schema, policies) =
+        hypgm_authz::load_schema_and_policies(DEFAULT_SCHEMA, DEFAULT_POLICIES)
+            .expect("embedded Cedar schema and policies are valid");
     Arc::new(Authorizer::new(schema, policies))
 }
 

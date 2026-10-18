@@ -73,7 +73,10 @@ mod tests {
         assert!(validate_api_key_prefix(&raw, "exmpl_key"));
         assert!(validate_api_key_prefix(&raw, "exmpl_key_"));
         assert!(!validate_api_key_prefix(&raw, "other_key"));
-        assert!(!validate_api_key_prefix("exmpl_key_not_hex_!@#", "exmpl_key"));
+        assert!(!validate_api_key_prefix(
+            "exmpl_key_not_hex_!@#",
+            "exmpl_key"
+        ));
         assert!(!validate_api_key_prefix("exmpl_key_", "exmpl_key"));
     }
 }

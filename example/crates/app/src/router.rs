@@ -13,7 +13,10 @@ use crate::state::AppState;
 async fn healthz() -> impl IntoResponse {
     (
         Extension(HealthCheck),
-        [(axum::http::header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; charset=utf-8",
+        )],
         "ok",
     )
 }
