@@ -1,8 +1,7 @@
 entity User;
-entity Greeting;
 entity Resource;
 
 action "greet" appliesTo {
     principal: [User],
-    resource: [Greeting, Resource]
+    resource: [Resource]
 };

@@ -5,7 +5,7 @@ use axum::extract::State;
 use axum::routing::{get, post};
 use exemplum_dmn_users::service::UserService;
 use hypgm_authn::RequireAuth;
-use hypgm_authz::{Authorizer, Decision};
+use hypgm_authz::Authorizer;
 use hypgm_http::{AppJson, HttpError};
 use std::sync::Arc;
 
@@ -64,19 +64,9 @@ async fn hello_me(
         .as_ref()
         .ok_or_else(HttpError::internal_error)?;
 
-    let mut decision =
-        authorizer.is_authorized(&principal, ("Action", "greet"), ("Resource", "hello_world"));
-    if decision != Decision::Allow {
-        let alt =
-            authorizer.is_authorized(&principal, ("Action", "greet"), ("Greeting", "hello_world"));
-        if alt == Decision::Allow {
-            decision = alt;
-        }
-    }
-
-    if decision != Decision::Allow {
-        return Err(hypgm_authz::AuthzError::Forbidden.into());
-    }
+    authorizer
+        .authorize(&principal, ("Action", "greet"), ("Resource", "hello_world"))
+        .map_err(HttpError::from)?;
 
     let user = user_service
         .get(principal.user_id)
