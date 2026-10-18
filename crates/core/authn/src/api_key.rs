@@ -9,15 +9,16 @@ pub struct GeneratedApiKey {
 
 /// Generates a new API key with the given prefix and its SHA-256 hash.
 ///
-/// Format: `<prefix>_<hex-encoded-24-random-bytes>`
+/// Format: `<prefix>_<hex-encoded-24-random-bytes>`. All trailing underscores
+/// on the supplied prefix are normalized to one separator.
 pub fn generate_api_key(prefix: &str) -> GeneratedApiKey {
-    let prefix = prefix.trim_end_matches('_');
+    let prefix = normalize_prefix(prefix);
     let mut random_bytes = [0u8; 24];
     argon2::password_hash::rand_core::RngCore::fill_bytes(
         &mut argon2::password_hash::rand_core::OsRng,
         &mut random_bytes,
     );
-    let raw = format!("{prefix}_{}", hex::encode(random_bytes));
+    let raw = format!("{prefix}{}", hex::encode(random_bytes));
     let hash = hash_api_key(&raw);
     GeneratedApiKey {
         raw_key: raw,
@@ -34,16 +35,16 @@ pub fn hash_api_key(raw_key: &str) -> String {
 
 /// Validates whether a raw key conforms to the expected prefix and hexadecimal payload.
 pub fn validate_api_key_prefix(raw_key: &str, expected_prefix: &str) -> bool {
-    let prefix = if expected_prefix.ends_with('_') {
-        expected_prefix.to_string()
-    } else {
-        format!("{expected_prefix}_")
-    };
+    let prefix = normalize_prefix(expected_prefix);
     if !raw_key.starts_with(&prefix) {
         return false;
     }
     let suffix = &raw_key[prefix.len()..];
     !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+fn normalize_prefix(prefix: &str) -> String {
+    format!("{}_", prefix.trim_end_matches('_'))
 }
 
 /// Constant-time verification of an API key against a stored SHA-256 hex digest.
@@ -93,5 +94,35 @@ mod tests {
             "exmpl_key"
         ));
         assert!(!validate_api_key_prefix("exmpl_key_", "exmpl_key"));
+    }
+}
+
+#[cfg(test)]
+mod prefix_round_trips {
+    use super::*;
+
+    #[test]
+    fn generation_and_validation_share_prefix_normalization() {
+        for prefix in [
+            "test_key",
+            "test_key_",
+            "test_key__",
+            "test_key___",
+            "",
+            "_",
+        ] {
+            let generated = generate_api_key(prefix);
+            assert!(
+                validate_api_key_prefix(&generated.raw_key, prefix),
+                "prefix: {prefix}"
+            );
+            assert!(!validate_api_key_prefix(&generated.raw_key, "other_key"));
+            let normalized = prefix.trim_end_matches('_');
+            assert!(!validate_api_key_prefix(&format!("{normalized}_"), prefix));
+            assert!(!validate_api_key_prefix(
+                &format!("{normalized}_not-hex"),
+                prefix
+            ));
+        }
     }
 }

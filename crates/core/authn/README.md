@@ -106,3 +106,6 @@ ensure key strength and algorithm compatibility.
 
 JWT expiration is required. A present `nbf` (not-before) claim is checked using
 the same configured clock leeway as expiration; `nbf` may be omitted.
+
+API-key generation and prefix validation both strip all trailing underscores
+from the configured prefix and add one underscore separator before the hex payload.
