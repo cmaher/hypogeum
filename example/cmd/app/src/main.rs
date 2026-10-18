@@ -1,6 +1,10 @@
+use hypgm_envconfig::Secret;
 use hypgm_logging::LogFormat;
 use serde::Deserialize;
 use std::net::SocketAddr;
+use std::path::PathBuf;
+use std::sync::Arc;
+use tower_sessions::SessionStore;
 
 fn default_bind() -> SocketAddr {
     "127.0.0.1:8080"
@@ -12,6 +16,33 @@ fn default_bind() -> SocketAddr {
 struct AppConfig {
     #[serde(default = "default_bind")]
     bind: SocketAddr,
+    database_url: Secret,
+    #[serde(deserialize_with = "deserialize_signing_secret")]
+    jwt_secret: Secret,
+    #[serde(default = "default_cedar_schema")]
+    cedar_schema: PathBuf,
+    #[serde(default = "default_cedar_policies")]
+    cedar_policies: PathBuf,
+}
+
+fn default_cedar_schema() -> PathBuf {
+    "config/schema.cedarschema".into()
+}
+
+fn default_cedar_policies() -> PathBuf {
+    "config/policies.cedar".into()
+}
+
+fn deserialize_signing_secret<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Secret, D::Error> {
+    let secret = Secret::deserialize(deserializer)?;
+    if secret.expose().len() < 32 {
+        return Err(serde::de::Error::custom(
+            "JWT signing secret must contain at least 32 bytes",
+        ));
+    }
+    Ok(secret)
 }
 
 #[derive(Debug, Deserialize)]
@@ -39,23 +70,49 @@ async fn main() -> anyhow::Result<()> {
         "app starting"
     );
 
+    let pool =
+        hypgmx_rdbms::create_pool(&hypgmx_rdbms::PoolConfig::new(config.database_url.expose()))
+            .context("Create application database pool")?;
+    exemplum_dmn_users::repo::check_ready(&pool)
+        .await
+        .context("Check application database readiness; run explicit migrations first")?;
+    let (schema, policies) = hypgm_authz::load_schema_and_policies_from_files(
+        &config.cedar_schema,
+        &config.cedar_policies,
+    )
+    .context("Load Cedar schema and policies")?;
+    let components = exemplum_app::AppComponentsFactory::from_pool(
+        pool.clone(),
+        Arc::new(hypgm_authz::Authorizer::new(schema, policies)),
+        exemplum_app::TokenConfig::new(config.jwt_secret.expose().as_bytes().to_vec()),
+    );
+    // Check the actual runtime adapters before opening the listener; never migrate here.
+    components
+        .auth_repo
+        .find_active_by_id(uuid::Uuid::nil())
+        .await
+        .context("Check authentication storage readiness")?;
+    components
+        .session_store
+        .load(&tower_sessions::session::Id::default())
+        .await
+        .context("Check session storage readiness")?;
+
     let listener = tokio::net::TcpListener::bind(config.bind)
         .await
         .context("Bind app listener")?;
 
     tracing::info!(bind = %config.bind, "app listening");
 
-    axum::serve(
-        listener,
-        exemplum_app::router(exemplum_app::AppComponentsFactory::default().build()),
-    )
-    .with_graceful_shutdown(async {
-        shutdown().await;
-        tracing::info!("app shutting down");
-    })
-    .await
-    .context("App server failed")?;
+    axum::serve(listener, exemplum_app::router(components))
+        .with_graceful_shutdown(async {
+            shutdown().await;
+            tracing::info!("app shutting down");
+        })
+        .await
+        .context("App server failed")?;
 
+    pool.close().await;
     tracing::info!("app stopped");
     Ok(())
 }
@@ -83,18 +140,47 @@ mod tests {
     use hypgm_envconfig::EnvSource;
 
     #[test]
-    fn bind_defaults_without_database_configuration() {
-        let env = EnvSource::from_pairs(Vec::<(&str, &str)>::new());
+    fn bind_defaults_with_explicit_authentication_configuration() {
+        let env = EnvSource::from_pairs([
+            (
+                "EXEMPLUM_APP_DATABASE_URL",
+                "postgres://exemplum_users:password@localhost/db",
+            ),
+            (
+                "EXEMPLUM_APP_JWT_SECRET",
+                "a-test-signing-secret-with-at-least-32-bytes",
+            ),
+        ]);
         let config: AppConfig = env.deserialize("EXEMPLUM_APP_").unwrap();
         assert_eq!(config.bind, "127.0.0.1:8080".parse::<SocketAddr>().unwrap());
     }
 
     #[test]
     fn bind_can_be_overridden_and_invalid_addresses_fail() {
-        let env = EnvSource::from_pairs([("EXEMPLUM_APP_BIND", "127.0.0.1:9090")]);
+        let env = EnvSource::from_pairs([
+            ("EXEMPLUM_APP_BIND", "127.0.0.1:9090"),
+            (
+                "EXEMPLUM_APP_DATABASE_URL",
+                "postgres://exemplum_users:password@localhost/db",
+            ),
+            (
+                "EXEMPLUM_APP_JWT_SECRET",
+                "a-test-signing-secret-with-at-least-32-bytes",
+            ),
+        ]);
         let config: AppConfig = env.deserialize("EXEMPLUM_APP_").unwrap();
         assert_eq!(config.bind, "127.0.0.1:9090".parse::<SocketAddr>().unwrap());
-        let env = EnvSource::from_pairs([("EXEMPLUM_APP_BIND", "invalid")]);
+        let env = EnvSource::from_pairs([
+            ("EXEMPLUM_APP_BIND", "invalid"),
+            (
+                "EXEMPLUM_APP_DATABASE_URL",
+                "postgres://exemplum_users:password@localhost/db",
+            ),
+            (
+                "EXEMPLUM_APP_JWT_SECRET",
+                "a-test-signing-secret-with-at-least-32-bytes",
+            ),
+        ]);
         assert!(env.deserialize::<AppConfig>("EXEMPLUM_APP_").is_err());
     }
 
@@ -110,5 +196,48 @@ mod tests {
 
         let env = EnvSource::from_pairs([("EXEMPLUM_LOG_FORMAT", "invalid")]);
         assert!(env.deserialize::<AppLogConfig>("EXEMPLUM_").is_err());
+    }
+}
+
+#[cfg(test)]
+mod configuration_regressions {
+    use super::AppConfig;
+    use hypgm_envconfig::EnvSource;
+    #[test]
+    fn startup_requires_database_credentials_and_a_signing_secret() {
+        for pairs in [
+            vec![],
+            vec![(
+                "EXEMPLUM_APP_DATABASE_URL",
+                "postgres://exemplum_users:password@localhost/db",
+            )],
+            vec![(
+                "EXEMPLUM_APP_JWT_SECRET",
+                "a-configured-secret-with-32-bytes-or-more",
+            )],
+        ] {
+            assert!(
+                EnvSource::from_pairs(pairs)
+                    .deserialize::<AppConfig>("EXEMPLUM_APP_")
+                    .is_err()
+            );
+        }
+    }
+    #[test]
+    fn startup_validates_signing_secret_length() {
+        for length in [0, 1, 31, 32, 64] {
+            let secret = "a".repeat(length);
+            let env = EnvSource::from_pairs([
+                (
+                    "EXEMPLUM_APP_DATABASE_URL",
+                    "postgres://exemplum_users:password@localhost/db",
+                ),
+                ("EXEMPLUM_APP_JWT_SECRET", secret.as_str()),
+            ]);
+            assert_eq!(
+                env.deserialize::<AppConfig>("EXEMPLUM_APP_").is_ok(),
+                length >= 32
+            );
+        }
     }
 }

@@ -3,7 +3,7 @@ use exemplum_dmn_auth::{LoginRequest, LoginResponse, TokenResponse};
 use exemplum_dmn_hello_world::service::DefaultHelloWorldService;
 use exemplum_dmn_users::models::{PageRequest, User, UserPage};
 use exemplum_dmn_users::service::{UserError, UserService};
-use hypgm_authn::api_key::generate_api_key;
+use hypgm_authn::api_key::{GeneratedApiKey, generate_api_key};
 use hypgm_authn::password::hash_password;
 use reqwest::StatusCode;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, COOKIE, SET_COOKIE};
@@ -350,7 +350,10 @@ async fn test_token_exchange_and_jwt_bearer_auth() {
     let auth_id = Uuid::new_v4();
     harness.user_service.add_user(user_id, "API Developer");
 
-    let (raw_key, key_hash) = generate_api_key("exmpl_key");
+    let GeneratedApiKey {
+        raw_key,
+        secret_hash: key_hash,
+    } = generate_api_key("exmpl_key");
     harness
         .auth_repo
         .create(
@@ -417,7 +420,10 @@ forbid(principal, action == Action::"greet", resource);
     let user_id = Uuid::new_v4();
     let auth_id = Uuid::new_v4();
     harness.user_service.add_user(user_id, "Forbidden User");
-    let (raw_key, key_hash) = generate_api_key("exmpl_key");
+    let GeneratedApiKey {
+        raw_key,
+        secret_hash: key_hash,
+    } = generate_api_key("exmpl_key");
     harness
         .auth_repo
         .create(
@@ -648,7 +654,10 @@ async fn postgres_e2e_auth_transport(
 
     // 6. Create API key in PostgreSQL database
     let api_key_auth_id = Uuid::new_v4();
-    let (raw_key, key_hash) = generate_api_key("exmpl_key");
+    let GeneratedApiKey {
+        raw_key,
+        secret_hash: key_hash,
+    } = generate_api_key("exmpl_key");
     auth_repo
         .create(
             api_key_auth_id,

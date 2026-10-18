@@ -7,7 +7,7 @@ use exemplum_dmn_auth::backend::ExemplumAuthBackend;
 use exemplum_dmn_auth::controller::{AuthComponentsFactory, TokenConfig, router};
 use exemplum_dmn_auth::repo::{AuthRepo, InMemoryAuthRepo};
 use http_body_util::BodyExt;
-use hypgm_authn::api_key::generate_api_key;
+use hypgm_authn::api_key::{GeneratedApiKey, generate_api_key};
 use hypgm_authn::password::hash_password;
 use hypgm_authn::session::PrincipalAuthBackend;
 use std::sync::Arc;
@@ -103,7 +103,10 @@ async fn test_token_exchange_standalone_api_key_and_clamped_ttl() {
     let repo = Arc::new(InMemoryAuthRepo::new());
     let user_id = Uuid::new_v4();
     let auth_id = Uuid::new_v4();
-    let (raw_key, key_hash) = generate_api_key("exmpl_key");
+    let GeneratedApiKey {
+        raw_key,
+        secret_hash: key_hash,
+    } = generate_api_key("exmpl_key");
 
     // Standalone key stores key_hash in identifier, NEVER the raw key
     repo.create(
@@ -131,6 +134,8 @@ async fn test_token_exchange_standalone_api_key_and_clamped_ttl() {
     let resp = app.clone().oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
+    assert_eq!(resp.headers()[header::CACHE_CONTROL], "no-store");
+    assert_eq!(resp.headers()[header::PRAGMA], "no-cache");
     let body = resp.into_body().collect().await.unwrap().to_bytes();
     let token_resp: TokenResponse = serde_json::from_slice(&body).unwrap();
     assert_eq!(token_resp.expires_in, 7200); // clamped to max_token_ttl
@@ -277,4 +282,158 @@ async fn test_token_exchange_http_basic_url_encoded_credentials() {
 
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[test]
+fn token_configuration_debug_redacts_the_signing_key() {
+    let secret = b"sensitive-signing-key-never-log-this".to_vec();
+    let config = TokenConfig::new(secret.clone());
+    let debug = format!("{config:?}");
+    assert!(!debug.contains(&format!("{secret:?}")));
+    assert!(debug.contains("[redacted]"));
+}
+
+#[test]
+fn default_token_configurations_do_not_share_a_signing_key() {
+    let first = TokenConfig::default();
+    let second = TokenConfig::default();
+    assert_ne!(first.jwt_secret, second.jwt_secret);
+}
+
+#[tokio::test]
+async fn basic_credentials_decode_form_spaces_and_literal_plus() {
+    let repo = Arc::new(InMemoryAuthRepo::new());
+    repo.create(
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+        "api_key",
+        "client app",
+        &hypgm_authn::api_key::hash_api_key("secret pass+suffix"),
+        serde_json::json!({}),
+    )
+    .await
+    .unwrap();
+    let app = build_test_app(repo);
+    let req = Request::builder()
+        .method("POST")
+        .uri("/token")
+        .header(
+            header::AUTHORIZATION,
+            format!(
+                "Basic {}",
+                BASE64_STANDARD.encode("client+app:secret+pass%2Bsuffix")
+            ),
+        )
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from("grant_type=client_credentials"))
+        .unwrap();
+    let response = app.oneshot(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+    assert_eq!(response.headers()[header::PRAGMA], "no-cache");
+}
+
+#[tokio::test]
+async fn token_errors_use_oauth_codes_and_basic_challenges() {
+    let app = build_test_app(Arc::new(InMemoryAuthRepo::new()));
+    for (payload, authorization, status, expected_error) in [
+        (
+            "grant_type=client_credentials",
+            Some(format!("Basic {}", BASE64_STANDARD.encode("unknown:wrong"))),
+            StatusCode::UNAUTHORIZED,
+            "invalid_client",
+        ),
+        (
+            "grant_type=authorization_code",
+            None,
+            StatusCode::BAD_REQUEST,
+            "unsupported_grant_type",
+        ),
+        (
+            "expires_in=not-a-number",
+            None,
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+        ),
+    ] {
+        let mut req = Request::builder()
+            .method("POST")
+            .uri("/token")
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded");
+        if let Some(value) = authorization {
+            req = req.header(header::AUTHORIZATION, value);
+        }
+        let response = app
+            .clone()
+            .oneshot(req.body(Body::from(payload)).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), status);
+        if status == StatusCode::UNAUTHORIZED {
+            assert!(
+                response.headers()[header::WWW_AUTHENTICATE]
+                    .to_str()
+                    .unwrap()
+                    .starts_with("Basic")
+            );
+        }
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["error"], expected_error);
+        assert!(!String::from_utf8_lossy(&bytes).contains("unknown:wrong"));
+    }
+}
+
+#[tokio::test]
+async fn password_verification_yields_to_the_async_runtime() {
+    use std::future::Future;
+    use std::task::{Context, Poll, Waker};
+    let repo = Arc::new(InMemoryAuthRepo::new());
+    repo.create(
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+        "password",
+        "alice",
+        &hash_password("secret").unwrap(),
+        serde_json::json!({}),
+    )
+    .await
+    .unwrap();
+    let app = build_test_app(repo);
+    let req = Request::builder()
+        .method("POST")
+        .uri("/login")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(r#"{"username":"alice","password":"secret"}"#))
+        .unwrap();
+    let mut login = std::pin::pin!(app.oneshot(req));
+    assert!(matches!(
+        login.as_mut().poll(&mut Context::from_waker(Waker::noop())),
+        Poll::Pending
+    ));
+    assert_eq!(login.await.unwrap().status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn token_body_limit_errors_keep_the_oauth_envelope() {
+    let app = build_test_app(Arc::new(InMemoryAuthRepo::new()))
+        .layer(axum::extract::DefaultBodyLimit::max(16));
+    let request = Request::builder()
+        .method("POST")
+        .uri("/token")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(r#"{"api_key":"an-oversized-credential"}"#))
+        .unwrap();
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(
+        response
+            .headers()
+            .get(header::CACHE_CONTROL)
+            .and_then(|v| v.to_str().ok()),
+        Some("no-store")
+    );
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["error"], "invalid_request");
 }

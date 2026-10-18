@@ -38,7 +38,11 @@ pub struct HelloComponentsFactory {
 
 impl Default for HelloComponentsFactory {
     fn default() -> Self {
-        const DEFAULT_SCHEMA: &str = "entity User; entity Action; entity Resource;";
+        const DEFAULT_SCHEMA: &str = r#"
+            entity User;
+            entity Resource;
+            action "greet" appliesTo { principal: [User], resource: [Resource] };
+        "#;
         const DEFAULT_POLICY: &str = "permit(principal, action, resource);";
         let (schema, policies) =
             hypgm_authz::load_schema_and_policies(DEFAULT_SCHEMA, DEFAULT_POLICY)

@@ -335,3 +335,22 @@ async fn test_hello_me_evaluates_cedar_policy_and_returns_display_name() {
     let resp_forbidden = app_forbidden.oneshot(req_forbidden).await.unwrap();
     assert_eq!(resp_forbidden.status(), StatusCode::FORBIDDEN);
 }
+
+#[tokio::test]
+async fn default_factory_serves_the_authenticated_greeting() {
+    let app = router(HelloComponentsFactory::default().build());
+    let req = Request::builder()
+        .uri("/me")
+        .extension(hypgm_authn::Principal::new(
+            uuid::Uuid::new_v4(),
+            uuid::Uuid::new_v4(),
+            hypgm_authn::AuthMethod::Session,
+        ))
+        .body(Body::empty())
+        .unwrap();
+    let response = app.oneshot(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), 1024).await.unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["message"], "Hello, Default User!");
+}

@@ -10,7 +10,11 @@ path = "src/main.rs"
 
 [dependencies]
 exemplum-app = { path = "../../crates/app" }
-exemplum-dmn-hello-world = { path = "../../crates/domain/hello-world" }
+exemplum-dmn-users = { path = "../../crates/domain/users" }
+hypgmx-rdbms = { path = "../../../crates/ext/rdbms" }
+hypgm-authz = { path = "../../../crates/core/authz" }
+tower-sessions = "0.14"
+uuid.workspace = true
 axum = { version = "0.8", features = ["http2"] }
 tokio.workspace = true
 anyhow = "1"
@@ -18,6 +22,16 @@ hypgm-envconfig = { path = "../../../crates/core/envconfig" }
 hypgm-logging = { path = "../../../crates/core/logging" }
 serde.workspace = true
 tracing = "0.1"
+
+[dev-dependencies]
+hypgm-test-support = { path = "../../../crates/core/test-support" }
+exemplum-dmn-auth = { path = "../../crates/domain/auth" }
+hypgm-authn = { path = "../../../crates/core/authn" }
+sqlx.workspace = true
+serde_json.workspace = true
+reqwest = { version = "0.12", default-features = false }
+jsonwebtoken = "9"
+chrono.workspace = true
 
 [lints]
 workspace = true

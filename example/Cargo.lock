@@ -1255,13 +1255,25 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "chrono",
  "exemplum-app",
- "exemplum-dmn-hello-world",
+ "exemplum-dmn-auth",
+ "exemplum-dmn-users",
+ "hypgm-authn",
+ "hypgm-authz",
  "hypgm-envconfig",
  "hypgm-logging",
+ "hypgm-test-support",
+ "hypgmx-rdbms",
+ "jsonwebtoken",
+ "reqwest",
  "serde",
+ "serde_json",
+ "sqlx",
  "tokio",
+ "tower-sessions",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -1288,6 +1300,7 @@ dependencies = [
  "axum-login",
  "base64 0.22.1",
  "chrono",
+ "getrandom 0.2.17",
  "http-body-util",
  "hypgm-authn",
  "hypgm-errors",
@@ -1306,6 +1319,7 @@ dependencies = [
  "tokio",
  "tower",
  "tower-sessions",
+ "tracing",
  "urlencoding",
  "uuid",
 ]

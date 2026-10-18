@@ -102,6 +102,20 @@ impl AuthRepo for InMemoryAuthRepo {
             revoked_at: None,
         };
         let mut map = self.identities.write().unwrap();
+        if map.contains_key(&id) {
+            return Err(RepoError::InvalidInput(
+                "Authentication identity ID already exists".into(),
+            ));
+        }
+        if map.values().any(|existing| {
+            existing.identity_type == identity_type
+                && existing.identifier == identifier
+                && existing.revoked_at.is_none()
+        }) {
+            return Err(RepoError::InvalidInput(
+                "Active authentication identifier already exists".into(),
+            ));
+        }
         map.insert(id, ident.clone());
         Ok(ident)
     }

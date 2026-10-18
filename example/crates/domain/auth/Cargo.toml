@@ -26,6 +26,8 @@ serde_urlencoded = "0.7"
 hypgm-http = { path = "../../../../crates/core/http" }
 base64 = "0.22"
 urlencoding = "2.1"
+getrandom = "0.2"
+tracing = "0.1"
 
 [dev-dependencies]
 hypgm-test-support = { path = "../../../../crates/core/test-support" }

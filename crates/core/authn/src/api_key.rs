@@ -1,10 +1,16 @@
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 
-/// Generates a new API key with the given prefix and returns `(raw_key, sha256_hex_hash)`.
+/// A generated credential: return `raw_key` to the caller and persist only `secret_hash`.
+pub struct GeneratedApiKey {
+    pub raw_key: String,
+    pub secret_hash: String,
+}
+
+/// Generates a new API key with the given prefix and its SHA-256 hash.
 ///
 /// Format: `<prefix>_<hex-encoded-24-random-bytes>`
-pub fn generate_api_key(prefix: &str) -> (String, String) {
+pub fn generate_api_key(prefix: &str) -> GeneratedApiKey {
     let prefix = prefix.trim_end_matches('_');
     let mut random_bytes = [0u8; 24];
     argon2::password_hash::rand_core::RngCore::fill_bytes(
@@ -13,7 +19,10 @@ pub fn generate_api_key(prefix: &str) -> (String, String) {
     );
     let raw = format!("{prefix}_{}", hex::encode(random_bytes));
     let hash = hash_api_key(&raw);
-    (raw, hash)
+    GeneratedApiKey {
+        raw_key: raw,
+        secret_hash: hash,
+    }
 }
 
 /// Computes the SHA-256 hash of a raw API key as a lowercase hexadecimal string.
@@ -52,7 +61,10 @@ mod tests {
 
     #[test]
     fn test_api_key_generation_and_hashing() {
-        let (raw, hash) = generate_api_key("test_key");
+        let GeneratedApiKey {
+            raw_key: raw,
+            secret_hash: hash,
+        } = generate_api_key("test_key");
         assert!(raw.starts_with("test_key_"));
         assert_eq!(hash, hash_api_key(&raw));
         assert!(verify_api_key(&raw, &hash));
@@ -61,7 +73,10 @@ mod tests {
 
     #[test]
     fn test_api_key_generation_strips_trailing_underscore() {
-        let (raw, hash) = generate_api_key("app_key_");
+        let GeneratedApiKey {
+            raw_key: raw,
+            secret_hash: hash,
+        } = generate_api_key("app_key_");
         assert!(raw.starts_with("app_key_"));
         assert!(!raw.starts_with("app_key__"));
         assert!(verify_api_key(&raw, &hash));
@@ -69,7 +84,7 @@ mod tests {
 
     #[test]
     fn test_validate_api_key_prefix() {
-        let (raw, _) = generate_api_key("exmpl_key");
+        let GeneratedApiKey { raw_key: raw, .. } = generate_api_key("exmpl_key");
         assert!(validate_api_key_prefix(&raw, "exmpl_key"));
         assert!(validate_api_key_prefix(&raw, "exmpl_key_"));
         assert!(!validate_api_key_prefix(&raw, "other_key"));

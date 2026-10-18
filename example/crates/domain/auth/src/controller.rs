@@ -1,7 +1,8 @@
 use axum::Router;
 use axum::body::Bytes;
-use axum::extract::State;
-use axum::http::HeaderMap;
+use axum::extract::{State, rejection::BytesRejection};
+use axum::http::{HeaderMap, StatusCode, header};
+use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use base64::Engine;
 use base64::prelude::BASE64_STANDARD;
@@ -13,13 +14,16 @@ use hypgm_authn::{
     principal::{AuthMethod, Principal},
     session::PrincipalAuthBackend,
 };
+use hypgm_errors::PublicErrorInfo;
 use hypgm_http::{AppJson, HttpError};
 use std::sync::Arc;
 
 use crate::api::{LoginRequest, LoginResponse, TokenRequest, TokenResponse};
 use crate::repo::AuthRepo;
 
-#[derive(Clone, Debug)]
+const MAX_PASSWORD_VERIFICATIONS: usize = 4;
+
+#[derive(Clone)]
 pub struct TokenConfig {
     pub jwt_secret: Vec<u8>,
     pub default_ttl: usize,
@@ -38,9 +42,23 @@ impl TokenConfig {
     }
 }
 
+impl std::fmt::Debug for TokenConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TokenConfig")
+            .field("jwt_secret", &"[redacted]")
+            .field("default_ttl", &self.default_ttl)
+            .field("max_ttl", &self.max_ttl)
+            .field("api_key_prefix", &self.api_key_prefix)
+            .finish()
+    }
+}
+
+// Factories use independent, ephemeral keys. Binaries must supply configured keys.
 impl Default for TokenConfig {
     fn default() -> Self {
-        Self::new(b"exemplum-default-secret-key-32bytes!".to_vec())
+        let mut secret = vec![0; 32];
+        getrandom::getrandom(&mut secret).expect("OS randomness is available");
+        Self::new(secret)
     }
 }
 
@@ -48,11 +66,18 @@ impl Default for TokenConfig {
 pub struct AuthComponents {
     pub repo: Arc<dyn AuthRepo>,
     pub token_config: TokenConfig,
+    password_verifications: Arc<tokio::sync::Semaphore>,
 }
 
 impl AuthComponents {
     pub fn new(repo: Arc<dyn AuthRepo>, token_config: TokenConfig) -> Self {
-        Self { repo, token_config }
+        Self {
+            repo,
+            token_config,
+            password_verifications: Arc::new(tokio::sync::Semaphore::new(
+                MAX_PASSWORD_VERIFICATIONS,
+            )),
+        }
     }
 }
 
@@ -96,8 +121,23 @@ async fn login(
         .map_err(|e| AuthError::Internal(e.to_string()))?
         .ok_or(AuthError::InvalidCredentials)?;
 
-    let valid = verify_password(&req.password, &identity.secret_hash)
+    let password = req.password;
+    let secret_hash = identity.secret_hash;
+    let permit = components
+        .password_verifications
+        .clone()
+        .acquire_owned()
+        .await
         .map_err(|e| AuthError::Internal(e.to_string()))?;
+    let span = tracing::Span::current();
+    let valid = tokio::task::spawn_blocking(move || {
+        let _entered = span.enter();
+        // Hold the permit until hashing ends, even if the HTTP request is cancelled.
+        let _permit = permit;
+        verify_password(&password, &secret_hash)
+    })
+    .await
+    .map_err(|e| AuthError::Internal(e.to_string()))??;
 
     if !valid {
         return Err(AuthError::InvalidCredentials.into());
@@ -129,7 +169,72 @@ async fn logout(
 async fn token(
     State(components): State<AuthComponents>,
     headers: HeaderMap,
-    body: Bytes,
+    body: Result<Bytes, BytesRejection>,
+) -> Response {
+    let basic_auth = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split_ascii_whitespace().next())
+        .is_some_and(|scheme| scheme.eq_ignore_ascii_case("basic"));
+    let result = match body {
+        Ok(body) => issue_token(&components, &headers, &body).await,
+        Err(error) if error.status() == StatusCode::PAYLOAD_TOO_LARGE => {
+            Err(HttpError::payload_too_large())
+        }
+        Err(_) => Err(HttpError::invalid_request()),
+    };
+    let mut response = match result {
+        Ok(token) => token.into_response(),
+        Err(error) => {
+            let info = error.classification();
+            let code = match info.status {
+                StatusCode::UNAUTHORIZED => "invalid_client",
+                status if status.is_server_error() => "server_error",
+                _ if info.code == "unsupported_grant_type" => "unsupported_grant_type",
+                _ => "invalid_request",
+            };
+            let mut response = (
+                info.status,
+                AppJson(serde_json::json!({
+                    "error": code,
+                    "error_description": info.message,
+                })),
+            )
+                .into_response();
+            response
+                .extensions_mut()
+                .insert(PublicErrorInfo::new(info.status, code, info.message));
+            response.extensions_mut().insert(info.status);
+            if info.status == StatusCode::UNAUTHORIZED {
+                response.headers_mut().insert(
+                    header::WWW_AUTHENTICATE,
+                    if basic_auth {
+                        "Basic realm=\"token\""
+                    } else {
+                        "Bearer"
+                    }
+                    .parse()
+                    .expect("static challenge"),
+                );
+            }
+            response
+        }
+    };
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        "no-store".parse().expect("static cache directive"),
+    );
+    response.headers_mut().insert(
+        header::PRAGMA,
+        "no-cache".parse().expect("static cache directive"),
+    );
+    response
+}
+
+async fn issue_token(
+    components: &AuthComponents,
+    headers: &HeaderMap,
+    body: &[u8],
 ) -> Result<AppJson<TokenResponse>, HttpError> {
     let content_type = headers
         .get(axum::http::header::CONTENT_TYPE)
@@ -139,9 +244,9 @@ async fn token(
     let mut req: TokenRequest = if body.is_empty() {
         TokenRequest::default()
     } else if mime.eq_ignore_ascii_case("application/json") {
-        serde_json::from_slice(&body).map_err(|_| HttpError::invalid_request())?
+        serde_json::from_slice(body).map_err(|_| HttpError::invalid_request())?
     } else if mime.eq_ignore_ascii_case("application/x-www-form-urlencoded") {
-        serde_urlencoded::from_bytes(&body).map_err(|_| HttpError::invalid_request())?
+        serde_urlencoded::from_bytes(body).map_err(|_| HttpError::invalid_request())?
     } else {
         return Err(HttpError::unsupported_media_type());
     };
@@ -179,12 +284,8 @@ async fn token(
                     .split_once(':')
                     .ok_or_else(HttpError::invalid_request)?;
 
-                let id = urlencoding::decode(raw_id)
-                    .map_err(|_| HttpError::invalid_request())?
-                    .into_owned();
-                let secret = urlencoding::decode(raw_secret)
-                    .map_err(|_| HttpError::invalid_request())?
-                    .into_owned();
+                let id = decode_basic_component(raw_id)?;
+                let secret = decode_basic_component(raw_secret)?;
 
                 req.client_id = Some(id);
                 req.client_secret = Some(secret);
@@ -260,4 +361,11 @@ async fn token(
         token_type: "Bearer".to_string(),
         expires_in: effective_ttl,
     }))
+}
+
+fn decode_basic_component(value: &str) -> Result<String, HttpError> {
+    let form_value = value.replace('+', " ");
+    urlencoding::decode(&form_value)
+        .map(|decoded| decoded.into_owned())
+        .map_err(|_| HttpError::invalid_request())
 }

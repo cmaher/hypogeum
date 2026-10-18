@@ -92,3 +92,9 @@ let app = Router::new()
     .route("/optional", get(optional_handler))
     .layer(Extension(validator));
 ```
+
+### API Key Generation
+
+`generate_api_key(prefix)` returns a `GeneratedApiKey` with named `raw_key` and
+`secret_hash` fields. Return the raw key to the credential owner once and persist
+only the hash. Verify future requests with `verify_api_key(raw_key, secret_hash)`.

@@ -190,7 +190,9 @@ JSON Error Envelope (Safe status, code, message) + Extensions (PublicErrorInfo)
 
 ### Uniform Error Response Format
 
-All error responses adhere to the standard JSON envelope:
+Application error responses adhere to the standard JSON envelope. The OAuth token
+endpoint uses `error` and `error_description` fields, supplies a matching challenge
+for failed HTTP authentication, and disables response caching:
 
 ```json
 {
@@ -283,14 +285,21 @@ Every HTTP request traverses `trace_layer` (`TraceLayer`):
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `HYPOGEUM_APP_BIND` | `127.0.0.1:8080` | Socket address for public HTTP listener |
-| `HYPOGEUM_LOG` | `info` | Tracing filter directive |
-| `HYPOGEUM_LOG_FORMAT` | `text` | Log format: `text` or `json` |
-| `HYPOGEUM_ENV_FILE` | *(unset)* | Selects `.env` file (e.g. `env/local.env`; empty disables) |
+| `EXEMPLUM_APP_BIND` | `127.0.0.1:8080` | Socket address for public HTTP listener |
+| `EXEMPLUM_APP_DATABASE_URL` | required | PostgreSQL URL using restricted `exemplum_users` credentials |
+| `EXEMPLUM_APP_JWT_SECRET` | required | Private signing secret, at least 32 bytes |
+| `EXEMPLUM_APP_CEDAR_SCHEMA` | `config/schema.cedarschema` | Schema loaded at startup |
+| `EXEMPLUM_APP_CEDAR_POLICIES` | `config/policies.cedar` | Policies loaded at startup |
+| `EXEMPLUM_LOG` | `info` | Tracing filter directive |
+| `EXEMPLUM_LOG_FORMAT` | `text` | Log format: `text` or `json` |
+| `EXEMPLUM_ENV_FILE` | *(unset)* | Selects `.env` file (e.g. `env/local.env`; empty disables) |
 
 ### Local Execution
 
-Start the app locally with Cargo Make:
+Follow [the example setup](../example/README.md#running-the-application) to
+provision and migrate PostgreSQL and configure a private signing secret. The
+binary checks the runtime adapters before opening its listener and never
+migrates on startup. Run from `example/` so the default policy paths resolve:
 
 ```sh
 cargo make app
@@ -299,7 +308,7 @@ cargo make app
 Or run the binary directly:
 
 ```sh
-cargo run --locked -p app-cli --bin app
+cargo run --locked -p exemplum-app-cli --bin app
 ```
 
 Test with curl:

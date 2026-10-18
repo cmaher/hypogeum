@@ -20,6 +20,7 @@ example/
 └── crates/
     ├── app/              # Composed HTTP router (exemplum-app)
     └── domain/
+        ├── auth/         # Credential verification, sessions, and token exchange
         ├── hello-world/  # In-memory greeting service (exemplum-dmn-hello-world)
         └── users/        # User entity, SeaORM migrations, gRPC (exemplum-dmn-users)
 ```
@@ -32,6 +33,10 @@ Exemplum configuration uses the `EXEMPLUM_` prefix. Configuration precedence is:
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `EXEMPLUM_APP_BIND` | `127.0.0.1:8080` | Public HTTP server listen address |
+| `EXEMPLUM_APP_DATABASE_URL` | required | Runtime connection using the `exemplum_users` role |
+| `EXEMPLUM_APP_JWT_SECRET` | required | Private signing secret containing at least 32 bytes |
+| `EXEMPLUM_APP_CEDAR_SCHEMA` | `config/schema.cedarschema` | Cedar schema loaded at startup |
+| `EXEMPLUM_APP_CEDAR_POLICIES` | `config/policies.cedar` | Cedar policies loaded at startup |
 | `EXEMPLUM_LOG` | `info` | Log level filter |
 | `EXEMPLUM_LOG_FORMAT` | `text` | Logging format (`text` or `json`) |
 | `EXEMPLUM_POSTGRES_PORT` | `5432` | Local PostgreSQL host port in Docker Compose |
@@ -59,9 +64,31 @@ cargo make db-down      # Stop PostgreSQL container
 ### Running the Application
 
 ```sh
-# Run the public HTTP application (binds to 127.0.0.1:8080 by default):
+# From example/, configure local database credentials:
+cp env/local.env.example env/local.env
+# Set EXEMPLUM_APP_JWT_SECRET in env/local.env to a private value:
+openssl rand -hex 32
+cargo make db-up
+cargo make db-provision
+cargo make db-migrate
 cargo make app
 ```
+
+The binary requires explicit database credentials and a signing secret. Before
+binding its listener, it checks the restricted runtime role, user schema,
+credential repository, and PostgreSQL session store. It never runs migrations.
+Sessions survive application restarts when using the same database. Policy files
+are loaded at startup; relative paths resolve from the process working directory.
+Default component factories are for tests and local composition and generate
+independent, ephemeral signing keys.
+
+Authentication routes are `POST /api/auth/login`, `POST /api/auth/logout`, and
+`POST /api/auth/token`. `GET /api/hello/me` accepts a session cookie or signed
+Bearer token and resolves the stored user display name. Password verification
+runs on blocking workers with at most four concurrent checks per auth component.
+The token endpoint accepts form or JSON credentials and HTTP Basic credentials;
+responses use OAuth error fields and prevent caching with `no-store`/`no-cache`.
+Other endpoints retain the shared JSON error envelope.
 
 Verify the running application:
 ```sh
