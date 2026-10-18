@@ -457,3 +457,43 @@ async fn unknown_username_also_performs_blocking_password_verification() {
     ));
     assert_eq!(login.await.unwrap().status(), StatusCode::UNAUTHORIZED);
 }
+
+#[tokio::test]
+async fn invalid_stored_password_parameters_return_redacted_internal_error() {
+    let repo = Arc::new(InMemoryAuthRepo::new());
+    let password = "private-password";
+    let hash = hash_password(password).unwrap().replace("m=19456", "m=1");
+    repo.create(
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+        "password",
+        "broken",
+        &hash,
+        serde_json::json!({}),
+    )
+    .await
+    .unwrap();
+    let response = build_test_app(repo)
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/login")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    serde_json::to_vec(&LoginRequest {
+                        username: "broken".into(),
+                        password: password.into(),
+                    })
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["code"], "internal_error");
+    assert!(!String::from_utf8_lossy(&body).contains(password));
+    assert!(!String::from_utf8_lossy(&body).contains(&hash));
+}
