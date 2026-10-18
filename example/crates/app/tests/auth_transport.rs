@@ -84,10 +84,9 @@ impl TestHarness {
         let schema_content = std::fs::read_to_string(&schema_path)
             .unwrap_or_else(|_| panic!("Failed to read {}", schema_path.display()));
 
-        let authorizer = Arc::new(
-            hypgm_authz::load_schema_and_policies(&schema_content, policies)
-                .expect("Failed to load Cedar schema and policies"),
-        );
+        let (schema, policies) = hypgm_authz::load_schema_and_policies(&schema_content, policies)
+            .expect("Failed to load Cedar schema and policies");
+        let authorizer = Arc::new(hypgm_authz::Authorizer::new(schema, policies));
 
         let user_service = Arc::new(InMemoryUserService::new());
         let auth_repo = Arc::new(InMemoryAuthRepo::new());
@@ -217,7 +216,8 @@ async fn test_login_session_cookie_and_hello_me() {
         .unwrap()
         .to_string();
 
-    let login_res: LoginResponse = resp.json().await.unwrap();
+    let bytes = resp.bytes().await.unwrap();
+    let login_res: LoginResponse = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(login_res.auth_id, auth_id);
     assert_eq!(login_res.user_id, user_id);
 
@@ -230,7 +230,8 @@ async fn test_login_session_cookie_and_hello_me() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
-    let json: serde_json::Value = resp.json().await.unwrap();
+    let bytes = resp.bytes().await.unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(json["message"], format!("Hello, {display_name}!"));
 
     harness.shutdown().await;
@@ -317,7 +318,8 @@ async fn test_two_distinct_users_receive_respective_display_names() {
         .await
         .unwrap();
     assert_eq!(resp_me1.status(), StatusCode::OK);
-    let json1: serde_json::Value = resp_me1.json().await.unwrap();
+    let bytes1 = resp_me1.bytes().await.unwrap();
+    let json1: serde_json::Value = serde_json::from_slice(&bytes1).unwrap();
     assert_eq!(json1["message"], "Hello, User One!");
 
     // GET /api/hello/me for User 2
@@ -328,7 +330,8 @@ async fn test_two_distinct_users_receive_respective_display_names() {
         .await
         .unwrap();
     assert_eq!(resp_me2.status(), StatusCode::OK);
-    let json2: serde_json::Value = resp_me2.json().await.unwrap();
+    let bytes2 = resp_me2.bytes().await.unwrap();
+    let json2: serde_json::Value = serde_json::from_slice(&bytes2).unwrap();
     assert_eq!(json2["message"], "Hello, User Two!");
 
     harness.shutdown().await;
@@ -377,7 +380,8 @@ async fn test_token_exchange_and_jwt_bearer_auth() {
         .unwrap();
     assert_eq!(good_token_resp.status(), StatusCode::OK);
 
-    let token_res: TokenResponse = good_token_resp.json().await.unwrap();
+    let bytes = good_token_resp.bytes().await.unwrap();
+    let token_res: TokenResponse = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(token_res.token_type, "Bearer");
     assert!(!token_res.access_token.is_empty());
 
@@ -390,7 +394,8 @@ async fn test_token_exchange_and_jwt_bearer_auth() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
-    let json: serde_json::Value = resp.json().await.unwrap();
+    let bytes = resp.bytes().await.unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(json["message"], "Hello, API Developer!");
 
     harness.shutdown().await;
@@ -430,7 +435,8 @@ forbid(principal, action == Action::"greet", resource);
         .await
         .unwrap();
     assert_eq!(token_resp.status(), StatusCode::OK);
-    let token_res: TokenResponse = token_resp.json().await.unwrap();
+    let bytes = token_resp.bytes().await.unwrap();
+    let token_res: TokenResponse = serde_json::from_slice(&bytes).unwrap();
 
     let resp = client
         .get(format!("{}/api/hello/me", harness.endpoint))

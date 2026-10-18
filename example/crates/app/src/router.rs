@@ -73,15 +73,14 @@ pub fn router_with_postgres(
     )
 }
 
-pub fn router_with_components<S, R>(
+pub fn router_with_components<S>(
     hello_router: Router<()>,
-    auth_repo: Arc<R>,
+    auth_repo: Arc<dyn AuthRepo>,
     session_store: S,
     jwt_secret: Vec<u8>,
 ) -> Router<()>
 where
     S: tower_sessions::SessionStore + Clone + Send + Sync + 'static,
-    R: AuthRepo + 'static,
 {
     let auth_state = AuthState::new(auth_repo.clone(), jwt_secret.clone());
     let auth_routes = crate::auth::controller::router(auth_state);

@@ -8,8 +8,7 @@ use sea_orm::{
 };
 use sqlx::PgPool;
 use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::RwLock;
+use std::sync::{Arc, RwLock};
 use uuid::Uuid;
 
 #[derive(Clone, Default)]
@@ -30,7 +29,7 @@ impl AuthRepo for InMemoryAuthRepo {
         identity_type: &str,
         identifier: &str,
     ) -> Result<Option<AuthIdentity>, RepoError> {
-        let map = self.identities.read().await;
+        let map = self.identities.read().unwrap();
         for ident in map.values() {
             if ident.identity_type == identity_type
                 && ident.identifier == identifier
@@ -43,7 +42,7 @@ impl AuthRepo for InMemoryAuthRepo {
     }
 
     async fn find_active_by_id(&self, id: Uuid) -> Result<Option<AuthIdentity>, RepoError> {
-        let map = self.identities.read().await;
+        let map = self.identities.read().unwrap();
         if let Some(ident) = map.get(&id) {
             if ident.revoked_at.is_none() {
                 return Ok(Some(ident.clone()));
@@ -53,12 +52,13 @@ impl AuthRepo for InMemoryAuthRepo {
     }
 
     async fn find_by_user_id(&self, user_id: Uuid) -> Result<Vec<AuthIdentity>, RepoError> {
-        let map = self.identities.read().await;
-        Ok(map
+        let map = self.identities.read().unwrap();
+        let list: Vec<AuthIdentity> = map
             .values()
             .filter(|i| i.user_id == user_id)
             .cloned()
-            .collect())
+            .collect();
+        Ok(list)
     }
 
     async fn create(
@@ -82,12 +82,13 @@ impl AuthRepo for InMemoryAuthRepo {
             updated_at: now,
             revoked_at: None,
         };
-        self.identities.write().await.insert(id, ident.clone());
+        let mut map = self.identities.write().unwrap();
+        map.insert(id, ident.clone());
         Ok(ident)
     }
 
     async fn revoke(&self, id: Uuid) -> Result<(), RepoError> {
-        let mut map = self.identities.write().await;
+        let mut map = self.identities.write().unwrap();
         if let Some(ident) = map.get_mut(&id) {
             ident.revoked_at = Some(Utc::now());
             Ok(())

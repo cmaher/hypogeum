@@ -24,7 +24,7 @@ sha2 = "0.10"
 hex = "0.4"
 tower = "0.5"
 tower-sessions = "0.14"
-tower-sessions-sqlx-store = { version = "0.14", default-features = false, features = ["postgres"] }
+rmp-serde = "1"
 axum-login = "0.18"
 jsonwebtoken = "9"
 serde_urlencoded = "0.7"
