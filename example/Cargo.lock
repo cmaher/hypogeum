@@ -1288,17 +1288,26 @@ name = "exemplum-dmn-auth"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "axum",
+ "axum-login",
+ "base64 0.22.1",
  "chrono",
+ "http-body-util",
  "hypgm-authn",
  "hypgm-errors",
+ "hypgm-http",
  "hypgm-test-support",
  "hypgmx-rdbms",
+ "jsonwebtoken",
  "sea-orm",
  "serde",
  "serde_json",
+ "serde_urlencoded",
  "sqlx",
  "thiserror",
  "tokio",
+ "tower",
+ "tower-sessions",
  "uuid",
 ]
 

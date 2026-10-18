@@ -1,0 +1,195 @@
+use axum::body::Body;
+use axum::http::{Request, StatusCode, header};
+use base64::Engine;
+use base64::prelude::BASE64_STANDARD;
+use exemplum_dmn_auth::api::{LoginRequest, LoginResponse, TokenResponse};
+use exemplum_dmn_auth::backend::ExemplumAuthBackend;
+use exemplum_dmn_auth::controller::{AuthState, router};
+use exemplum_dmn_auth::repo::{AuthRepo, InMemoryAuthRepo};
+use http_body_util::BodyExt;
+use hypgm_authn::api_key::generate_api_key;
+use hypgm_authn::password::hash_password;
+use hypgm_authn::session::PrincipalAuthBackend;
+use std::sync::Arc;
+use tower::ServiceExt;
+use tower_sessions::SessionManagerLayer;
+use uuid::Uuid;
+
+fn build_test_app(repo: Arc<InMemoryAuthRepo>) -> axum::Router {
+    let auth_state = AuthState::new(repo.clone(), b"test-secret-key-32bytes-for-jwt!".to_vec())
+        .with_ttl(3600, 7200)
+        .with_api_key_prefix("exmpl_key");
+    let routes = router(auth_state);
+
+    let backend = ExemplumAuthBackend::from_arc(repo);
+    let login_backend = PrincipalAuthBackend::new(backend);
+    let session_store = tower_sessions::MemoryStore::default();
+    let session_layer = SessionManagerLayer::new(session_store);
+    let auth_layer = axum_login::AuthManagerLayerBuilder::new(login_backend, session_layer).build();
+
+    axum::Router::new().merge(routes).layer(auth_layer)
+}
+
+#[tokio::test]
+async fn test_login_success_and_failure() {
+    let repo = Arc::new(InMemoryAuthRepo::new());
+    let user_id = Uuid::new_v4();
+    let auth_id = Uuid::new_v4();
+    let pass_hash = hash_password("ValidPassword123!").unwrap();
+
+    repo.create(
+        auth_id,
+        user_id,
+        "password",
+        "alice",
+        &pass_hash,
+        serde_json::json!({}),
+    )
+    .await
+    .unwrap();
+
+    let app = build_test_app(repo);
+
+    // Wrong password -> 401
+    let bad_req = Request::builder()
+        .method("POST")
+        .uri("/login")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            serde_json::to_vec(&LoginRequest {
+                username: "alice".into(),
+                password: "WrongPassword".into(),
+            })
+            .unwrap(),
+        ))
+        .unwrap();
+
+    let resp = app.clone().oneshot(bad_req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+    // Correct password -> 200 and Set-Cookie
+    let good_req = Request::builder()
+        .method("POST")
+        .uri("/login")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            serde_json::to_vec(&LoginRequest {
+                username: "alice".into(),
+                password: "ValidPassword123!".into(),
+            })
+            .unwrap(),
+        ))
+        .unwrap();
+
+    let resp = app.oneshot(good_req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert!(resp.headers().contains_key(header::SET_COOKIE));
+
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let login_resp: LoginResponse = serde_json::from_slice(&body).unwrap();
+    assert_eq!(login_resp.auth_id, auth_id);
+    assert_eq!(login_resp.user_id, user_id);
+}
+
+#[tokio::test]
+async fn test_token_exchange_standalone_api_key_and_clamped_ttl() {
+    let repo = Arc::new(InMemoryAuthRepo::new());
+    let user_id = Uuid::new_v4();
+    let auth_id = Uuid::new_v4();
+    let (raw_key, key_hash) = generate_api_key("exmpl_key");
+
+    // Standalone key stores key_hash in identifier, NEVER the raw key
+    repo.create(
+        auth_id,
+        user_id,
+        "api_key",
+        &key_hash,
+        &key_hash,
+        serde_json::json!({}),
+    )
+    .await
+    .unwrap();
+
+    let app = build_test_app(repo);
+
+    // Token exchange with custom requested TTL exceeding max_ttl (7200) -> clamped to 7200
+    let payload = format!(r#"   {{"api_key": "{raw_key}", "expires_in": 99999}}  "#);
+    let req = Request::builder()
+        .method("POST")
+        .uri("/token")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(payload))
+        .unwrap();
+
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let token_resp: TokenResponse = serde_json::from_slice(&body).unwrap();
+    assert_eq!(token_resp.expires_in, 7200); // clamped to max_token_ttl
+    assert_eq!(token_resp.token_type, "Bearer");
+
+    // Malformed JSON returns 400 Bad Request
+    let bad_json = Request::builder()
+        .method("POST")
+        .uri("/token")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(r#"{"api_key": "unclosed_json"#))
+        .unwrap();
+
+    let resp = app.clone().oneshot(bad_json).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    // Invalid key prefix returns 401
+    let bad_prefix = Request::builder()
+        .method("POST")
+        .uri("/token")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(r#"{"api_key": "wrongprefix_12345"}"#))
+        .unwrap();
+
+    let resp = app.oneshot(bad_prefix).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn test_token_exchange_http_basic_auth() {
+    let repo = Arc::new(InMemoryAuthRepo::new());
+    let user_id = Uuid::new_v4();
+    let auth_id = Uuid::new_v4();
+    let client_id = "client_app_123";
+    let client_secret = "super_secret_client_pass";
+    let secret_hash = hypgm_authn::api_key::hash_api_key(client_secret);
+
+    repo.create(
+        auth_id,
+        user_id,
+        "api_key",
+        client_id,
+        &secret_hash,
+        serde_json::json!({}),
+    )
+    .await
+    .unwrap();
+
+    let app = build_test_app(repo);
+
+    let basic_creds = format!("{client_id}:{client_secret}");
+    let basic_header = format!("Basic {}", BASE64_STANDARD.encode(basic_creds));
+
+    let req = Request::builder()
+        .method("POST")
+        .uri("/token")
+        .header(header::AUTHORIZATION, basic_header)
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from("grant_type=client_credentials"))
+        .unwrap();
+
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let token_resp: TokenResponse = serde_json::from_slice(&body).unwrap();
+    assert_eq!(token_resp.token_type, "Bearer");
+    assert_eq!(token_resp.expires_in, 3600); // default TTL
+}

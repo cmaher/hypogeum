@@ -17,9 +17,18 @@ serde_json.workspace = true
 async-trait.workspace = true
 tokio.workspace = true
 thiserror.workspace = true
+axum = { version = "0.8", default-features = false, features = ["tokio", "json"] }
+axum-login = "0.18"
+jsonwebtoken = "9"
+serde_urlencoded = "0.7"
+hypgm-http = { path = "../../../../crates/core/http" }
+base64 = "0.22"
 
 [dev-dependencies]
 hypgm-test-support = { path = "../../../../crates/core/test-support" }
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+tower-sessions = "0.14"
 
 [lints]
 workspace = true
