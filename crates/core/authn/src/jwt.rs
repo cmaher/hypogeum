@@ -51,6 +51,29 @@ pub struct Claims {
     pub aud: Option<Audience>,
 }
 
+#[derive(Deserialize)]
+struct ValidatedClaims {
+    #[serde(flatten)]
+    claims: Claims,
+    #[serde(default, rename = "nbf", deserialize_with = "validate_not_before")]
+    _not_before: (),
+}
+
+fn validate_not_before<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<(), D::Error> {
+    // jsonwebtoken skips malformed or out-of-range optional NumericDates.
+    // Require a supported number here; the library checks its time and leeway.
+    let timestamp = serde_json::Number::deserialize(deserializer)?;
+    if timestamp.as_u64().is_some()
+        || timestamp
+            .as_f64()
+            .is_some_and(|value| value >= 0.0 && value < u64::MAX as f64)
+    {
+        Ok(())
+    } else {
+        Err(serde::de::Error::custom("Invalid not-before timestamp"))
+    }
+}
+
 impl Claims {
     pub fn new(auth_id: Uuid, sub: Uuid, exp: usize) -> Self {
         Self {
@@ -187,14 +210,13 @@ impl JwtValidator {
             return Err(AuthError::MissingCredentials);
         }
 
-        let token_data = decode::<Claims>(token, &self.decoding_key, &self.validation).map_err(
-            |err| match err.kind() {
+        let token_data = decode::<ValidatedClaims>(token, &self.decoding_key, &self.validation)
+            .map_err(|err| match err.kind() {
                 ErrorKind::ExpiredSignature => AuthError::ExpiredToken,
                 _ => AuthError::InvalidToken(err.to_string()),
-            },
-        )?;
+            })?;
 
-        Ok(token_data.claims)
+        Ok(token_data.claims.claims)
     }
 
     pub fn verify_token(&self, token: &str) -> Result<Principal, AuthError> {

@@ -781,3 +781,51 @@ fn supplied_entities_cannot_remove_schema_action_membership() {
         Decision::Deny
     );
 }
+
+#[test]
+fn preloaded_entities_must_conform_to_schema() {
+    let (schema, policies) = load_schema_and_policies(
+        r#"entity User; entity Document { is_secret: Bool };
+        action "View" appliesTo { principal: [User], resource: [Document] };"#,
+        r#"permit(principal, action, resource);
+        forbid(principal, action, resource) when { resource.is_secret == true };"#,
+    )
+    .unwrap();
+    for entity in [
+        serde_json::json!({"uid": {"type": "Document", "id": "doc"}, "attrs": {"is_secret": "true"}, "parents": []}),
+        serde_json::json!({"uid": {"type": "Document", "id": "doc"}, "attrs": {}, "parents": []}),
+        serde_json::json!({"uid": {"type": "Document", "id": "doc"}, "attrs": {"is_secret": true, "extra": true}, "parents": []}),
+        serde_json::json!({"uid": {"type": "Unknown", "id": "doc"}, "attrs": {}, "parents": []}),
+        serde_json::json!({"uid": {"type": "Document", "id": "doc"}, "attrs": {"is_secret": true}, "parents": [{"type": "User", "id": "owner"}]}),
+    ] {
+        let entities = Entities::from_json_value(serde_json::json!([entity]), None).unwrap();
+        assert!(
+            matches!(
+                Authorizer::new_with_entities(schema.clone(), policies.clone(), entities.clone()),
+                Err(AuthzError::PolicyLoadError(_))
+            ),
+            "constructor accepted invalid entity: {entity}"
+        );
+        assert!(
+            matches!(
+                Authorizer::new(schema.clone(), policies.clone())
+                    .unwrap()
+                    .with_entities(entities),
+                Err(AuthzError::PolicyLoadError(_))
+            ),
+            "replacement accepted invalid entity: {entity}"
+        );
+    }
+    let principal = Principal::new(Uuid::new_v4(), Uuid::new_v4(), AuthMethod::Session);
+    for (is_secret, expected) in [(true, Decision::Deny), (false, Decision::Allow)] {
+        let entities = Entities::from_json_value(serde_json::json!([{
+            "uid": {"type": "Document", "id": "doc"}, "attrs": {"is_secret": is_secret}, "parents": []
+        }]), None).unwrap();
+        let authorizer =
+            Authorizer::new_with_entities(schema.clone(), policies.clone(), entities).unwrap();
+        assert_eq!(
+            authorizer.is_authorized(&principal, ("Action", "View"), ("Document", "doc")),
+            expected
+        );
+    }
+}

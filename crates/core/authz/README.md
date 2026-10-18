@@ -110,7 +110,8 @@ let app = Router::new()
 ```
 
 Authorizer constructors and entity replacement return `Result` so invalid entity graphs
-fail during configuration. Schema action entities are always retained; runtime actions
+fail during configuration. The complete preloaded graph is validated against the schema,
+including attribute types and allowed entity hierarchies. Schema action entities are always retained; runtime actions
 must conform to the schema and cannot replace its action hierarchy.
 
 ### Request conformance and execution context

@@ -105,7 +105,10 @@ Supply at least 32 cryptographically random bytes in production. The low-level
 ensure key strength and algorithm compatibility.
 
 JWT expiration is required. A present `nbf` (not-before) claim is checked using
-the same configured clock leeway as expiration; `nbf` may be omitted.
+the same configured clock leeway as expiration; `nbf` may be omitted. Present
+values must be non-negative JSON numbers within the validator's timestamp range.
+Malformed values, including strings, booleans, and null, are rejected. Fractional
+timestamps remain supported.
 
 API-key generation and prefix validation both strip all trailing underscores
 from the configured prefix and add one underscore separator before the hex payload.

@@ -100,7 +100,7 @@ impl Authorizer {
 
     /// Replaces preloaded entities, preserving the schema-defined action hierarchy.
     pub fn with_entities(mut self, entities: Entities) -> Result<Self, AuthzError> {
-        self.entities = entities
+        let entities = entities
             .upsert_entities(
                 self.schema
                     .action_entities()
@@ -109,6 +109,8 @@ impl Authorizer {
                     .cloned(),
                 None,
             )
+            .map_err(AuthzError::policy_load)?;
+        self.entities = Entities::from_entities(entities.iter().cloned(), Some(&self.schema))
             .map_err(AuthzError::policy_load)?;
         Ok(self)
     }

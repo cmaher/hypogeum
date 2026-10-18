@@ -520,3 +520,73 @@ fn not_before_and_expiration_use_configured_leeway() {
         }
     }
 }
+
+#[test]
+fn malformed_not_before_claims_are_rejected() {
+    for algorithm in [Algorithm::HS256, Algorithm::RS256] {
+        let (encoding, decoding) = signing_keys(algorithm);
+        let validator = JwtValidator::new(
+            decoding,
+            JwtConfig {
+                algorithm,
+                ..Default::default()
+            },
+        );
+        for nbf in [
+            serde_json::json!("9999999999"),
+            serde_json::json!(true),
+            serde_json::json!(false),
+            serde_json::Value::Null,
+            serde_json::json!([]),
+            serde_json::json!({ "time": 9999999999u64 }),
+            serde_json::json!(1e100),
+            serde_json::json!(-1),
+        ] {
+            let mut claims = serde_json::to_value(Claims::new(
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+                now_epoch() + 7200,
+            ))
+            .unwrap();
+            claims["nbf"] = nbf.clone();
+            let token = encode(&Header::new(algorithm), &claims, &encoding).unwrap();
+            assert!(
+                matches!(
+                    validator.verify_token(&token),
+                    Err(AuthError::InvalidToken(_))
+                ),
+                "{algorithm:?} accepted malformed nbf: {nbf}"
+            );
+        }
+    }
+}
+
+#[test]
+fn fractional_not_before_claims_are_checked() {
+    for algorithm in [Algorithm::HS256, Algorithm::RS256] {
+        let (encoding, decoding) = signing_keys(algorithm);
+        let validator = JwtValidator::new(
+            decoding,
+            JwtConfig {
+                algorithm,
+                ..Default::default()
+            },
+        );
+        let now = now_epoch();
+        for (nbf, valid) in [
+            ((now - 3600) as f64 + 0.5, true),
+            ((now + 3600) as f64 + 0.5, false),
+        ] {
+            let mut claims =
+                serde_json::to_value(Claims::new(Uuid::new_v4(), Uuid::new_v4(), now + 7200))
+                    .unwrap();
+            claims["nbf"] = serde_json::json!(nbf);
+            let token = encode(&Header::new(algorithm), &claims, &encoding).unwrap();
+            assert_eq!(
+                validator.verify_token(&token).is_ok(),
+                valid,
+                "{algorithm:?}: nbf={nbf}"
+            );
+        }
+    }
+}
