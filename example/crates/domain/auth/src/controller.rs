@@ -21,7 +21,22 @@ use std::sync::Arc;
 use crate::api::{LoginRequest, LoginResponse, TokenRequest, TokenResponse};
 use crate::repo::AuthRepo;
 
-const MAX_PASSWORD_VERIFICATIONS: usize = 4;
+// A synthetic Argon2id hash with the same cost as hash_password's defaults.
+// No password can authenticate a missing identity, regardless of this comparison.
+const DUMMY_PASSWORD_HASH: &str = "$argon2id$v=19$m=19456,t=2,p=1$ZHVtbXktbG9naW4tc2FsdA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+
+#[derive(Clone, Copy, Debug)]
+pub struct PasswordConfig {
+    pub max_verifications: std::num::NonZeroUsize,
+}
+
+impl Default for PasswordConfig {
+    fn default() -> Self {
+        Self {
+            max_verifications: std::num::NonZeroUsize::new(4).expect("positive default"),
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct TokenConfig {
@@ -70,18 +85,23 @@ pub struct AuthComponents {
 }
 
 impl AuthComponents {
-    pub fn new(repo: Arc<dyn AuthRepo>, token_config: TokenConfig) -> Self {
+    pub fn new(
+        repo: Arc<dyn AuthRepo>,
+        token_config: TokenConfig,
+        password_config: PasswordConfig,
+    ) -> Self {
         Self {
             repo,
             token_config,
             password_verifications: Arc::new(tokio::sync::Semaphore::new(
-                MAX_PASSWORD_VERIFICATIONS,
+                password_config.max_verifications.get(),
             )),
         }
     }
 }
 
 pub struct AuthComponentsFactory {
+    pub password_config: PasswordConfig,
     pub repo: Arc<dyn AuthRepo>,
     pub token_config: TokenConfig,
 }
@@ -90,6 +110,7 @@ impl Default for AuthComponentsFactory {
     fn default() -> Self {
         Self {
             repo: Arc::new(crate::repo::InMemoryAuthRepo::new()),
+            password_config: PasswordConfig::default(),
             token_config: TokenConfig::default(),
         }
     }
@@ -97,7 +118,7 @@ impl Default for AuthComponentsFactory {
 
 impl AuthComponentsFactory {
     pub fn build(self) -> AuthComponents {
-        AuthComponents::new(self.repo, self.token_config)
+        AuthComponents::new(self.repo, self.token_config, self.password_config)
     }
 }
 
@@ -118,11 +139,14 @@ async fn login(
         .repo
         .find_active_by_type_and_identifier("password", &req.username)
         .await
-        .map_err(|e| AuthError::Internal(e.to_string()))?
-        .ok_or(AuthError::InvalidCredentials)?;
+        .map_err(|e| AuthError::Internal(e.to_string()))?;
 
     let password = req.password;
-    let secret_hash = identity.secret_hash;
+    let secret_hash = identity
+        .as_ref()
+        .map(|identity| identity.secret_hash.as_str())
+        .unwrap_or(DUMMY_PASSWORD_HASH)
+        .to_owned();
     let permit = components
         .password_verifications
         .clone()
@@ -139,9 +163,9 @@ async fn login(
     .await
     .map_err(|e| AuthError::Internal(e.to_string()))??;
 
-    if !valid {
-        return Err(AuthError::InvalidCredentials.into());
-    }
+    let identity = identity
+        .filter(|_| valid)
+        .ok_or(AuthError::InvalidCredentials)?;
 
     let principal = Principal::new(identity.id, identity.user_id, AuthMethod::Session);
     auth_session
@@ -368,4 +392,68 @@ fn decode_basic_component(value: &str) -> Result<String, HttpError> {
     urlencoding::decode(&form_value)
         .map(|decoded| decoded.into_owned())
         .map_err(|_| HttpError::invalid_request())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::Request;
+    use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn configured_password_capacity_blocks_login_until_a_permit_is_released() {
+        for capacity in [1, 3] {
+            let repo = Arc::new(crate::repo::InMemoryAuthRepo::new());
+            // An invalid hash makes an incorrectly admitted request finish immediately.
+            repo.create(
+                uuid::Uuid::new_v4(),
+                uuid::Uuid::new_v4(),
+                "password",
+                "alice",
+                "invalid",
+                serde_json::json!({}),
+            )
+            .await
+            .unwrap();
+            let components = AuthComponents::new(
+                repo.clone(),
+                TokenConfig::default(),
+                PasswordConfig {
+                    max_verifications: std::num::NonZeroUsize::new(capacity).unwrap(),
+                },
+            );
+            let permits = components
+                .password_verifications
+                .clone()
+                .acquire_many_owned(capacity as u32)
+                .await
+                .unwrap();
+            let backend =
+                PrincipalAuthBackend::new(crate::backend::ExemplumAuthBackend::from_arc(repo));
+            let layer = axum_login::AuthManagerLayerBuilder::new(
+                backend,
+                tower_sessions::SessionManagerLayer::new(tower_sessions::MemoryStore::default()),
+            )
+            .build();
+            let app = router(components).layer(layer);
+            let request = Request::builder()
+                .method("POST")
+                .uri("/login")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"username":"alice","password":"wrong"}"#))
+                .unwrap();
+            let mut login = Box::pin(app.oneshot(request));
+            assert!(
+                tokio::time::timeout(std::time::Duration::from_millis(50), &mut login)
+                    .await
+                    .is_err()
+            );
+            drop(permits);
+            assert_eq!(
+                login.await.unwrap().status(),
+                StatusCode::INTERNAL_SERVER_ERROR
+            );
+        }
+    }
 }

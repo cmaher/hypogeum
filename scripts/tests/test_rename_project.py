@@ -110,7 +110,7 @@ class RenameProjectTests(unittest.TestCase):
             "example/crates/domain/auth/src/repo/mod.rs",
             "example/crates/domain/auth/src/repo/postgres.rs",
             "example/crates/domain/auth/src/session.rs",
-            "example/crates/app/src/state.rs",
+            "example/crates/app/src/components.rs",
             "example/crates/app/src/router.rs",
             "example/infra/postgres/provision.sql",
             "example/config/schema.cedarschema",
@@ -144,7 +144,7 @@ class RenameProjectTests(unittest.TestCase):
         auth_backend = (self.root / "example/crates/domain/auth/src/backend.rs").read_text()
         auth_models = (self.root / "example/crates/domain/auth/src/models.rs").read_text()
         auth_session = (self.root / "example/crates/domain/auth/src/session.rs").read_text()
-        app_state = (self.root / "example/crates/app/src/state.rs").read_text()
+        app_components = (self.root / "example/crates/app/src/components.rs").read_text()
         provision = (self.root / "example/infra/postgres/provision.sql").read_text()
 
         self.assertIn(f"{TARGET}-app", app_cargo)
@@ -152,7 +152,7 @@ class RenameProjectTests(unittest.TestCase):
         self.assertIn(f"pub struct {display(TARGET)}AuthBackend", auth_backend)
         self.assertIn(f'schema_name = "{TARGET}"', auth_models)
         self.assertIn(f'new_with_schema(pool, "{TARGET}")', auth_session)
-        self.assertIn(f'new_with_schema(pool.clone(), "{TARGET}")', app_state)
+        self.assertIn(f'new_with_schema(pool.clone(), "{TARGET}")', app_components)
         self.assertIn(f'GRANT SELECT, INSERT, UPDATE, DELETE ON {TARGET}.auth_identities TO {TARGET}_users', migration_auth)
         self.assertIn(f'GRANT SELECT, INSERT, UPDATE, DELETE ON {TARGET}.sessions TO {TARGET}_users', migration_auth)
         self.assertIn(f"POSTGRES_DB: {TARGET}", compose)

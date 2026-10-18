@@ -30,6 +30,7 @@ fn app_command(url: &str, bind: &str) -> Command {
         .env("EXEMPLUM_APP_DATABASE_URL", url)
         .env("EXEMPLUM_APP_JWT_SECRET", TEST_JWT_SECRET)
         .env("EXEMPLUM_LOG", "off")
+        .env("EXEMPLUM_APP_SESSION_CLEANUP_INTERVAL_SECONDS", "1")
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
@@ -101,6 +102,30 @@ async fn executable_uses_persisted_credentials_sessions_and_configured_signing_k
         mut process,
         endpoint,
     } = start_app(&db.users_url).await;
+    sqlx::query("INSERT INTO exemplum.sessions (id, data, expiry_date) VALUES ('expired', $1, now() - interval '1 hour'), ('unexpired', $1, now() + interval '1 hour')")
+        .bind(vec![0u8]).execute(&pool).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            let exists: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT FROM exemplum.sessions WHERE id='expired')",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            if !exists {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("executable did not delete expired sessions");
+    let exists: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT FROM exemplum.sessions WHERE id='unexpired')")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(exists, "cleanup removed an active session");
     let client = reqwest::Client::new();
     let response = client
         .post(format!("{endpoint}/api/auth/login"))

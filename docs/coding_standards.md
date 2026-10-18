@@ -122,6 +122,14 @@ deserialize typed configuration, and use types that redact credentials when
 formatted. Never mutate process environment. Libraries accept explicit values and
 injected dependencies.
 
+Prefer typed, validated configuration over fixed constants for operational values
+that depend on deployment resources or workload: concurrency limits, worker counts,
+queue capacities, timeouts, retry budgets, and maintenance intervals. Supply sensible
+defaults, expose overrides at the binary boundary, and inject the resolved values
+into libraries. Reject zero or out-of-range values when they would disable progress
+or exceed an underlying API's limits. Reserve constants for protocol values and
+invariants that should be the same in every deployment.
+
 ## Logging and tracing
 
 Initialize logging once at the binary boundary. Support typed logging

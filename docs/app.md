@@ -75,6 +75,7 @@ where
     let auth_components = AuthComponents::new(
         components.auth_repo.clone(),
         components.token_config.clone(),
+        components.password_config,
     );
     let auth_routes = auth::controller::router(auth_components);
 
@@ -288,6 +289,8 @@ Every HTTP request traverses `trace_layer` (`TraceLayer`):
 | `EXEMPLUM_APP_BIND` | `127.0.0.1:8080` | Socket address for public HTTP listener |
 | `EXEMPLUM_APP_DATABASE_URL` | required | PostgreSQL URL using restricted `exemplum_users` credentials |
 | `EXEMPLUM_APP_JWT_SECRET` | required | Private signing secret, at least 32 bytes |
+| `EXEMPLUM_APP_MAX_PASSWORD_VERIFICATIONS` | `4` | Maximum concurrent password checks; must be positive and fit the semaphore capacity |
+| `EXEMPLUM_APP_SESSION_CLEANUP_INTERVAL_SECONDS` | `3600` | Positive interval between expired-session cleanup runs |
 | `EXEMPLUM_APP_CEDAR_SCHEMA` | `config/schema.cedarschema` | Schema loaded at startup |
 | `EXEMPLUM_APP_CEDAR_POLICIES` | `config/policies.cedar` | Policies loaded at startup |
 | `EXEMPLUM_LOG` | `info` | Tracing filter directive |

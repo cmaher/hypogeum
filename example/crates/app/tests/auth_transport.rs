@@ -102,6 +102,7 @@ impl TestHarness {
             authorizer,
             session_store,
             token_config,
+            Default::default(),
         );
 
         let router = exemplum_app::router(components);
@@ -571,8 +572,12 @@ async fn postgres_e2e_auth_transport(
     let token_config =
         exemplum_app::TokenConfig::new(b"test-jwt-secret-key-32-bytes-long!".to_vec());
 
-    let components =
-        exemplum_app::AppComponentsFactory::from_pool(pool.clone(), authorizer, token_config);
+    let components = exemplum_app::AppComponentsFactory::from_pool(
+        pool.clone(),
+        authorizer,
+        token_config,
+        Default::default(),
+    );
     let router = exemplum_app::router(components);
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

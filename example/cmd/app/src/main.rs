@@ -19,10 +19,37 @@ struct AppConfig {
     database_url: Secret,
     #[serde(deserialize_with = "deserialize_signing_secret")]
     jwt_secret: Secret,
+    #[serde(
+        default = "default_max_password_verifications",
+        deserialize_with = "deserialize_max_password_verifications"
+    )]
+    max_password_verifications: std::num::NonZeroUsize,
+    #[serde(default = "default_session_cleanup_interval_seconds")]
+    session_cleanup_interval_seconds: std::num::NonZeroU64,
     #[serde(default = "default_cedar_schema")]
     cedar_schema: PathBuf,
     #[serde(default = "default_cedar_policies")]
     cedar_policies: PathBuf,
+}
+
+fn default_max_password_verifications() -> std::num::NonZeroUsize {
+    exemplum_app::PasswordConfig::default().max_verifications
+}
+
+fn deserialize_max_password_verifications<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<std::num::NonZeroUsize, D::Error> {
+    let value = std::num::NonZeroUsize::deserialize(deserializer)?;
+    if value.get() > tokio::sync::Semaphore::MAX_PERMITS {
+        return Err(serde::de::Error::custom(
+            "Password verification limit exceeds semaphore capacity",
+        ));
+    }
+    Ok(value)
+}
+
+fn default_session_cleanup_interval_seconds() -> std::num::NonZeroU64 {
+    std::num::NonZeroU64::new(3600).expect("positive default")
 }
 
 fn default_cedar_schema() -> PathBuf {
@@ -85,6 +112,9 @@ async fn main() -> anyhow::Result<()> {
         pool.clone(),
         Arc::new(hypgm_authz::Authorizer::new(schema, policies)),
         exemplum_app::TokenConfig::new(config.jwt_secret.expose().as_bytes().to_vec()),
+        exemplum_app::PasswordConfig {
+            max_verifications: config.max_password_verifications,
+        },
     );
     // Check the actual runtime adapters before opening the listener; never migrate here.
     components
@@ -104,15 +134,29 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!(bind = %config.bind, "app listening");
 
-    axum::serve(listener, exemplum_app::router(components))
+    let session_store = components.session_store.clone();
+    let mut background = tokio::task::JoinSet::new();
+    background.spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(
+            config.session_cleanup_interval_seconds.get(),
+        ));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            interval.tick().await;
+            if let Err(error) = session_store.delete_expired().await {
+                tracing::error!(%error, "Failed to clean up expired sessions");
+            }
+        }
+    });
+    let result = axum::serve(listener, exemplum_app::router(components))
         .with_graceful_shutdown(async {
             shutdown().await;
             tracing::info!("app shutting down");
         })
-        .await
-        .context("App server failed")?;
-
+        .await;
+    background.shutdown().await;
     pool.close().await;
+    result.context("App server failed")?;
     tracing::info!("app stopped");
     Ok(())
 }
@@ -239,5 +283,68 @@ mod configuration_regressions {
                 length >= 32
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod resource_configuration_tests {
+    #[test]
+    fn zero_resource_settings_are_rejected() {
+        for key in [
+            "EXEMPLUM_APP_MAX_PASSWORD_VERIFICATIONS",
+            "EXEMPLUM_APP_SESSION_CLEANUP_INTERVAL_SECONDS",
+        ] {
+            let env = hypgm_envconfig::EnvSource::from_pairs([
+                (
+                    "EXEMPLUM_APP_DATABASE_URL",
+                    "postgres://user:pass@localhost/db",
+                ),
+                (
+                    "EXEMPLUM_APP_JWT_SECRET",
+                    "private-test-secret-with-at-least-32-bytes",
+                ),
+                (key, "0"),
+            ]);
+            assert!(
+                env.deserialize::<super::AppConfig>("EXEMPLUM_APP_")
+                    .is_err(),
+                "{key} must be positive"
+            );
+        }
+    }
+
+    #[test]
+    fn resource_settings_have_defaults_and_accept_overrides() {
+        let base = [
+            (
+                "EXEMPLUM_APP_DATABASE_URL",
+                "postgres://user:pass@localhost/db",
+            ),
+            (
+                "EXEMPLUM_APP_JWT_SECRET",
+                "private-test-secret-with-at-least-32-bytes",
+            ),
+        ];
+        let defaults: super::AppConfig = hypgm_envconfig::EnvSource::from_pairs(base)
+            .deserialize("EXEMPLUM_APP_")
+            .unwrap();
+        assert_eq!(defaults.max_password_verifications.get(), 4);
+        assert_eq!(defaults.session_cleanup_interval_seconds.get(), 3600);
+        let env = hypgm_envconfig::EnvSource::from_pairs(base.into_iter().chain([
+            ("EXEMPLUM_APP_MAX_PASSWORD_VERIFICATIONS", "2"),
+            ("EXEMPLUM_APP_SESSION_CLEANUP_INTERVAL_SECONDS", "15"),
+        ]));
+        let config: super::AppConfig = env.deserialize("EXEMPLUM_APP_").unwrap();
+        assert_eq!(config.max_password_verifications.get(), 2);
+        assert_eq!(config.session_cleanup_interval_seconds.get(), 15);
+        let too_large = (tokio::sync::Semaphore::MAX_PERMITS + 1).to_string();
+        let env = hypgm_envconfig::EnvSource::from_pairs(base.into_iter().chain([(
+            "EXEMPLUM_APP_MAX_PASSWORD_VERIFICATIONS",
+            too_large.as_str(),
+        )]));
+        assert!(
+            env.deserialize::<super::AppConfig>("EXEMPLUM_APP_")
+                .is_err()
+        );
     }
 }

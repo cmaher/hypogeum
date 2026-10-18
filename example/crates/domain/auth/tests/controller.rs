@@ -18,6 +18,7 @@ use uuid::Uuid;
 fn build_test_app(repo: Arc<InMemoryAuthRepo>) -> axum::Router {
     let components = AuthComponentsFactory {
         repo: repo.clone(),
+        password_config: Default::default(),
         token_config: TokenConfig {
             jwt_secret: b"test-secret-key-32bytes-for-jwt!".to_vec(),
             default_ttl: 3600,
@@ -436,4 +437,23 @@ async fn token_body_limit_errors_keep_the_oauth_envelope() {
     let bytes = response.into_body().collect().await.unwrap().to_bytes();
     let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(body["error"], "invalid_request");
+}
+
+#[tokio::test]
+async fn unknown_username_also_performs_blocking_password_verification() {
+    use std::future::Future;
+    use std::task::{Context, Poll, Waker};
+    let app = build_test_app(Arc::new(InMemoryAuthRepo::new()));
+    let request = Request::builder()
+        .method("POST")
+        .uri("/login")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(r#"{"username":"missing","password":"wrong"}"#))
+        .unwrap();
+    let mut login = std::pin::pin!(app.oneshot(request));
+    assert!(matches!(
+        login.as_mut().poll(&mut Context::from_waker(Waker::noop())),
+        Poll::Pending
+    ));
+    assert_eq!(login.await.unwrap().status(), StatusCode::UNAUTHORIZED);
 }

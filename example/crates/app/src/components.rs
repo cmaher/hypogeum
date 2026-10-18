@@ -1,6 +1,6 @@
 use exemplum_dmn_auth::PostgresSessionStore;
-pub use exemplum_dmn_auth::TokenConfig;
 use exemplum_dmn_auth::repo::{AuthRepo, InMemoryAuthRepo, PgAuthRepo};
+pub use exemplum_dmn_auth::{PasswordConfig, TokenConfig};
 use exemplum_dmn_hello_world::service::{DefaultHelloWorldService, HelloWorldService};
 use exemplum_dmn_users::models::{PageRequest, User, UserPage};
 use exemplum_dmn_users::repo::PgUserRepo;
@@ -18,6 +18,7 @@ pub struct AppComponents<S> {
     pub authorizer: Arc<Authorizer>,
     pub session_store: S,
     pub token_config: TokenConfig,
+    pub password_config: PasswordConfig,
 }
 
 impl<S: SessionStore + Clone + Send + Sync + 'static> AppComponents<S> {
@@ -28,6 +29,7 @@ impl<S: SessionStore + Clone + Send + Sync + 'static> AppComponents<S> {
         authorizer: Arc<Authorizer>,
         session_store: S,
         token_config: TokenConfig,
+        password_config: PasswordConfig,
     ) -> Self {
         Self {
             hello_service,
@@ -36,6 +38,7 @@ impl<S: SessionStore + Clone + Send + Sync + 'static> AppComponents<S> {
             authorizer,
             session_store,
             token_config,
+            password_config,
         }
     }
 }
@@ -47,6 +50,7 @@ pub struct AppComponentsFactory<S = tower_sessions::MemoryStore> {
     pub authorizer: Arc<Authorizer>,
     pub session_store: S,
     pub token_config: TokenConfig,
+    pub password_config: PasswordConfig,
 }
 
 impl Default for AppComponentsFactory<tower_sessions::MemoryStore> {
@@ -58,6 +62,7 @@ impl Default for AppComponentsFactory<tower_sessions::MemoryStore> {
             authorizer: default_authorizer(),
             session_store: tower_sessions::MemoryStore::default(),
             token_config: TokenConfig::default(),
+            password_config: PasswordConfig::default(),
         }
     }
 }
@@ -71,6 +76,7 @@ impl<S: SessionStore + Clone + Send + Sync + 'static> AppComponentsFactory<S> {
             self.authorizer,
             self.session_store,
             self.token_config,
+            self.password_config,
         )
     }
 }
@@ -80,6 +86,7 @@ impl AppComponentsFactory<PostgresSessionStore> {
         pool: PgPool,
         authorizer: Arc<Authorizer>,
         token_config: TokenConfig,
+        password_config: PasswordConfig,
     ) -> AppComponents<PostgresSessionStore> {
         let session_store = PostgresSessionStore::new_with_schema(pool.clone(), "exemplum");
         let auth_repo = Arc::new(PgAuthRepo::new(pool.clone()));
@@ -92,6 +99,7 @@ impl AppComponentsFactory<PostgresSessionStore> {
             authorizer,
             session_store,
             token_config,
+            password_config,
         )
     }
 }

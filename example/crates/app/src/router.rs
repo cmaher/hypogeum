@@ -8,7 +8,7 @@ use hypgm_authn::{jwt::JwtValidator, session::PrincipalAuthBackend};
 use hypgm_http::{HealthCheck, MAX_BODY_BYTES, not_found_handler, trace_layer};
 use tower_sessions::SessionManagerLayer;
 
-use crate::state::AppComponents;
+use crate::components::AppComponents;
 
 async fn healthz() -> impl IntoResponse {
     (
@@ -34,6 +34,7 @@ where
     let auth_components = AuthComponents::new(
         components.auth_repo.clone(),
         components.token_config.clone(),
+        components.password_config,
     );
     let auth_routes = exemplum_dmn_auth::controller::router(auth_components);
 

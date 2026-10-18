@@ -35,6 +35,8 @@ Exemplum configuration uses the `EXEMPLUM_` prefix. Configuration precedence is:
 | `EXEMPLUM_APP_BIND` | `127.0.0.1:8080` | Public HTTP server listen address |
 | `EXEMPLUM_APP_DATABASE_URL` | required | Runtime connection using the `exemplum_users` role |
 | `EXEMPLUM_APP_JWT_SECRET` | required | Private signing secret containing at least 32 bytes |
+| `EXEMPLUM_APP_MAX_PASSWORD_VERIFICATIONS` | `4` | Maximum concurrent password checks; must be positive and fit the semaphore capacity |
+| `EXEMPLUM_APP_SESSION_CLEANUP_INTERVAL_SECONDS` | `3600` | Positive interval between expired-session cleanup runs |
 | `EXEMPLUM_APP_CEDAR_SCHEMA` | `config/schema.cedarschema` | Cedar schema loaded at startup |
 | `EXEMPLUM_APP_CEDAR_POLICIES` | `config/policies.cedar` | Cedar policies loaded at startup |
 | `EXEMPLUM_LOG` | `info` | Log level filter |
@@ -61,6 +63,9 @@ cargo make db-verify    # Verify database schema contracts
 cargo make db-down      # Stop PostgreSQL container
 ```
 
+`exemplum-db inspect --output json` reports each schema's contracts as an array
+under `data.contracts.<schema>`, preserving all tables registered in that schema.
+
 ### Running the Application
 
 ```sh
@@ -85,7 +90,10 @@ independent, ephemeral signing keys.
 Authentication routes are `POST /api/auth/login`, `POST /api/auth/logout`, and
 `POST /api/auth/token`. `GET /api/hello/me` accepts a session cookie or signed
 Bearer token and resolves the stored user display name. Password verification
-runs on blocking workers with at most four concurrent checks per auth component.
+runs on blocking workers with a configurable concurrency limit (four by default)
+shared by real and dummy checks. Unknown usernames still perform password verification.
+Expired sessions are deleted at startup and periodically; cleanup stops when the
+server finishes shutting down.
 The token endpoint accepts form or JSON credentials and HTTP Basic credentials;
 responses use OAuth error fields and prevent caching with `no-store`/`no-cache`.
 Other endpoints retain the shared JSON error envelope.

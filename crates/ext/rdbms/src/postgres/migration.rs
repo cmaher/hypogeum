@@ -159,7 +159,8 @@ pub async fn inspect(url: &str, config: &DatabaseConfig) -> Result<serde_json::V
         .await
         .map_err(MigrationError::database)?;
 
-    let mut contracts_info = serde_json::Map::new();
+    let mut contracts_info: std::collections::BTreeMap<String, Vec<serde_json::Value>> =
+        std::collections::BTreeMap::new();
     for sc in &config.service_contracts {
         let version_query = format!("SELECT {}.schema_version()", sc.schema);
         let version: std::result::Result<i64, _> = sqlx::query_scalar(AssertSqlSafe(version_query))
@@ -169,14 +170,14 @@ pub async fn inspect(url: &str, config: &DatabaseConfig) -> Result<serde_json::V
             Ok(v) => serde_json::json!(v),
             Err(_) => serde_json::json!(null),
         };
-        contracts_info.insert(
-            sc.schema.clone(),
-            serde_json::json!({
+        contracts_info
+            .entry(sc.schema.clone())
+            .or_default()
+            .push(serde_json::json!({
                 "service_role": sc.service_role,
                 "version": ver_val,
                 "table": sc.table,
-            }),
-        );
+            }));
     }
 
     Ok(serde_json::json!({

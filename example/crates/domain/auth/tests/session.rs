@@ -67,7 +67,13 @@ async fn postgres_session_store_persists_and_expires_sessions(
     };
     store.create(&mut expired_record).await.unwrap();
     store.delete_expired().await.unwrap();
-    assert!(store.load(&expired_id).await.unwrap().is_none());
+    let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT FROM public.sessions WHERE id=$1)")
+        .bind(expired_id.to_string())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(!exists, "expired row must be physically deleted");
+    assert!(store.load(&session_id).await.unwrap().is_some());
 
     // Verify leading underscore is accepted as a valid identifier
     let _store_underscore =
