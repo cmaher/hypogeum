@@ -21,8 +21,9 @@ impl Server {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = format!("http://{}", listener.local_addr().unwrap());
         let (stop, stopped) = oneshot::channel();
+        let state = exemplum_app::AppState::default().with_hello_service(service);
         let serving = tokio::spawn(async move {
-            axum::serve(listener, router(service))
+            axum::serve(listener, router(state))
                 .with_graceful_shutdown(async {
                     let _ = stopped.await;
                 })

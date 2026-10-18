@@ -7,27 +7,22 @@ rust-version.workspace = true
 [dependencies]
 exemplum-dmn-hello-world = { path = "../domain/hello-world" }
 exemplum-dmn-users = { path = "../domain/users" }
+exemplum-dmn-auth = { path = "../domain/auth" }
 axum = { version = "0.8", default-features = false, features = ["tokio", "http2"] }
 hypgm-http = { path = "../../../crates/core/http" }
 hypgm-authn = { path = "../../../crates/core/authn" }
 hypgm-authz = { path = "../../../crates/core/authz" }
 hypgm-errors = { path = "../../../crates/core/errors" }
-sea-orm.workspace = true
+hypgmx-rdbms = { path = "../../../crates/ext/rdbms", features = ["postgres"] }
 sqlx.workspace = true
 uuid.workspace = true
 chrono.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 async-trait.workspace = true
-argon2 = "0.5"
-sha2 = "0.10"
-hex = "0.4"
 tower = "0.5"
 tower-sessions = "0.14"
-rmp-serde = "1"
 axum-login = "0.18"
-jsonwebtoken = "9"
-serde_urlencoded = "0.7"
 
 [dev-dependencies]
 tokio.workspace = true

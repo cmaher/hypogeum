@@ -1,6 +1,7 @@
-use exemplum_app::auth::password::{generate_api_key, hash_password};
-use exemplum_app::auth::repo::{AuthRepo, InMemoryAuthRepo};
-use exemplum_app::auth::{LoginRequest, LoginResponse, TokenResponse};
+use exemplum_dmn_auth::repo::{AuthRepo, InMemoryAuthRepo};
+use exemplum_dmn_auth::{LoginRequest, LoginResponse, TokenResponse};
+use hypgm_authn::api_key::generate_api_key;
+use hypgm_authn::password::hash_password;
 use exemplum_dmn_hello_world::service::DefaultHelloWorldService;
 use exemplum_dmn_users::models::{PageRequest, User, UserPage};
 use exemplum_dmn_users::service::{UserError, UserService};
@@ -93,14 +94,16 @@ impl TestHarness {
         let session_store = tower_sessions::MemoryStore::default();
         let jwt_secret = b"test-jwt-secret-key-32-bytes-long!".to_vec();
 
-        let router = exemplum_app::router_with_auth(
+        let state = exemplum_app::AppState::new(
             Arc::new(DefaultHelloWorldService),
-            authorizer,
             user_service.clone(),
             auth_repo.clone(),
+            authorizer,
             session_store,
             jwt_secret,
         );
+
+        let router = exemplum_app::router(state);
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = format!("http://{}", listener.local_addr().unwrap());
@@ -346,14 +349,14 @@ async fn test_token_exchange_and_jwt_bearer_auth() {
     let auth_id = Uuid::new_v4();
     harness.user_service.add_user(user_id, "API Developer");
 
-    let (raw_key, key_hash) = generate_api_key();
+    let (raw_key, key_hash) = generate_api_key("exmpl_key");
     harness
         .auth_repo
         .create(
             auth_id,
             user_id,
             "api_key",
-            &raw_key,
+            &key_hash,
             &key_hash,
             serde_json::json!({}),
         )
@@ -413,14 +416,14 @@ forbid(principal, action == Action::"greet", resource);
     let user_id = Uuid::new_v4();
     let auth_id = Uuid::new_v4();
     harness.user_service.add_user(user_id, "Forbidden User");
-    let (raw_key, key_hash) = generate_api_key();
+    let (raw_key, key_hash) = generate_api_key("exmpl_key");
     harness
         .auth_repo
         .create(
             auth_id,
             user_id,
             "api_key",
-            &raw_key,
+            &key_hash,
             &key_hash,
             serde_json::json!({}),
         )
