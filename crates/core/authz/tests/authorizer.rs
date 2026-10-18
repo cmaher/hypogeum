@@ -750,3 +750,34 @@ fn schema_can_opt_into_individual_authentication_context_fields() {
         );
     }
 }
+
+#[test]
+fn supplied_entities_cannot_remove_schema_action_membership() {
+    let (schema, policies) = load_schema_and_policies(r#"
+        entity User; entity Document;
+        action "Restricted";
+        action "View" in [Action::"Restricted"] appliesTo { principal: [User], resource: [Document] };
+    "#, r#"permit(principal, action, resource); forbid(principal, action in Action::"Restricted", resource);"#).unwrap();
+    let principal = Principal::new(Uuid::new_v4(), Uuid::new_v4(), AuthMethod::BearerJwt);
+    let tampered = Entities::from_json_value(
+        serde_json::json!([{
+            "uid": {"type": "Action", "id": "View"}, "attrs": {}, "parents": []
+        }]),
+        None,
+    )
+    .unwrap();
+    let authorizer = Authorizer::new_with_entities(schema, policies, tampered.clone()).unwrap();
+    assert_eq!(
+        authorizer.is_authorized(&principal, ("Action", "View"), ("Document", "doc")),
+        Decision::Deny
+    );
+    assert_eq!(
+        authorizer.is_authorized_with_entities(
+            &principal,
+            ("Action", "View"),
+            ("Document", "doc"),
+            &tampered
+        ),
+        Decision::Deny
+    );
+}
