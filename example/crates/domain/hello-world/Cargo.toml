@@ -20,6 +20,7 @@ hypgm-http = { path = "../../../../crates/core/http" }
 tokio.workspace = true
 tower = { version = "0.5", features = ["util"] }
 serde_json.workspace = true
+chrono.workspace = true
 
 [lints]
 workspace = true

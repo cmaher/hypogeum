@@ -223,8 +223,9 @@ forbid(
 
 #[tokio::test]
 async fn test_hello_me_requires_auth() {
-    let authorizer =
-        Arc::new(hypgm_authz::load_schema_and_policies(CEDAR_SCHEMA, PERMIT_POLICY).unwrap());
+    let (schema, policies) =
+        hypgm_authz::load_schema_and_policies(CEDAR_SCHEMA, PERMIT_POLICY).unwrap();
+    let authorizer = Arc::new(hypgm_authz::Authorizer::new(schema, policies));
     let user_id = uuid::Uuid::new_v4();
     let user_service = Arc::new(MockUserService {
         user: exemplum_dmn_users::models::User {
@@ -253,8 +254,9 @@ async fn test_hello_me_requires_auth() {
 
 #[tokio::test]
 async fn test_hello_me_evaluates_cedar_policy_and_returns_display_name() {
-    let permit_authorizer =
-        Arc::new(hypgm_authz::load_schema_and_policies(CEDAR_SCHEMA, PERMIT_POLICY).unwrap());
+    let (schema, policies) =
+        hypgm_authz::load_schema_and_policies(CEDAR_SCHEMA, PERMIT_POLICY).unwrap();
+    let permit_authorizer = Arc::new(hypgm_authz::Authorizer::new(schema, policies));
     let user_id = uuid::Uuid::new_v4();
     let auth_id = uuid::Uuid::new_v4();
     let user_service = Arc::new(MockUserService {
@@ -287,8 +289,9 @@ async fn test_hello_me_evaluates_cedar_policy_and_returns_display_name() {
     assert_eq!(json["message"], "Hello, Alice Liddell!");
 
     // Test with forbidden policy -> 403
-    let forbid_authorizer =
-        Arc::new(hypgm_authz::load_schema_and_policies(CEDAR_SCHEMA, FORBID_POLICY).unwrap());
+    let (forbid_schema, forbid_policies) =
+        hypgm_authz::load_schema_and_policies(CEDAR_SCHEMA, FORBID_POLICY).unwrap();
+    let forbid_authorizer = Arc::new(hypgm_authz::Authorizer::new(forbid_schema, forbid_policies));
     let app_forbidden = exemplum_dmn_hello_world::controller::router_with_auth(
         Arc::new(DefaultHelloWorldService),
         forbid_authorizer,

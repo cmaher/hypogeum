@@ -97,17 +97,14 @@ async fn token(
     };
 
     // If client credentials/api key not in body, check Authorization header
-    if req.api_key.is_none() && req.client_secret.is_none() {
-        if let Some(auth_header) = headers.get(axum::http::header::AUTHORIZATION) {
-            if let Ok(header_str) = auth_header.to_str() {
-                let trimmed = header_str.trim();
-                if let Some((scheme, val)) = trimmed.split_once(' ') {
-                    if scheme.eq_ignore_ascii_case("bearer") {
-                        req.api_key = Some(val.trim().to_string());
-                    }
-                }
-            }
-        }
+    if req.api_key.is_none()
+        && req.client_secret.is_none()
+        && let Some(auth_header) = headers.get(axum::http::header::AUTHORIZATION)
+        && let Ok(header_str) = auth_header.to_str()
+        && let Some((scheme, val)) = header_str.trim().split_once(' ')
+        && scheme.eq_ignore_ascii_case("bearer")
+    {
+        req.api_key = Some(val.trim().to_string());
     }
 
     let identity = if let Some(ref client_id) = req.client_id {
@@ -136,7 +133,7 @@ async fn token(
             .ok_or(AuthError::InvalidCredentials)?;
 
         let key_hash = hash_api_key(key);
-        let ident = match state
+        match state
             .repo
             .find_active_by_type_and_identifier("api_key", key)
             .await
@@ -161,8 +158,7 @@ async fn token(
                 }
                 i
             }
-        };
-        ident
+        }
     };
 
     let ttl_seconds = 3600;

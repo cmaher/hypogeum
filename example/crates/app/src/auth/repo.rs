@@ -43,12 +43,7 @@ impl AuthRepo for InMemoryAuthRepo {
 
     async fn find_active_by_id(&self, id: Uuid) -> Result<Option<AuthIdentity>, RepoError> {
         let map = self.identities.read().unwrap();
-        if let Some(ident) = map.get(&id) {
-            if ident.revoked_at.is_none() {
-                return Ok(Some(ident.clone()));
-            }
-        }
-        Ok(None)
+        Ok(map.get(&id).filter(|i| i.revoked_at.is_none()).cloned())
     }
 
     async fn find_by_user_id(&self, user_id: Uuid) -> Result<Vec<AuthIdentity>, RepoError> {
