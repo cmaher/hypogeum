@@ -62,20 +62,38 @@ crates/domain/hello-world (service.rs)
 Routers are composed hierarchically using native Axum `.nest()`:
 
 ```rust
-pub fn router(hello_service: Arc<dyn HelloWorldService>) -> Router<()> {
-    let hello = hello_world::controller::router(hello_service);
-    let api = Router::new().nest("/hello", hello);
+pub fn router<S>(components: AppComponents<S>) -> Router<()>
+where
+    S: tower_sessions::SessionStore + Clone + Send + Sync + 'static,
+{
+    let hello_components = HelloComponents::new(
+        components.hello_service,
+        components.authorizer,
+        components.user_service,
+    );
+    let hello = hello_world::controller::router(hello_components);
+    let auth_components = AuthComponents::new(
+        components.auth_repo.clone(),
+        components.token_config.clone(),
+    );
+    let auth_routes = auth::controller::router(auth_components);
+
+    let api = Router::new()
+        .nest("/hello", hello)
+        .nest("/auth", auth_routes);
 
     Router::new()
         .route("/healthz", get(healthz))
         .nest("/api", api)
         .fallback(not_found_handler)
+        .layer(auth_layer)
+        .layer(Extension(jwt_validator))
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         .layer(trace_layer())
 }
 ```
 
-- Each domain controller returns `Router<()>` with its own dependencies injected via `.with_state(...)`.
+- Each domain controller returns a self-contained `Router<()>` accepting its own domain `Components`.
 - Mount points are owned by `app/src/router.rs`, ensuring domain crates remain independent of global URL prefix assumptions.
 - Canonical endpoints:
   - `GET /healthz` - Health probe.
@@ -116,22 +134,23 @@ X-Request-Id: 550e8400-e29b-41d4-a716-446655440000
    ```
    *(where `WidgetError` implements `PublicError`).*
 3. Define request/response DTOs in `src/api.rs`.
-4. Create a thin Axum controller in `src/controller.rs`:
+4. Create a thin Axum controller in `src/controller.rs` taking domain components:
    ```rust
-   pub fn router(service: Arc<dyn WidgetService>) -> Router<()> {
+   pub fn router(components: WidgetComponents) -> Router<()> {
        Router::new()
            .route("/{id}", get(get_widget))
-           .with_state(service)
+           .with_state(components)
    }
    ```
 5. In `crates/domain/app/src/router.rs`, nest the new controller under `/api`:
    ```rust
-   let widgets = widget::controller::router(widget_service);
+   let widget_components = WidgetComponents::new(components.widget_service);
+   let widgets = widget::controller::router(widget_components);
    let api = Router::new()
        .nest("/hello", hello)
        .nest("/widgets", widgets);
    ```
-6. In `cmd/app/src/main.rs`, construct the service and pass it to `router(...)`.
+6. In `AppComponents`, include the new dependency with constructor injection.
 
 ---
 

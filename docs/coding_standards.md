@@ -30,12 +30,36 @@ infrastructure (`crates/core/` foundation, `crates/ext/` drivers) from domain
 behavior (`crates/domain/`), and keep executable composition separate from
 reusable libraries.
 
+### Dependency injection and component composition
+
+Use constructor injection (`new(...)`) for all components and services, receiving
+all dependencies and configuration explicitly. Avoid mutable builder methods
+(`with_*` mutators) or multiple constructor overloads on component structs.
+
+Name dependency bundles `<Name>Components` (e.g. `AppComponents`, `AuthComponents`,
+`HelloComponents`). Do not use names like `AppState` or `AuthState` for dependency
+injection bundles or composition roots; in Axum, "state" specifically denotes handler
+state, whereas component bundles represent composition roots. Group cohesive
+configuration parameters into dedicated plain data structs (e.g. `TokenConfig`)
+rather than scattering loose scalar parameters across components.
+
+When tests or local development require default dependencies or partial overrides,
+use a dedicated factory struct (`<Name>ComponentsFactory`) that implements `Default`
+and provides a `.build()` method. Tests can override specific dependencies via
+struct update syntax (`..Default::default()`) before calling `.build()`, keeping
+production component structs free of test helpers and mutation methods.
+
 ## HTTP and RPC composition
 
 Compose HTTP adapters using native Axum routing and nesting. Domain adapters own
 local routes; the application composition layer owns global mount points and
 shared transport policies. Avoid custom protocol dispatch when upstream routing
 already provides the required behavior.
+
+Each domain controller exports a uniform `router(components: <Domain>Components) -> Router<()>`
+entry point. Do not create split router entry points (such as `router_with_state`
+or `router_with_auth`). Controllers encapsulate their private Axum state internally
+and return a self-contained, unparameterized `Router<()>`.
 
 Public exposure must be explicit. Register only intended public services and
 keep internal services isolated. Apply CORS deliberately to the intended routes
