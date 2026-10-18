@@ -49,7 +49,7 @@ use hypgm_authz::{Authorizer, Decision};
 use hypgm_authn::{AuthMethod, Principal};
 use uuid::Uuid;
 
-let authorizer = Authorizer::new(schema, policies);
+let authorizer = Authorizer::new(schema, policies)?;
 
 let principal = Principal::new(Uuid::new_v4(), Uuid::new_v4(), AuthMethod::BearerJwt);
 let decision = authorizer.is_authorized(&principal, "Action::\"View\"", "Document::\"doc-123\"");
@@ -108,3 +108,7 @@ let app = Router::new()
     .route("/dynamic", get(dynamic_handler))
     .with_state(Arc::new(authorizer));
 ```
+
+Authorizer constructors and entity replacement return `Result` so invalid entity graphs
+fail during configuration. Schema action entities are always retained; runtime actions
+must conform to the schema and cannot replace its action hierarchy.

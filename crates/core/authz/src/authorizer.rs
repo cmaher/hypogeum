@@ -76,33 +76,40 @@ pub struct Authorizer {
 
 impl Authorizer {
     /// Creates a new `Authorizer` from a validated `Schema` and `PolicySet`.
-    pub fn new(schema: Schema, policies: PolicySet) -> Self {
-        Self {
-            schema,
-            policies,
-            entities: Entities::empty(),
-            cedar: CedarAuthorizer::new(),
-            principal_type: EntityTypeName::from_str("User")
-                .expect("User is a valid Cedar EntityTypeName"),
-        }
-    }
-
-    /// Creates a new `Authorizer` with additional preloaded entities.
-    pub fn new_with_entities(schema: Schema, policies: PolicySet, entities: Entities) -> Self {
-        Self {
+    pub fn new(schema: Schema, policies: PolicySet) -> Result<Self, AuthzError> {
+        let entities = schema.action_entities().map_err(AuthzError::policy_load)?;
+        Ok(Self {
             schema,
             policies,
             entities,
             cedar: CedarAuthorizer::new(),
             principal_type: EntityTypeName::from_str("User")
                 .expect("User is a valid Cedar EntityTypeName"),
-        }
+        })
     }
 
-    /// Configures preloaded base entities on this `Authorizer`.
-    pub fn with_entities(mut self, entities: Entities) -> Self {
-        self.entities = entities;
-        self
+    /// Creates an authorizer with preloaded entities and schema-defined actions.
+    pub fn new_with_entities(
+        schema: Schema,
+        policies: PolicySet,
+        entities: Entities,
+    ) -> Result<Self, AuthzError> {
+        Self::new(schema, policies)?.with_entities(entities)
+    }
+
+    /// Replaces preloaded entities, preserving the schema-defined action hierarchy.
+    pub fn with_entities(mut self, entities: Entities) -> Result<Self, AuthzError> {
+        self.entities = entities
+            .upsert_entities(
+                self.schema
+                    .action_entities()
+                    .map_err(AuthzError::policy_load)?
+                    .iter()
+                    .cloned(),
+                None,
+            )
+            .map_err(AuthzError::policy_load)?;
+        Ok(self)
     }
 
     /// Configures the Cedar principal `EntityTypeName` (defaults to `"User"`).
@@ -238,7 +245,7 @@ impl Authorizer {
             match self
                 .entities
                 .clone()
-                .upsert_entities(entities.iter().cloned(), None)
+                .upsert_entities(entities.iter().cloned(), Some(&self.schema))
             {
                 Ok(combined) => {
                     combined_entities = combined;

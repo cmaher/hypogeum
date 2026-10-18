@@ -118,7 +118,8 @@ async fn deref_handler(perm: RequirePermission<ViewAllowedDocPolicy>) -> impl In
 
 fn build_test_app() -> (Router, Arc<Authorizer>) {
     let (schema, policies) = load_schema_and_policies(SCHEMA, POLICIES).unwrap();
-    let authorizer = Arc::new(Authorizer::new(schema, policies));
+    let authorizer =
+        Arc::new(Authorizer::new(schema, policies).expect("valid authorization entities"));
 
     let app = Router::new()
         .route("/view", get(view_handler))
@@ -260,7 +261,7 @@ async fn test_guard_composed_with_require_auth() {
 #[test]
 fn test_guard_check_helper() {
     let (schema, policies) = load_schema_and_policies(SCHEMA, POLICIES).unwrap();
-    let authorizer = Authorizer::new(schema, policies);
+    let authorizer = Authorizer::new(schema, policies).expect("valid authorization entities");
     let principal = Principal::new(Uuid::new_v4(), Uuid::new_v4(), AuthMethod::BearerJwt);
 
     // ViewAllowedDocPolicy permits View on Document::"allowed-doc"
@@ -297,7 +298,8 @@ fn test_guard_dynamic_require_permission_with_entities() {
     };
     "#;
     let (schema, policies) = load_schema_and_policies(schema_str, policy_str).unwrap();
-    let authorizer = Authorizer::new(schema.clone(), policies);
+    let authorizer =
+        Authorizer::new(schema.clone(), policies).expect("valid authorization entities");
 
     let entities_json = serde_json::json!([
         {
@@ -344,7 +346,7 @@ fn test_guard_require_permission_with_context() {
     };
     "#;
     let (schema, policies) = load_schema_and_policies(schema_str, policy_str).unwrap();
-    let authorizer = Authorizer::new(schema, policies);
+    let authorizer = Authorizer::new(schema, policies).expect("valid authorization entities");
     let principal = Principal::new(Uuid::new_v4(), Uuid::new_v4(), AuthMethod::BearerJwt);
 
     let ctx =
@@ -420,7 +422,8 @@ async fn test_guard_request_extension_authorizer_override() {
     );
     "#;
     let (schema, override_policies) = load_schema_and_policies(SCHEMA, override_policy).unwrap();
-    let override_authorizer = Arc::new(Authorizer::new(schema, override_policies));
+    let override_authorizer =
+        Arc::new(Authorizer::new(schema, override_policies).expect("valid authorization entities"));
 
     let req_override = Request::builder()
         .uri("/delete")

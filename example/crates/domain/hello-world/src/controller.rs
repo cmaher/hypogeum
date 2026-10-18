@@ -49,7 +49,7 @@ impl Default for HelloComponentsFactory {
                 .expect("valid default Cedar schema and policy");
         Self {
             hello_service: Arc::new(crate::service::DefaultHelloWorldService),
-            authorizer: Arc::new(Authorizer::new(schema, policies)),
+            authorizer: Arc::new(Authorizer::new(schema, policies).expect("valid authorization entities")),
             user_service: Arc::new(DefaultMockUserService),
         }
     }
