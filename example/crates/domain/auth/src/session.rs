@@ -13,14 +13,14 @@ pub struct PostgresSessionStore {
 
 impl PostgresSessionStore {
     pub fn new(pool: PgPool) -> Self {
-        Self::new_with_schema(pool, "public")
+        Self::new_with_schema(pool, "exemplum")
     }
 
     pub fn new_with_schema(pool: PgPool, schema: impl Into<String>) -> Self {
         let schema = schema.into();
-        crate::contract::validate_identifier(&schema)
+        hypgmx_rdbms::contract::validate_identifier(&schema)
             .unwrap_or_else(|e| panic!("invalid schema identifier {schema:?}: {e}"));
-        crate::contract::validate_identifier("sessions")
+        hypgmx_rdbms::contract::validate_identifier("sessions")
             .unwrap_or_else(|e| panic!("invalid table identifier 'sessions': {e}"));
         Self {
             pool,
@@ -31,7 +31,7 @@ impl PostgresSessionStore {
 
     pub fn with_schema_name(mut self, schema: impl Into<String>) -> Self {
         let schema = schema.into();
-        crate::contract::validate_identifier(&schema)
+        hypgmx_rdbms::contract::validate_identifier(&schema)
             .unwrap_or_else(|e| panic!("invalid schema identifier {schema:?}: {e}"));
         self.schema = schema;
         self
@@ -39,7 +39,7 @@ impl PostgresSessionStore {
 
     pub fn with_table_name(mut self, table: impl Into<String>) -> Self {
         let table = table.into();
-        crate::contract::validate_identifier(&table)
+        hypgmx_rdbms::contract::validate_identifier(&table)
             .unwrap_or_else(|e| panic!("invalid table identifier {table:?}: {e}"));
         self.table = table;
         self

@@ -10,9 +10,7 @@ pub use pool_config::PoolConfig;
 pub mod postgres;
 
 #[cfg(feature = "postgres")]
-pub use postgres::{
-    PgPool, PostgresSessionStore, create_pool, inspect, migrate, ping, pool_options, verify,
-};
+pub use postgres::{PgPool, create_pool, inspect, migrate, ping, pool_options, verify};
 
 // Backwards compatibility alias
 pub type PostgresConfig = PoolConfig;

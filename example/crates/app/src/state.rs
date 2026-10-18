@@ -1,3 +1,4 @@
+use exemplum_dmn_auth::PostgresSessionStore;
 pub use exemplum_dmn_auth::TokenConfig;
 use exemplum_dmn_auth::repo::{AuthRepo, InMemoryAuthRepo, PgAuthRepo};
 use exemplum_dmn_hello_world::service::{DefaultHelloWorldService, HelloWorldService};
@@ -5,7 +6,6 @@ use exemplum_dmn_users::models::{PageRequest, User, UserPage};
 use exemplum_dmn_users::repo::PgUserRepo;
 use exemplum_dmn_users::service::{DefaultUserService, UserError, UserService};
 use hypgm_authz::Authorizer;
-use hypgmx_rdbms::PostgresSessionStore;
 use sqlx::PgPool;
 use std::sync::Arc;
 use tower_sessions::SessionStore;
