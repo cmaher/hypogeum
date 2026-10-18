@@ -45,3 +45,69 @@ async fn repeated_migrations_do_not_rewrite_objects_and_corrupt_history_is_rejec
     );
     admin.close().await;
 }
+
+#[sqlx::test(migrations = false)]
+#[ignore = "run by integration_suite"]
+async fn postgres_session_store_persists_and_expires_sessions(
+    _pool: sqlx::postgres::PgPoolOptions,
+    options: sqlx::postgres::PgConnectOptions,
+) {
+    use std::collections::HashMap;
+    use tower_sessions::SessionStore;
+    use tower_sessions::session::{Id, Record};
+
+    let db = hypgm_test_support::TestDatabase::provision(options).await;
+    let pool = sqlx::PgPool::connect(&db.admin_url).await.unwrap();
+
+    sqlx::raw_sql(
+        "CREATE TABLE public.sessions (
+            id TEXT PRIMARY KEY,
+            data BYTEA NOT NULL,
+            expiry_date TIMESTAMPTZ NOT NULL
+        );",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let store = hypgmx_rdbms::PostgresSessionStore::new(pool.clone());
+    let session_id = Id::default();
+    let mut data = HashMap::new();
+    data.insert("user_id".to_string(), serde_json::json!("123"));
+    let expiry = time::OffsetDateTime::now_utc() + time::Duration::hours(1);
+    let mut record = Record {
+        id: session_id,
+        data,
+        expiry_date: expiry,
+    };
+
+    // Create session
+    store.create(&mut record).await.unwrap();
+
+    // Load session
+    let loaded = store.load(&session_id).await.unwrap();
+    assert!(loaded.is_some());
+    let loaded = loaded.unwrap();
+    assert_eq!(loaded.id, session_id);
+    assert_eq!(loaded.data.get("user_id"), Some(&serde_json::json!("123")));
+
+    // Save session (update data)
+    let mut updated_record = loaded;
+    updated_record
+        .data
+        .insert("role".to_string(), serde_json::json!("admin"));
+    store.save(&updated_record).await.unwrap();
+
+    let reloaded = store.load(&session_id).await.unwrap().unwrap();
+    assert_eq!(
+        reloaded.data.get("role"),
+        Some(&serde_json::json!("admin"))
+    );
+
+    // Delete session
+    store.delete(&session_id).await.unwrap();
+    let deleted = store.load(&session_id).await.unwrap();
+    assert!(deleted.is_none());
+
+    pool.close().await;
+}
