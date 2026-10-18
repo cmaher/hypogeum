@@ -15,6 +15,7 @@ serde.workspace = true
 thiserror.workspace = true
 axum = { version = "0.8", default-features = false, features = ["tokio", "json"] }
 hypgm-http = { path = "../../../../crates/core/http" }
+chrono.workspace = true
 
 [dev-dependencies]
 tokio.workspace = true

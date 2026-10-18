@@ -2,13 +2,13 @@ use axum::extract::DefaultBodyLimit;
 use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::{Extension, Router};
-use exemplum_dmn_auth::AuthState;
+use exemplum_dmn_auth::AuthComponents;
 use exemplum_dmn_auth::backend::ExemplumAuthBackend;
 use hypgm_authn::{jwt::JwtValidator, session::PrincipalAuthBackend};
 use hypgm_http::{HealthCheck, MAX_BODY_BYTES, not_found_handler, trace_layer};
 use tower_sessions::SessionManagerLayer;
 
-use crate::state::AppState;
+use crate::state::AppComponents;
 
 async fn healthz() -> impl IntoResponse {
     (
@@ -21,29 +21,31 @@ async fn healthz() -> impl IntoResponse {
     )
 }
 
-pub fn router<S>(state: AppState<S>) -> Router<()>
+pub fn router<S>(components: AppComponents<S>) -> Router<()>
 where
     S: tower_sessions::SessionStore + Clone + Send + Sync + 'static,
 {
-    let hello = exemplum_dmn_hello_world::controller::router(
-        state.hello_service,
-        state.authorizer,
-        state.user_service,
+    let hello_components = exemplum_dmn_hello_world::HelloComponents::new(
+        components.hello_service,
+        components.authorizer,
+        components.user_service,
     );
-    let auth_state = AuthState::new(state.auth_repo.clone(), state.jwt_secret.clone())
-        .with_ttl(state.token_ttl.default_ttl, state.token_ttl.max_ttl)
-        .with_api_key_prefix(state.api_key_prefix);
-    let auth_routes = exemplum_dmn_auth::controller::router(auth_state);
+    let hello = exemplum_dmn_hello_world::controller::router(hello_components);
+    let auth_components = AuthComponents::new(
+        components.auth_repo.clone(),
+        components.token_config.clone(),
+    );
+    let auth_routes = exemplum_dmn_auth::controller::router(auth_components);
 
     let api = Router::new()
         .nest("/hello", hello)
         .nest("/auth", auth_routes);
 
-    let backend = ExemplumAuthBackend::from_arc(state.auth_repo);
+    let backend = ExemplumAuthBackend::from_arc(components.auth_repo);
     let login_backend = PrincipalAuthBackend::new(backend);
-    let session_layer = SessionManagerLayer::new(state.session_store);
+    let session_layer = SessionManagerLayer::new(components.session_store);
     let auth_layer = axum_login::AuthManagerLayerBuilder::new(login_backend, session_layer).build();
-    let jwt_validator = JwtValidator::from_hs256_secret(&state.jwt_secret);
+    let jwt_validator = JwtValidator::from_hs256_secret(&components.token_config.jwt_secret);
 
     Router::new()
         .route("/healthz", get(healthz))

@@ -47,7 +47,7 @@ async fn main() -> anyhow::Result<()> {
 
     axum::serve(
         listener,
-        exemplum_app::router(exemplum_app::AppState::default()),
+        exemplum_app::router(exemplum_app::AppComponentsFactory::default().build()),
     )
     .with_graceful_shutdown(async {
         shutdown().await;

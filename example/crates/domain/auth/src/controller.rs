@@ -19,52 +19,77 @@ use std::sync::Arc;
 use crate::api::{LoginRequest, LoginResponse, TokenRequest, TokenResponse};
 use crate::repo::AuthRepo;
 
-#[derive(Clone)]
-pub struct AuthState {
-    pub repo: Arc<dyn AuthRepo>,
-    pub jwt_secret: Arc<Vec<u8>>,
-    pub default_token_ttl: usize,
-    pub max_token_ttl: usize,
+#[derive(Clone, Debug)]
+pub struct TokenConfig {
+    pub jwt_secret: Vec<u8>,
+    pub default_ttl: usize,
+    pub max_ttl: usize,
     pub api_key_prefix: String,
 }
 
-impl AuthState {
-    pub fn new(repo: Arc<dyn AuthRepo>, jwt_secret: Vec<u8>) -> Self {
+impl TokenConfig {
+    pub fn new(jwt_secret: Vec<u8>) -> Self {
         Self {
-            repo,
-            jwt_secret: Arc::new(jwt_secret),
-            default_token_ttl: 3600,
-            max_token_ttl: 86400,
+            jwt_secret,
+            default_ttl: 3600,
+            max_ttl: 86400,
             api_key_prefix: "exmpl_key".to_string(),
         }
     }
+}
 
-    pub fn with_ttl(mut self, default_ttl: usize, max_ttl: usize) -> Self {
-        self.default_token_ttl = default_ttl;
-        self.max_token_ttl = max_ttl;
-        self
-    }
-
-    pub fn with_api_key_prefix(mut self, prefix: impl Into<String>) -> Self {
-        self.api_key_prefix = prefix.into();
-        self
+impl Default for TokenConfig {
+    fn default() -> Self {
+        Self::new(b"exemplum-default-secret-key-32bytes!".to_vec())
     }
 }
 
-pub fn router(state: AuthState) -> Router<()> {
+#[derive(Clone)]
+pub struct AuthComponents {
+    pub repo: Arc<dyn AuthRepo>,
+    pub token_config: TokenConfig,
+}
+
+impl AuthComponents {
+    pub fn new(repo: Arc<dyn AuthRepo>, token_config: TokenConfig) -> Self {
+        Self { repo, token_config }
+    }
+}
+
+pub struct AuthComponentsFactory {
+    pub repo: Arc<dyn AuthRepo>,
+    pub token_config: TokenConfig,
+}
+
+impl Default for AuthComponentsFactory {
+    fn default() -> Self {
+        Self {
+            repo: Arc::new(crate::repo::InMemoryAuthRepo::new()),
+            token_config: TokenConfig::default(),
+        }
+    }
+}
+
+impl AuthComponentsFactory {
+    pub fn build(self) -> AuthComponents {
+        AuthComponents::new(self.repo, self.token_config)
+    }
+}
+
+pub fn router(components: AuthComponents) -> Router<()> {
     Router::new()
         .route("/login", post(login))
         .route("/logout", post(logout))
         .route("/token", post(token))
-        .with_state(state)
+        .with_state(components)
 }
 
 async fn login(
-    State(state): State<AuthState>,
+    State(components): State<AuthComponents>,
     mut auth_session: axum_login::AuthSession<PrincipalAuthBackend>,
     AppJson(req): AppJson<LoginRequest>,
 ) -> Result<AppJson<LoginResponse>, HttpError> {
-    let identity = state
+    let identity = components
         .repo
         .find_active_by_type_and_identifier("password", &req.username)
         .await
@@ -102,7 +127,7 @@ async fn logout(
 }
 
 async fn token(
-    State(state): State<AuthState>,
+    State(components): State<AuthComponents>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<AppJson<TokenResponse>, HttpError> {
@@ -180,7 +205,7 @@ async fn token(
             .or(req.api_key.as_deref())
             .ok_or(AuthError::InvalidCredentials)?;
 
-        let ident = state
+        let ident = components
             .repo
             .find_active_by_type_and_identifier("api_key", client_id)
             .await
@@ -198,12 +223,12 @@ async fn token(
             .or(req.client_secret.as_deref())
             .ok_or(AuthError::InvalidCredentials)?;
 
-        if !validate_api_key_prefix(key, &state.api_key_prefix) {
+        if !validate_api_key_prefix(key, &components.token_config.api_key_prefix) {
             return Err(AuthError::InvalidCredentials.into());
         }
 
         let key_hash = hash_api_key(key);
-        let ident = state
+        let ident = components
             .repo
             .find_active_by_type_and_identifier("api_key", &key_hash)
             .await
@@ -216,15 +241,17 @@ async fn token(
         ident
     };
 
-    let requested_ttl = req.expires_in.unwrap_or(state.default_token_ttl);
-    let effective_ttl = requested_ttl.min(state.max_token_ttl);
+    let requested_ttl = req
+        .expires_in
+        .unwrap_or(components.token_config.default_ttl);
+    let effective_ttl = requested_ttl.min(components.token_config.max_ttl);
     let exp =
         (chrono::Utc::now() + chrono::Duration::seconds(effective_ttl as i64)).timestamp() as usize;
     let claims = Claims::new(identity.id, identity.user_id, exp);
     let access_token = jsonwebtoken::encode(
         &jsonwebtoken::Header::default(),
         &claims,
-        &jsonwebtoken::EncodingKey::from_secret(&state.jwt_secret),
+        &jsonwebtoken::EncodingKey::from_secret(&components.token_config.jwt_secret),
     )
     .map_err(|e| AuthError::Internal(format!("Failed to sign JWT: {e}")))?;
 

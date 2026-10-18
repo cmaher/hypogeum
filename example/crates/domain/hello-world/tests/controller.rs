@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode, header};
 use exemplum_dmn_hello_world::HelloWorldError;
-use exemplum_dmn_hello_world::controller::router;
+use exemplum_dmn_hello_world::controller::{HelloComponentsFactory, router};
 use exemplum_dmn_hello_world::service::{DefaultHelloWorldService, HelloWorldService};
 use std::sync::Arc;
 use tower::ServiceExt;
@@ -19,7 +19,13 @@ fn test_app(service: Arc<dyn HelloWorldService>) -> axum::Router {
             updated_at: chrono::Utc::now(),
         },
     });
-    router(service, authorizer, user_service)
+    let components = HelloComponentsFactory {
+        hello_service: service,
+        authorizer,
+        user_service,
+    }
+    .build();
+    router(components)
 }
 
 #[tokio::test]
@@ -252,9 +258,11 @@ async fn test_hello_me_requires_auth() {
     });
 
     let app = exemplum_dmn_hello_world::controller::router(
-        Arc::new(DefaultHelloWorldService),
-        authorizer,
-        user_service,
+        exemplum_dmn_hello_world::HelloComponents::new(
+            Arc::new(DefaultHelloWorldService),
+            authorizer,
+            user_service,
+        ),
     );
 
     let req = Request::builder()
@@ -284,9 +292,11 @@ async fn test_hello_me_evaluates_cedar_policy_and_returns_display_name() {
     });
 
     let app = exemplum_dmn_hello_world::controller::router(
-        Arc::new(DefaultHelloWorldService),
-        permit_authorizer,
-        user_service.clone(),
+        exemplum_dmn_hello_world::HelloComponents::new(
+            Arc::new(DefaultHelloWorldService),
+            permit_authorizer,
+            user_service.clone(),
+        ),
     );
 
     let principal = hypgm_authn::Principal::new(auth_id, user_id, hypgm_authn::AuthMethod::Session);
@@ -308,9 +318,11 @@ async fn test_hello_me_evaluates_cedar_policy_and_returns_display_name() {
         hypgm_authz::load_schema_and_policies(CEDAR_SCHEMA, FORBID_POLICY).unwrap();
     let forbid_authorizer = Arc::new(hypgm_authz::Authorizer::new(forbid_schema, forbid_policies));
     let app_forbidden = exemplum_dmn_hello_world::controller::router(
-        Arc::new(DefaultHelloWorldService),
-        forbid_authorizer,
-        user_service,
+        exemplum_dmn_hello_world::HelloComponents::new(
+            Arc::new(DefaultHelloWorldService),
+            forbid_authorizer,
+            user_service,
+        ),
     );
 
     let mut req_forbidden = Request::builder()

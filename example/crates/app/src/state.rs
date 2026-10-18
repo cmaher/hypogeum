@@ -1,3 +1,4 @@
+pub use exemplum_dmn_auth::TokenConfig;
 use exemplum_dmn_auth::repo::{AuthRepo, InMemoryAuthRepo, PgAuthRepo};
 use exemplum_dmn_hello_world::service::{DefaultHelloWorldService, HelloWorldService};
 use exemplum_dmn_users::models::{PageRequest, User, UserPage};
@@ -10,40 +11,23 @@ use std::sync::Arc;
 use tower_sessions::SessionStore;
 use uuid::Uuid;
 
-#[derive(Clone, Debug)]
-pub struct TokenTtlConfig {
-    pub default_ttl: usize,
-    pub max_ttl: usize,
-}
-
-impl Default for TokenTtlConfig {
-    fn default() -> Self {
-        Self {
-            default_ttl: 3600,
-            max_ttl: 86400,
-        }
-    }
-}
-
-pub struct AppState<S> {
+pub struct AppComponents<S> {
     pub hello_service: Arc<dyn HelloWorldService>,
     pub user_service: Arc<dyn UserService>,
     pub auth_repo: Arc<dyn AuthRepo>,
     pub authorizer: Arc<Authorizer>,
     pub session_store: S,
-    pub jwt_secret: Vec<u8>,
-    pub token_ttl: TokenTtlConfig,
-    pub api_key_prefix: String,
+    pub token_config: TokenConfig,
 }
 
-impl<S: SessionStore + Clone + Send + Sync + 'static> AppState<S> {
+impl<S: SessionStore + Clone + Send + Sync + 'static> AppComponents<S> {
     pub fn new(
         hello_service: Arc<dyn HelloWorldService>,
         user_service: Arc<dyn UserService>,
         auth_repo: Arc<dyn AuthRepo>,
         authorizer: Arc<Authorizer>,
         session_store: S,
-        jwt_secret: Vec<u8>,
+        token_config: TokenConfig,
     ) -> Self {
         Self {
             hello_service,
@@ -51,28 +35,64 @@ impl<S: SessionStore + Clone + Send + Sync + 'static> AppState<S> {
             auth_repo,
             authorizer,
             session_store,
-            jwt_secret,
-            token_ttl: TokenTtlConfig::default(),
-            api_key_prefix: "exmpl_key".to_string(),
+            token_config,
         }
     }
+}
 
-    pub fn with_hello_service(mut self, hello_service: Arc<dyn HelloWorldService>) -> Self {
-        self.hello_service = hello_service;
-        self
+pub struct AppComponentsFactory<S = tower_sessions::MemoryStore> {
+    pub hello_service: Arc<dyn HelloWorldService>,
+    pub user_service: Arc<dyn UserService>,
+    pub auth_repo: Arc<dyn AuthRepo>,
+    pub authorizer: Arc<Authorizer>,
+    pub session_store: S,
+    pub token_config: TokenConfig,
+}
+
+impl Default for AppComponentsFactory<tower_sessions::MemoryStore> {
+    fn default() -> Self {
+        Self {
+            hello_service: Arc::new(DefaultHelloWorldService),
+            user_service: Arc::new(DefaultMockUserService),
+            auth_repo: Arc::new(InMemoryAuthRepo::new()),
+            authorizer: default_authorizer(),
+            session_store: tower_sessions::MemoryStore::default(),
+            token_config: TokenConfig::default(),
+        }
     }
+}
 
-    pub fn with_token_ttl(mut self, default_ttl: usize, max_ttl: usize) -> Self {
-        self.token_ttl = TokenTtlConfig {
-            default_ttl,
-            max_ttl,
-        };
-        self
+impl<S: SessionStore + Clone + Send + Sync + 'static> AppComponentsFactory<S> {
+    pub fn build(self) -> AppComponents<S> {
+        AppComponents::new(
+            self.hello_service,
+            self.user_service,
+            self.auth_repo,
+            self.authorizer,
+            self.session_store,
+            self.token_config,
+        )
     }
+}
 
-    pub fn with_api_key_prefix(mut self, prefix: impl Into<String>) -> Self {
-        self.api_key_prefix = prefix.into();
-        self
+impl AppComponentsFactory<PostgresSessionStore> {
+    pub fn from_pool(
+        pool: PgPool,
+        authorizer: Arc<Authorizer>,
+        token_config: TokenConfig,
+    ) -> AppComponents<PostgresSessionStore> {
+        let session_store = PostgresSessionStore::new_with_schema(pool.clone(), "exemplum");
+        let auth_repo = Arc::new(PgAuthRepo::new(pool.clone()));
+        let user_repo = Arc::new(PgUserRepo::new(pool));
+        let user_service = Arc::new(DefaultUserService::new(user_repo));
+        AppComponents::new(
+            Arc::new(DefaultHelloWorldService),
+            user_service,
+            auth_repo,
+            authorizer,
+            session_store,
+            token_config,
+        )
     }
 }
 
@@ -112,54 +132,5 @@ impl UserService for DefaultMockUserService {
 
     async fn delete(&self, _id: Uuid) -> Result<(), UserError> {
         Ok(())
-    }
-}
-
-impl Default for AppState<tower_sessions::MemoryStore> {
-    fn default() -> Self {
-        Self::new(
-            Arc::new(DefaultHelloWorldService),
-            Arc::new(DefaultMockUserService),
-            Arc::new(InMemoryAuthRepo::new()),
-            default_authorizer(),
-            tower_sessions::MemoryStore::default(),
-            b"exemplum-default-secret-key-32bytes!".to_vec(),
-        )
-    }
-}
-
-impl AppState<tower_sessions::MemoryStore> {
-    /// Constructs a fully working in-memory application state for tests and local development.
-    pub fn in_memory(
-        authorizer: Arc<Authorizer>,
-        user_service: Arc<dyn UserService>,
-        auth_repo: Arc<dyn AuthRepo>,
-    ) -> Self {
-        Self::new(
-            Arc::new(DefaultHelloWorldService),
-            user_service,
-            auth_repo,
-            authorizer,
-            tower_sessions::MemoryStore::default(),
-            b"exemplum-default-secret-key-32bytes!".to_vec(),
-        )
-    }
-}
-
-impl AppState<PostgresSessionStore> {
-    /// Constructs a production application state backed by PostgreSQL.
-    pub fn from_pool(authorizer: Arc<Authorizer>, pool: PgPool, jwt_secret: Vec<u8>) -> Self {
-        let session_store = PostgresSessionStore::new_with_schema(pool.clone(), "exemplum");
-        let auth_repo = Arc::new(PgAuthRepo::new(pool.clone()));
-        let user_repo = Arc::new(PgUserRepo::new(pool));
-        let user_service = Arc::new(DefaultUserService::new(user_repo));
-        Self::new(
-            Arc::new(DefaultHelloWorldService),
-            user_service,
-            auth_repo,
-            authorizer,
-            session_store,
-            jwt_secret,
-        )
     }
 }

@@ -6,6 +6,6 @@ pub mod repo;
 
 pub use api::{LoginRequest, LoginResponse, TokenRequest, TokenResponse};
 pub use backend::ExemplumAuthBackend;
-pub use controller::{AuthState, router};
+pub use controller::{AuthComponents, AuthComponentsFactory, TokenConfig, router};
 pub use models::AuthIdentity;
 pub use repo::{AuthRepo, InMemoryAuthRepo, PgAuthRepo};

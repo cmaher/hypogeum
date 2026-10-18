@@ -4,7 +4,7 @@ use base64::Engine;
 use base64::prelude::BASE64_STANDARD;
 use exemplum_dmn_auth::api::{LoginRequest, LoginResponse, TokenResponse};
 use exemplum_dmn_auth::backend::ExemplumAuthBackend;
-use exemplum_dmn_auth::controller::{AuthState, router};
+use exemplum_dmn_auth::controller::{AuthComponentsFactory, TokenConfig, router};
 use exemplum_dmn_auth::repo::{AuthRepo, InMemoryAuthRepo};
 use http_body_util::BodyExt;
 use hypgm_authn::api_key::generate_api_key;
@@ -16,10 +16,17 @@ use tower_sessions::SessionManagerLayer;
 use uuid::Uuid;
 
 fn build_test_app(repo: Arc<InMemoryAuthRepo>) -> axum::Router {
-    let auth_state = AuthState::new(repo.clone(), b"test-secret-key-32bytes-for-jwt!".to_vec())
-        .with_ttl(3600, 7200)
-        .with_api_key_prefix("exmpl_key");
-    let routes = router(auth_state);
+    let components = AuthComponentsFactory {
+        repo: repo.clone(),
+        token_config: TokenConfig {
+            jwt_secret: b"test-secret-key-32bytes-for-jwt!".to_vec(),
+            default_ttl: 3600,
+            max_ttl: 7200,
+            api_key_prefix: "exmpl_key".to_string(),
+        },
+    }
+    .build();
+    let routes = router(components);
 
     let backend = ExemplumAuthBackend::from_arc(repo);
     let login_backend = PrincipalAuthBackend::new(backend);

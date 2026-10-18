@@ -91,19 +91,20 @@ impl TestHarness {
 
         let user_service = Arc::new(InMemoryUserService::new());
         let auth_repo = Arc::new(InMemoryAuthRepo::new());
+        let token_config =
+            exemplum_app::TokenConfig::new(b"test-jwt-secret-key-32-bytes-long!".to_vec());
         let session_store = tower_sessions::MemoryStore::default();
-        let jwt_secret = b"test-jwt-secret-key-32-bytes-long!".to_vec();
 
-        let state = exemplum_app::AppState::new(
+        let components = exemplum_app::AppComponents::new(
             Arc::new(DefaultHelloWorldService),
             user_service.clone(),
             auth_repo.clone(),
             authorizer,
             session_store,
-            jwt_secret,
+            token_config,
         );
 
-        let router = exemplum_app::router(state);
+        let router = exemplum_app::router(components);
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = format!("http://{}", listener.local_addr().unwrap());
@@ -561,10 +562,12 @@ async fn postgres_e2e_auth_transport(
         hypgm_authz::load_schema_and_policies(&schema_content, &policy_content)
             .expect("Failed to load Cedar schema and policies");
     let authorizer = Arc::new(hypgm_authz::Authorizer::new(schema, policies));
-    let jwt_secret = b"test-jwt-secret-key-32-bytes-long!".to_vec();
+    let token_config =
+        exemplum_app::TokenConfig::new(b"test-jwt-secret-key-32-bytes-long!".to_vec());
 
-    let state = exemplum_app::AppState::from_pool(authorizer, pool.clone(), jwt_secret);
-    let router = exemplum_app::router(state);
+    let components =
+        exemplum_app::AppComponentsFactory::from_pool(pool.clone(), authorizer, token_config);
+    let router = exemplum_app::router(components);
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let endpoint = format!("http://{}", listener.local_addr().unwrap());
