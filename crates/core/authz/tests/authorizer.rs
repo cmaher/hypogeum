@@ -660,3 +660,93 @@ fn action_group_policies_apply_across_entity_paths() {
         }
     }
 }
+
+#[test]
+fn requests_must_conform_to_action_schema() {
+    let (schema, policies) = load_schema_and_policies(
+        r#"
+        entity User;
+        entity Service;
+        entity Document;
+        entity Secret;
+        action "View" appliesTo { principal: [User], resource: [Document] };
+        action "ServiceView" appliesTo { principal: [Service], resource: [Secret] };
+    "#,
+        "permit(principal, action, resource);",
+    )
+    .unwrap();
+    let authorizer = Authorizer::new(schema, policies).unwrap();
+    let principal = Principal::new(Uuid::new_v4(), Uuid::new_v4(), AuthMethod::BearerJwt);
+    for (action, resource, expected) in [
+        ("View", "Document", Decision::Allow),
+        ("Undeclared", "Document", Decision::Deny),
+        ("View", "Secret", Decision::Deny),
+        ("ServiceView", "Secret", Decision::Deny),
+        ("View", "Unknown", Decision::Deny),
+    ] {
+        assert_eq!(
+            authorizer.is_authorized(&principal, ("Action", action), (resource, "doc")),
+            expected,
+            "{action} / {resource}"
+        );
+    }
+}
+
+#[test]
+fn custom_context_must_conform_even_when_policy_does_not_read_it() {
+    let (schema, policies) = load_schema_and_policies(
+        r#"
+        entity User; entity Document;
+        action "View" appliesTo { principal: [User], resource: [Document], context: { mfa: Bool } };
+    "#,
+        "permit(principal, action, resource);",
+    )
+    .unwrap();
+    let authorizer = Authorizer::new(schema, policies).unwrap();
+    let principal = Principal::new(Uuid::new_v4(), Uuid::new_v4(), AuthMethod::BearerJwt);
+    for (context, expected) in [
+        (serde_json::json!({"mfa": true}), Decision::Allow),
+        (serde_json::json!({"mfa": "true"}), Decision::Deny),
+        (serde_json::json!({}), Decision::Deny),
+        (
+            serde_json::json!({"mfa": true, "unexpected": true}),
+            Decision::Deny,
+        ),
+        (
+            serde_json::json!({"mfa": true, "auth_method": "session"}),
+            Decision::Deny,
+        ),
+    ] {
+        let context = cedar_policy::Context::from_json_value(context, None).unwrap();
+        assert_eq!(
+            authorizer.is_authorized_with_context(
+                &principal,
+                ("Action", "View"),
+                ("Document", "doc"),
+                &context
+            ),
+            expected
+        );
+    }
+}
+
+#[test]
+fn schema_can_opt_into_individual_authentication_context_fields() {
+    let principal = Principal::new(Uuid::new_v4(), Uuid::new_v4(), AuthMethod::BearerJwt);
+    for fields in [
+        "auth_id: String",
+        "auth_method: String",
+        "auth_id?: String, auth_method?: String",
+    ] {
+        let schema = format!(
+            r#"entity User; entity Document; action "View" appliesTo {{ principal: [User], resource: [Document], context: {{ {fields} }} }};"#
+        );
+        let (schema, policies) =
+            load_schema_and_policies(&schema, "permit(principal, action, resource);").unwrap();
+        let authorizer = Authorizer::new(schema, policies).unwrap();
+        assert_eq!(
+            authorizer.is_authorized(&principal, ("Action", "View"), ("Document", "doc")),
+            Decision::Allow
+        );
+    }
+}

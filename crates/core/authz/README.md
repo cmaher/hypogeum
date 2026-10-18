@@ -112,3 +112,17 @@ let app = Router::new()
 Authorizer constructors and entity replacement return `Result` so invalid entity graphs
 fail during configuration. Schema action entities are always retained; runtime actions
 must conform to the schema and cannot replace its action hierarchy.
+
+### Request conformance and execution context
+
+Every request is validated against the configured schema before policy evaluation.
+Unknown actions, invalid principal/resource types for an action, and invalid context
+fail closed, even when a broad permit would otherwise match.
+
+`auth_id` and `auth_method` are reserved framework context keys. The authorizer
+projects these trusted strings onto the action context: it prefers both, then
+`auth_id` alone, then `auth_method` alone, then neither, selecting the first
+schema-conforming context. Declare the fields as required `String` attributes
+when policies require them. Schemas with no context declaration continue to work.
+All custom context fields are retained and validated; missing required fields,
+wrong types, unexpected attributes, and attempts to supply reserved keys deny access.

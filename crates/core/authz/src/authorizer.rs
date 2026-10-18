@@ -215,7 +215,7 @@ impl Authorizer {
             }
         };
 
-        let execution_context = match build_context(principal, context) {
+        let execution_context = match build_context(principal, context, &self.schema, &action_uid) {
             Ok(ctx) => ctx,
             Err(err) => {
                 tracing::warn!(error = %err, "Failed to build execution context; failing closed");
@@ -228,7 +228,7 @@ impl Authorizer {
             action_uid,
             resource_uid,
             execution_context,
-            None,
+            Some(&self.schema),
         ) {
             Ok(req) => req,
             Err(err) => {
@@ -346,6 +346,8 @@ fn principal_to_entity_uid(
 fn build_context(
     principal: &Principal,
     custom_context: Option<&Context>,
+    schema: &Schema,
+    action: &EntityUid,
 ) -> Result<Context, AuthzError> {
     let method_str = match principal.method {
         AuthMethod::BearerJwt => "bearer_jwt",
@@ -359,13 +361,35 @@ fn build_context(
     let base_ctx = Context::from_json_value(json_val, None)
         .map_err(|e| AuthzError::EvaluationError(format!("Failed to build Cedar context: {e}")))?;
 
-    if let Some(custom) = custom_context {
-        base_ctx.merge(custom.clone()).map_err(|e| {
-            AuthzError::EvaluationError(format!("Failed to merge execution context: {e}"))
-        })
-    } else {
-        Ok(base_ctx)
+    if custom_context
+        .is_some_and(|ctx| ctx.get("auth_id").is_some() || ctx.get("auth_method").is_some())
+    {
+        return Err(AuthzError::EvaluationError(
+            "Authentication context keys are reserved".into(),
+        ));
     }
+
+    // Project only framework-owned metadata onto the action's context contract.
+    // Keep all caller-supplied fields in every candidate, so invalid custom data
+    // never becomes valid through projection. Prefer including both metadata fields.
+    for (auth_id, auth_method) in [(true, true), (true, false), (false, true), (false, false)] {
+        let metadata = Context::from_pairs(base_ctx.clone().into_iter().filter(|(key, _)| {
+            (key == "auth_id" && auth_id) || (key == "auth_method" && auth_method)
+        }))
+        .map_err(AuthzError::evaluation)?;
+        let candidate = match custom_context {
+            Some(custom) => metadata
+                .merge(custom.clone())
+                .map_err(AuthzError::evaluation)?,
+            None => metadata,
+        };
+        if candidate.validate(schema, action).is_ok() {
+            return Ok(candidate);
+        }
+    }
+    Err(AuthzError::EvaluationError(
+        "Execution context does not conform to action schema".into(),
+    ))
 }
 
 #[cfg(test)]
