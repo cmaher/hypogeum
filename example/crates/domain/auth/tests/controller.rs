@@ -20,7 +20,7 @@ fn build_test_app(repo: Arc<InMemoryAuthRepo>) -> axum::Router {
         repo: repo.clone(),
         password_config: Default::default(),
         token_config: TokenConfig {
-            jwt_secret: b"test-secret-key-32bytes-for-jwt!".to_vec(),
+            jwt_secret: b"test-secret-key-at-least-32-bytes-for-jwt!".to_vec(),
             default_ttl: 3600,
             max_ttl: 7200,
             api_key_prefix: "exmpl_key".to_string(),
