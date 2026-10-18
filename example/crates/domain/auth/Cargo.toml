@@ -1,0 +1,25 @@
+[package]
+name = "exemplum-dmn-auth"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+hypgm-errors = { path = "../../../../crates/core/errors" }
+hypgm-authn = { path = "../../../../crates/core/authn" }
+hypgmx-rdbms = { path = "../../../../crates/ext/rdbms", features = ["postgres"] }
+sqlx = { workspace = true, features = ["macros"] }
+sea-orm.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+async-trait.workspace = true
+tokio.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+hypgm-test-support = { path = "../../../../crates/core/test-support" }
+
+[lints]
+workspace = true

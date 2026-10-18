@@ -1284,6 +1284,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "exemplum-dmn-auth"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "hypgm-authn",
+ "hypgm-errors",
+ "hypgm-test-support",
+ "hypgmx-rdbms",
+ "sea-orm",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "exemplum-dmn-hello-world"
 version = "0.1.0"
 dependencies = [
