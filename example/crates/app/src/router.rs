@@ -46,7 +46,8 @@ where
     let login_backend = PrincipalAuthBackend::new(backend);
     let session_layer = SessionManagerLayer::new(components.session_store);
     let auth_layer = axum_login::AuthManagerLayerBuilder::new(login_backend, session_layer).build();
-    let jwt_validator = JwtValidator::from_hs256_secret(&components.token_config.jwt_secret);
+    let jwt_validator = JwtValidator::from_hs256_secret(&components.token_config.jwt_secret)
+        .expect("application HS256 secret must contain at least 32 bytes");
 
     Router::new()
         .route("/healthz", get(healthz))

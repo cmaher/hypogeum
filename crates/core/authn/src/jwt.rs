@@ -51,6 +51,29 @@ pub struct Claims {
     pub aud: Option<Audience>,
 }
 
+#[derive(Deserialize)]
+struct ValidatedClaims {
+    #[serde(flatten)]
+    claims: Claims,
+    #[serde(default, rename = "nbf", deserialize_with = "validate_not_before")]
+    _not_before: (),
+}
+
+fn validate_not_before<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<(), D::Error> {
+    // jsonwebtoken skips malformed or out-of-range optional NumericDates.
+    // Require a supported number here; the library checks its time and leeway.
+    let timestamp = serde_json::Number::deserialize(deserializer)?;
+    if timestamp.as_u64().is_some()
+        || timestamp
+            .as_f64()
+            .is_some_and(|value| value >= 0.0 && value < u64::MAX as f64)
+    {
+        Ok(())
+    } else {
+        Err(serde::de::Error::custom("Invalid not-before timestamp"))
+    }
+}
+
 impl Claims {
     pub fn new(auth_id: Uuid, sub: Uuid, exp: usize) -> Self {
         Self {
@@ -106,13 +129,18 @@ pub struct JwtValidator {
 }
 
 impl JwtValidator {
+    /// Low-level constructor. Callers supplying an opaque `DecodingKey` are responsible
+    /// for algorithm compatibility and key strength (at least 32 random bytes for HS256).
     pub fn new(decoding_key: DecodingKey, config: JwtConfig) -> Self {
         let mut validation = Validation::new(config.algorithm);
         validation.leeway = config.leeway_seconds;
+        validation.validate_nbf = true;
         if let Some(ref iss) = config.issuer {
             validation.set_issuer(&[iss]);
+            validation.required_spec_claims.insert("iss".into());
         }
         if let Some(ref aud) = config.audience {
+            validation.required_spec_claims.insert("aud".into());
             match aud {
                 Audience::Single(s) => validation.set_audience(&[s]),
                 Audience::Multiple(list) => validation.set_audience(list),
@@ -128,13 +156,21 @@ impl JwtValidator {
         }
     }
 
-    pub fn from_hs256_secret(secret: &[u8]) -> Self {
+    pub fn from_hs256_secret(secret: &[u8]) -> Result<Self, AuthError> {
         Self::from_hs256_secret_with_config(secret, JwtConfig::default())
     }
 
-    pub fn from_hs256_secret_with_config(secret: &[u8], mut config: JwtConfig) -> Self {
+    pub fn from_hs256_secret_with_config(
+        secret: &[u8],
+        mut config: JwtConfig,
+    ) -> Result<Self, AuthError> {
+        if secret.len() < 32 {
+            return Err(AuthError::Internal(
+                "HS256 secret must contain at least 32 bytes".into(),
+            ));
+        }
         config.algorithm = Algorithm::HS256;
-        Self::new(DecodingKey::from_secret(secret), config)
+        Ok(Self::new(DecodingKey::from_secret(secret), config))
     }
 
     pub fn from_rs256_pem(pem: &[u8]) -> Result<Self, AuthError> {
@@ -174,14 +210,13 @@ impl JwtValidator {
             return Err(AuthError::MissingCredentials);
         }
 
-        let token_data = decode::<Claims>(token, &self.decoding_key, &self.validation).map_err(
-            |err| match err.kind() {
+        let token_data = decode::<ValidatedClaims>(token, &self.decoding_key, &self.validation)
+            .map_err(|err| match err.kind() {
                 ErrorKind::ExpiredSignature => AuthError::ExpiredToken,
                 _ => AuthError::InvalidToken(err.to_string()),
-            },
-        )?;
+            })?;
 
-        Ok(token_data.claims)
+        Ok(token_data.claims.claims)
     }
 
     pub fn verify_token(&self, token: &str) -> Result<Principal, AuthError> {

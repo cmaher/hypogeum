@@ -3,6 +3,7 @@ use cedar_policy::{
     EntityUid, PolicySet, Request, Schema,
 };
 use hypgm_authn::{AuthMethod, Principal};
+use std::borrow::Cow;
 use std::str::FromStr;
 
 use crate::error::AuthzError;
@@ -76,33 +77,42 @@ pub struct Authorizer {
 
 impl Authorizer {
     /// Creates a new `Authorizer` from a validated `Schema` and `PolicySet`.
-    pub fn new(schema: Schema, policies: PolicySet) -> Self {
-        Self {
-            schema,
-            policies,
-            entities: Entities::empty(),
-            cedar: CedarAuthorizer::new(),
-            principal_type: EntityTypeName::from_str("User")
-                .expect("User is a valid Cedar EntityTypeName"),
-        }
-    }
-
-    /// Creates a new `Authorizer` with additional preloaded entities.
-    pub fn new_with_entities(schema: Schema, policies: PolicySet, entities: Entities) -> Self {
-        Self {
+    pub fn new(schema: Schema, policies: PolicySet) -> Result<Self, AuthzError> {
+        let entities = schema.action_entities().map_err(AuthzError::policy_load)?;
+        Ok(Self {
             schema,
             policies,
             entities,
             cedar: CedarAuthorizer::new(),
             principal_type: EntityTypeName::from_str("User")
                 .expect("User is a valid Cedar EntityTypeName"),
-        }
+        })
     }
 
-    /// Configures preloaded base entities on this `Authorizer`.
-    pub fn with_entities(mut self, entities: Entities) -> Self {
-        self.entities = entities;
-        self
+    /// Creates an authorizer with preloaded entities and schema-defined actions.
+    pub fn new_with_entities(
+        schema: Schema,
+        policies: PolicySet,
+        entities: Entities,
+    ) -> Result<Self, AuthzError> {
+        Self::new(schema, policies)?.with_entities(entities)
+    }
+
+    /// Replaces preloaded entities, preserving the schema-defined action hierarchy.
+    pub fn with_entities(mut self, entities: Entities) -> Result<Self, AuthzError> {
+        let entities = entities
+            .upsert_entities(
+                self.schema
+                    .action_entities()
+                    .map_err(AuthzError::policy_load)?
+                    .iter()
+                    .cloned(),
+                None,
+            )
+            .map_err(AuthzError::policy_load)?;
+        self.entities = Entities::from_entities(entities.iter().cloned(), Some(&self.schema))
+            .map_err(AuthzError::policy_load)?;
+        Ok(self)
     }
 
     /// Configures the Cedar principal `EntityTypeName` (defaults to `"User"`).
@@ -207,7 +217,7 @@ impl Authorizer {
             }
         };
 
-        let execution_context = match build_context(principal, context) {
+        let execution_context = match build_context(principal, context, &self.schema, &action_uid) {
             Ok(ctx) => ctx,
             Err(err) => {
                 tracing::warn!(error = %err, "Failed to build execution context; failing closed");
@@ -220,7 +230,7 @@ impl Authorizer {
             action_uid,
             resource_uid,
             execution_context,
-            None,
+            Some(&self.schema),
         ) {
             Ok(req) => req,
             Err(err) => {
@@ -229,31 +239,17 @@ impl Authorizer {
             }
         };
 
-        let combined_entities;
-        let eval_entities = if self.entities.is_empty() {
-            entities
-        } else if entities.is_empty() {
-            &self.entities
-        } else {
-            match self
-                .entities
-                .clone()
-                .upsert_entities(entities.iter().cloned(), None)
-            {
-                Ok(combined) => {
-                    combined_entities = combined;
-                    &combined_entities
-                }
-                Err(err) => {
-                    tracing::warn!(error = %err, "Failed to combine runtime entities with preloaded entities; failing closed");
-                    return Decision::Deny;
-                }
+        let eval_entities = match self.evaluation_entities(entities) {
+            Ok(entities) => entities,
+            Err(err) => {
+                tracing::warn!(error = %err, "Failed to combine runtime entities; failing closed");
+                return Decision::Deny;
             }
         };
 
         let response = self
             .cedar
-            .is_authorized(&request, &self.policies, eval_entities);
+            .is_authorized(&request, &self.policies, &eval_entities);
 
         let diagnostics = response.diagnostics();
         let mut has_errors = false;
@@ -267,6 +263,23 @@ impl Authorizer {
         }
 
         response.decision()
+    }
+
+    fn evaluation_entities<'a>(
+        &'a self,
+        entities: &'a Entities,
+    ) -> Result<Cow<'a, Entities>, AuthzError> {
+        if self.entities.is_empty() {
+            Ok(Cow::Borrowed(entities))
+        } else if entities.is_empty() || std::ptr::eq(entities, &self.entities) {
+            Ok(Cow::Borrowed(&self.entities))
+        } else {
+            self.entities
+                .clone()
+                .upsert_entities(entities.iter().cloned(), Some(&self.schema))
+                .map(Cow::Owned)
+                .map_err(AuthzError::evaluation)
+        }
     }
 
     /// Authorizes a request, returning `Ok(())` on `Decision::Allow` and `Err(AuthzError::Forbidden)`
@@ -335,6 +348,8 @@ fn principal_to_entity_uid(
 fn build_context(
     principal: &Principal,
     custom_context: Option<&Context>,
+    schema: &Schema,
+    action: &EntityUid,
 ) -> Result<Context, AuthzError> {
     let method_str = match principal.method {
         AuthMethod::BearerJwt => "bearer_jwt",
@@ -348,11 +363,70 @@ fn build_context(
     let base_ctx = Context::from_json_value(json_val, None)
         .map_err(|e| AuthzError::EvaluationError(format!("Failed to build Cedar context: {e}")))?;
 
-    if let Some(custom) = custom_context {
-        base_ctx.merge(custom.clone()).map_err(|e| {
-            AuthzError::EvaluationError(format!("Failed to merge execution context: {e}"))
-        })
-    } else {
-        Ok(base_ctx)
+    if custom_context
+        .is_some_and(|ctx| ctx.get("auth_id").is_some() || ctx.get("auth_method").is_some())
+    {
+        return Err(AuthzError::EvaluationError(
+            "Authentication context keys are reserved".into(),
+        ));
+    }
+
+    // Project only framework-owned metadata onto the action's context contract.
+    // Keep all caller-supplied fields in every candidate, so invalid custom data
+    // never becomes valid through projection. Prefer including both metadata fields.
+    for (auth_id, auth_method) in [(true, true), (true, false), (false, true), (false, false)] {
+        let metadata = Context::from_pairs(base_ctx.clone().into_iter().filter(|(key, _)| {
+            (key == "auth_id" && auth_id) || (key == "auth_method" && auth_method)
+        }))
+        .map_err(AuthzError::evaluation)?;
+        let candidate = match custom_context {
+            Some(custom) => metadata
+                .merge(custom.clone())
+                .map_err(AuthzError::evaluation)?,
+            None => metadata,
+        };
+        if candidate.validate(schema, action).is_ok() {
+            return Ok(candidate);
+        }
+    }
+    Err(AuthzError::EvaluationError(
+        "Execution context does not conform to action schema".into(),
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::load_schema_and_policies;
+
+    #[test]
+    fn ordinary_checks_borrow_the_preloaded_graph() {
+        let (schema, policies) = load_schema_and_policies(
+            r#"entity User; entity Document; action "View" appliesTo { principal: [User], resource: [Document] };"#,
+            "permit(principal, action, resource);",
+        ).unwrap();
+        let authorizer = Authorizer::new(schema, policies).unwrap();
+        // Ordinary and custom-context entry points pass this exact stored graph.
+        let entities = authorizer
+            .evaluation_entities(authorizer.entities())
+            .unwrap();
+        assert!(
+            matches!(entities, Cow::Borrowed(graph) if std::ptr::eq(graph, authorizer.entities()))
+        );
+        let empty = Entities::empty();
+        assert!(
+            matches!(authorizer.evaluation_entities(&empty).unwrap(), Cow::Borrowed(graph) if std::ptr::eq(graph, authorizer.entities()))
+        );
+        let runtime = Entities::from_json_value(
+            serde_json::json!([{
+                "uid": { "type": "Document", "id": "runtime" }, "attrs": {}, "parents": []
+            }]),
+            None,
+        )
+        .unwrap();
+        assert!(matches!(
+            authorizer.evaluation_entities(&runtime).unwrap(),
+            Cow::Owned(_)
+        ));
     }
 }

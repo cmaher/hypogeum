@@ -110,7 +110,7 @@ async fn main() -> anyhow::Result<()> {
     .context("Load Cedar schema and policies")?;
     let components = exemplum_app::AppComponentsFactory::from_pool(
         pool.clone(),
-        Arc::new(hypgm_authz::Authorizer::new(schema, policies)),
+        Arc::new(hypgm_authz::Authorizer::new(schema, policies)?),
         exemplum_app::TokenConfig::new(config.jwt_secret.expose().as_bytes().to_vec()),
         exemplum_app::PasswordConfig {
             max_verifications: config.max_password_verifications,

@@ -32,7 +32,7 @@ async fn test_require_auth_valid_bearer_header() {
     let auth_id = Uuid::new_v4();
     let token = create_token(user_id, auth_id);
 
-    let validator = JwtValidator::from_hs256_secret(TEST_SECRET);
+    let validator = JwtValidator::from_hs256_secret(TEST_SECRET).unwrap();
     let mut req = Request::builder()
         .header(header::AUTHORIZATION, format!("Bearer {token}"))
         .body(())
@@ -58,7 +58,7 @@ async fn test_require_auth_case_insensitive_bearer_header() {
     let auth_id = Uuid::new_v4();
     let token = create_token(user_id, auth_id);
 
-    let validator = JwtValidator::from_hs256_secret(TEST_SECRET);
+    let validator = JwtValidator::from_hs256_secret(TEST_SECRET).unwrap();
     let mut req = Request::builder()
         .header(header::AUTHORIZATION, format!("BEARER {token}"))
         .body(())
@@ -117,7 +117,7 @@ async fn test_require_auth_missing_credentials_returns_401_json() {
 
 #[tokio::test]
 async fn test_require_auth_invalid_token_returns_401_json() {
-    let validator = JwtValidator::from_hs256_secret(TEST_SECRET);
+    let validator = JwtValidator::from_hs256_secret(TEST_SECRET).unwrap();
     let mut req = Request::builder()
         .header(header::AUTHORIZATION, "Bearer invalid-garbage-token")
         .body(())
@@ -181,7 +181,7 @@ async fn test_optional_auth_authenticated_yields_some() {
     let auth_id = Uuid::new_v4();
     let token = create_token(user_id, auth_id);
 
-    let validator = JwtValidator::from_hs256_secret(TEST_SECRET);
+    let validator = JwtValidator::from_hs256_secret(TEST_SECRET).unwrap();
     let mut req = Request::builder()
         .header(header::AUTHORIZATION, format!("Bearer {token}"))
         .body(())
@@ -202,7 +202,7 @@ async fn test_optional_auth_authenticated_yields_some() {
 
 #[tokio::test]
 async fn test_axum_router_integration() {
-    let validator = JwtValidator::from_hs256_secret(TEST_SECRET);
+    let validator = JwtValidator::from_hs256_secret(TEST_SECRET).unwrap();
 
     let app = Router::new()
         .route(

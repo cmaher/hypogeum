@@ -61,7 +61,7 @@ fn test_decode_valid_hs256_token() {
     )
     .expect("encoding should succeed");
 
-    let validator = JwtValidator::from_hs256_secret(TEST_SECRET);
+    let validator = JwtValidator::from_hs256_secret(TEST_SECRET).unwrap();
     let principal = validator
         .verify_token(&token)
         .expect("verification should succeed");
@@ -158,7 +158,7 @@ fn test_expired_token_rejected() {
     )
     .unwrap();
 
-    let validator = JwtValidator::from_hs256_secret(TEST_SECRET);
+    let validator = JwtValidator::from_hs256_secret(TEST_SECRET).unwrap();
     let result = validator.verify_token(&token);
 
     match result {
@@ -181,7 +181,7 @@ fn test_tampered_token_rejected() {
     )
     .unwrap();
 
-    let validator = JwtValidator::from_hs256_secret(TEST_SECRET);
+    let validator = JwtValidator::from_hs256_secret(TEST_SECRET).unwrap();
     let result = validator.verify_token(&token);
 
     match result {
@@ -192,7 +192,7 @@ fn test_tampered_token_rejected() {
 
 #[test]
 fn test_malformed_token_rejected() {
-    let validator = JwtValidator::from_hs256_secret(TEST_SECRET);
+    let validator = JwtValidator::from_hs256_secret(TEST_SECRET).unwrap();
 
     assert!(matches!(
         validator.verify_token("not-a-valid-token"),
@@ -202,7 +202,7 @@ fn test_malformed_token_rejected() {
 
 #[test]
 fn test_empty_token_rejected() {
-    let validator = JwtValidator::from_hs256_secret(TEST_SECRET);
+    let validator = JwtValidator::from_hs256_secret(TEST_SECRET).unwrap();
 
     assert!(matches!(
         validator.verify_token(""),
@@ -381,5 +381,212 @@ fn test_multi_value_audience_validation() {
             );
         }
         _ => panic!("expected Audience::Multiple"),
+    }
+}
+
+fn signing_keys(algorithm: Algorithm) -> (EncodingKey, jsonwebtoken::DecodingKey) {
+    match algorithm {
+        Algorithm::HS256 => (
+            EncodingKey::from_secret(TEST_SECRET),
+            jsonwebtoken::DecodingKey::from_secret(TEST_SECRET),
+        ),
+        Algorithm::RS256 => (
+            EncodingKey::from_rsa_pem(RSA_PRIVATE_KEY_PEM).unwrap(),
+            jsonwebtoken::DecodingKey::from_rsa_pem(RSA_PUBLIC_KEY_PEM).unwrap(),
+        ),
+        _ => unreachable!(),
+    }
+}
+
+#[test]
+fn configured_identity_claims_are_required() {
+    for algorithm in [Algorithm::HS256, Algorithm::RS256] {
+        let (encoding, decoding) = signing_keys(algorithm);
+        for (issuer, audience) in [(true, false), (false, true), (true, true), (false, false)] {
+            let validator = JwtValidator::new(
+                decoding.clone(),
+                JwtConfig {
+                    algorithm,
+                    issuer: issuer.then(|| "issuer".into()),
+                    audience: audience.then(|| "audience".into()),
+                    ..Default::default()
+                },
+            );
+            for iss in [
+                None,
+                Some(serde_json::Value::Null),
+                Some(serde_json::json!("wrong")),
+                Some(serde_json::json!("issuer")),
+            ] {
+                for aud in [
+                    None,
+                    Some(serde_json::Value::Null),
+                    Some(serde_json::json!("wrong")),
+                    Some(serde_json::json!("audience")),
+                    Some(serde_json::json!(["other", "audience"])),
+                ] {
+                    let mut claims = serde_json::to_value(Claims::new(
+                        Uuid::new_v4(),
+                        Uuid::new_v4(),
+                        now_epoch() + 3600,
+                    ))
+                    .unwrap();
+                    if let Some(iss) = &iss {
+                        claims["iss"] = iss.clone();
+                    }
+                    if let Some(aud) = &aud {
+                        claims["aud"] = aud.clone();
+                    }
+                    let token = encode(&Header::new(algorithm), &claims, &encoding).unwrap();
+                    let valid_issuer = !issuer || iss == Some(serde_json::json!("issuer"));
+                    let valid_audience = !audience
+                        || aud == Some(serde_json::json!("audience"))
+                        || aud == Some(serde_json::json!(["other", "audience"]));
+                    assert_eq!(
+                        validator.verify_token(&token).is_ok(),
+                        valid_issuer && valid_audience,
+                        "{algorithm:?}: issuer={issuer}, audience={audience}, claims={claims}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn hs256_secret_constructors_reject_short_keys() {
+    for length in [0, 1, 16, 31, 32, 64] {
+        let secret = vec![b'k'; length];
+        for result in [
+            JwtValidator::from_hs256_secret(&secret),
+            JwtValidator::from_hs256_secret_with_config(&secret, JwtConfig::default()),
+        ] {
+            if length < 32 {
+                let err = match result {
+                    Err(err) => err,
+                    Ok(_) => panic!("short secret accepted"),
+                };
+                assert!(matches!(err, AuthError::Internal(_)));
+                assert!(!format!("{err:?}").contains("kkkk"));
+            } else {
+                let validator = result.unwrap();
+                let claims = Claims::new(Uuid::new_v4(), Uuid::new_v4(), now_epoch() + 3600);
+                let token = encode(
+                    &Header::default(),
+                    &claims,
+                    &EncodingKey::from_secret(&secret),
+                )
+                .unwrap();
+                assert!(validator.verify_token(&token).is_ok());
+            }
+        }
+    }
+}
+
+#[test]
+fn not_before_and_expiration_use_configured_leeway() {
+    for algorithm in [Algorithm::HS256, Algorithm::RS256] {
+        let (encoding, decoding) = signing_keys(algorithm);
+        let now = now_epoch();
+        for leeway in [0, 120] {
+            let validator = JwtValidator::new(
+                decoding.clone(),
+                JwtConfig {
+                    algorithm,
+                    leeway_seconds: leeway,
+                    ..Default::default()
+                },
+            );
+            for (nbf, exp, valid) in [
+                (Some(now + 3600), now + 7200, false),
+                (Some(now - 3600), now + 7200, true),
+                (Some(now + 60), now + 7200, leeway > 0),
+                (None, now + 7200, true),
+                (None, now - 3600, false),
+                (None, now - 60, leeway > 0),
+            ] {
+                let mut claims =
+                    serde_json::to_value(Claims::new(Uuid::new_v4(), Uuid::new_v4(), exp)).unwrap();
+                if let Some(nbf) = nbf {
+                    claims["nbf"] = serde_json::json!(nbf);
+                }
+                let token = encode(&Header::new(algorithm), &claims, &encoding).unwrap();
+                assert_eq!(
+                    validator.verify_token(&token).is_ok(),
+                    valid,
+                    "{algorithm:?}, leeway={leeway}, claims={claims}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn malformed_not_before_claims_are_rejected() {
+    for algorithm in [Algorithm::HS256, Algorithm::RS256] {
+        let (encoding, decoding) = signing_keys(algorithm);
+        let validator = JwtValidator::new(
+            decoding,
+            JwtConfig {
+                algorithm,
+                ..Default::default()
+            },
+        );
+        for nbf in [
+            serde_json::json!("9999999999"),
+            serde_json::json!(true),
+            serde_json::json!(false),
+            serde_json::Value::Null,
+            serde_json::json!([]),
+            serde_json::json!({ "time": 9999999999u64 }),
+            serde_json::json!(1e100),
+            serde_json::json!(-1),
+        ] {
+            let mut claims = serde_json::to_value(Claims::new(
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+                now_epoch() + 7200,
+            ))
+            .unwrap();
+            claims["nbf"] = nbf.clone();
+            let token = encode(&Header::new(algorithm), &claims, &encoding).unwrap();
+            assert!(
+                matches!(
+                    validator.verify_token(&token),
+                    Err(AuthError::InvalidToken(_))
+                ),
+                "{algorithm:?} accepted malformed nbf: {nbf}"
+            );
+        }
+    }
+}
+
+#[test]
+fn fractional_not_before_claims_are_checked() {
+    for algorithm in [Algorithm::HS256, Algorithm::RS256] {
+        let (encoding, decoding) = signing_keys(algorithm);
+        let validator = JwtValidator::new(
+            decoding,
+            JwtConfig {
+                algorithm,
+                ..Default::default()
+            },
+        );
+        let now = now_epoch();
+        for (nbf, valid) in [
+            ((now - 3600) as f64 + 0.5, true),
+            ((now + 3600) as f64 + 0.5, false),
+        ] {
+            let mut claims =
+                serde_json::to_value(Claims::new(Uuid::new_v4(), Uuid::new_v4(), now + 7200))
+                    .unwrap();
+            claims["nbf"] = serde_json::json!(nbf);
+            let token = encode(&Header::new(algorithm), &claims, &encoding).unwrap();
+            assert_eq!(
+                validator.verify_token(&token).is_ok(),
+                valid,
+                "{algorithm:?}: nbf={nbf}"
+            );
+        }
     }
 }

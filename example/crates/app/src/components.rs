@@ -110,7 +110,7 @@ pub fn default_authorizer() -> Arc<Authorizer> {
     let (schema, policies) =
         hypgm_authz::load_schema_and_policies(DEFAULT_SCHEMA, DEFAULT_POLICIES)
             .expect("embedded Cedar schema and policies are valid");
-    Arc::new(Authorizer::new(schema, policies))
+    Arc::new(Authorizer::new(schema, policies).expect("valid authorization entities"))
 }
 
 struct DefaultMockUserService;

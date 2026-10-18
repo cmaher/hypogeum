@@ -24,9 +24,9 @@ serde.workspace = true
 tracing = "0.1"
 
 [dev-dependencies]
+hypgm-authn = { path = "../../../crates/core/authn" }
 hypgm-test-support = { path = "../../../crates/core/test-support" }
 exemplum-dmn-auth = { path = "../../crates/domain/auth" }
-hypgm-authn = { path = "../../../crates/core/authn" }
 sqlx.workspace = true
 serde_json.workspace = true
 reqwest = { version = "0.12", default-features = false }

@@ -25,13 +25,13 @@ assert_eq!(principal.method, AuthMethod::BearerJwt);
 
 ### Bearer JWT Validation
 
-Validate `Authorization: Bearer <token>` tokens containing `sub` (user_id), `auth_id`, `exp`, and optional issuer/audience claims:
+Validate `Authorization: Bearer <token>` tokens containing `sub` (user_id), `auth_id`, `exp`, and issuer/audience claims. Configured issuer or audience restrictions require the corresponding claim to be present and non-null; when unconfigured, these claims remain optional:
 
 ```rust
 use hypgm_authn::{JwtConfig, JwtValidator};
 
 // HS256 secret key
-let validator = JwtValidator::from_hs256_secret(b"your-secret-key");
+let validator = JwtValidator::from_hs256_secret(b"example-only-key-at-least-32-bytes!")?;
 
 // RS256 public key PEM
 let validator = JwtValidator::from_rs256_pem(rsa_pem_bytes)?;
@@ -85,7 +85,7 @@ async fn optional_handler(OptionalAuth(principal): OptionalAuth) -> String {
     }
 }
 
-let validator = JwtValidator::from_hs256_secret(b"your-secret-key");
+let validator = JwtValidator::from_hs256_secret(b"example-only-key-at-least-32-bytes!")?;
 
 let app = Router::new()
     .route("/protected", get(protected_handler))
@@ -98,3 +98,17 @@ let app = Router::new()
 `generate_api_key(prefix)` returns a `GeneratedApiKey` with named `raw_key` and
 `secret_hash` fields. Return the raw key to the credential owner once and persist
 only the hash. Verify future requests with `verify_api_key(raw_key, secret_hash)`.
+
+HS256 secret constructors return `Result` and reject secrets shorter than 32 bytes.
+Supply at least 32 cryptographically random bytes in production. The low-level
+`JwtValidator::new(DecodingKey, JwtConfig)` accepts opaque keys; its caller must
+ensure key strength and algorithm compatibility.
+
+JWT expiration is required. A present `nbf` (not-before) claim is checked using
+the same configured clock leeway as expiration; `nbf` may be omitted. Present
+values must be non-negative JSON numbers within the validator's timestamp range.
+Malformed values, including strings, booleans, and null, are rejected. Fractional
+timestamps remain supported.
+
+API-key generation and prefix validation both strip all trailing underscores
+from the configured prefix and add one underscore separator before the hex payload.

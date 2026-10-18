@@ -118,7 +118,8 @@ async fn deref_handler(perm: RequirePermission<ViewAllowedDocPolicy>) -> impl In
 
 fn build_test_app() -> (Router, Arc<Authorizer>) {
     let (schema, policies) = load_schema_and_policies(SCHEMA, POLICIES).unwrap();
-    let authorizer = Arc::new(Authorizer::new(schema, policies));
+    let authorizer =
+        Arc::new(Authorizer::new(schema, policies).expect("valid authorization entities"));
 
     let app = Router::new()
         .route("/view", get(view_handler))
@@ -260,7 +261,7 @@ async fn test_guard_composed_with_require_auth() {
 #[test]
 fn test_guard_check_helper() {
     let (schema, policies) = load_schema_and_policies(SCHEMA, POLICIES).unwrap();
-    let authorizer = Authorizer::new(schema, policies);
+    let authorizer = Authorizer::new(schema, policies).expect("valid authorization entities");
     let principal = Principal::new(Uuid::new_v4(), Uuid::new_v4(), AuthMethod::BearerJwt);
 
     // ViewAllowedDocPolicy permits View on Document::"allowed-doc"
@@ -297,7 +298,8 @@ fn test_guard_dynamic_require_permission_with_entities() {
     };
     "#;
     let (schema, policies) = load_schema_and_policies(schema_str, policy_str).unwrap();
-    let authorizer = Authorizer::new(schema.clone(), policies);
+    let authorizer =
+        Authorizer::new(schema.clone(), policies).expect("valid authorization entities");
 
     let entities_json = serde_json::json!([
         {
@@ -344,7 +346,7 @@ fn test_guard_require_permission_with_context() {
     };
     "#;
     let (schema, policies) = load_schema_and_policies(schema_str, policy_str).unwrap();
-    let authorizer = Authorizer::new(schema, policies);
+    let authorizer = Authorizer::new(schema, policies).expect("valid authorization entities");
     let principal = Principal::new(Uuid::new_v4(), Uuid::new_v4(), AuthMethod::BearerJwt);
 
     let ctx =
@@ -420,7 +422,8 @@ async fn test_guard_request_extension_authorizer_override() {
     );
     "#;
     let (schema, override_policies) = load_schema_and_policies(SCHEMA, override_policy).unwrap();
-    let override_authorizer = Arc::new(Authorizer::new(schema, override_policies));
+    let override_authorizer =
+        Arc::new(Authorizer::new(schema, override_policies).expect("valid authorization entities"));
 
     let req_override = Request::builder()
         .uri("/delete")
@@ -434,4 +437,69 @@ async fn test_guard_request_extension_authorizer_override() {
     let body_bytes = res_override.into_body().collect().await.unwrap().to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
     assert_eq!(json["result"], "deleted");
+}
+
+#[tokio::test]
+async fn permission_guard_authentication_failures_include_bearer_challenge() {
+    let (app, _) = build_test_app();
+    let validator =
+        hypgm_authn::JwtValidator::from_hs256_secret(b"test-secret-with-at-least-32-bytes")
+            .unwrap();
+    let app = app.layer(Extension(validator));
+    for authorization in [None, Some("Bearer invalid-secret-token")] {
+        let mut request = Request::builder().uri("/view");
+        if let Some(value) = authorization {
+            request = request.header("authorization", value);
+        }
+        let response = app
+            .clone()
+            .oneshot(request.body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(response.headers()["www-authenticate"], "Bearer");
+        assert_eq!(
+            response
+                .extensions()
+                .get::<hypgm_errors::PublicErrorInfo>()
+                .unwrap()
+                .status,
+            StatusCode::UNAUTHORIZED
+        );
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["code"], "unauthenticated");
+        assert!(!String::from_utf8_lossy(&body).contains("secret-token"));
+    }
+}
+
+#[tokio::test]
+async fn permission_guard_internal_errors_remain_redacted() {
+    async fn handler() -> Result<(), AuthzRejection> {
+        Err(AuthzRejection::Auth(hypgm_authn::AuthError::Internal(
+            "secret detail".into(),
+        )))
+    }
+    let app = Router::new().route("/internal", get(handler));
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/internal")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(!response.headers().contains_key("www-authenticate"));
+    assert_eq!(
+        response
+            .extensions()
+            .get::<hypgm_errors::PublicErrorInfo>()
+            .unwrap()
+            .status,
+        StatusCode::INTERNAL_SERVER_ERROR
+    );
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    assert!(!String::from_utf8_lossy(&body).contains("secret detail"));
 }
