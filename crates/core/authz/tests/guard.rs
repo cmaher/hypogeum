@@ -438,3 +438,68 @@ async fn test_guard_request_extension_authorizer_override() {
     let json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
     assert_eq!(json["result"], "deleted");
 }
+
+#[tokio::test]
+async fn permission_guard_authentication_failures_include_bearer_challenge() {
+    let (app, _) = build_test_app();
+    let validator =
+        hypgm_authn::JwtValidator::from_hs256_secret(b"test-secret-with-at-least-32-bytes")
+            .unwrap();
+    let app = app.layer(Extension(validator));
+    for authorization in [None, Some("Bearer invalid-secret-token")] {
+        let mut request = Request::builder().uri("/view");
+        if let Some(value) = authorization {
+            request = request.header("authorization", value);
+        }
+        let response = app
+            .clone()
+            .oneshot(request.body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(response.headers()["www-authenticate"], "Bearer");
+        assert_eq!(
+            response
+                .extensions()
+                .get::<hypgm_errors::PublicErrorInfo>()
+                .unwrap()
+                .status,
+            StatusCode::UNAUTHORIZED
+        );
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["code"], "unauthenticated");
+        assert!(!String::from_utf8_lossy(&body).contains("secret-token"));
+    }
+}
+
+#[tokio::test]
+async fn permission_guard_internal_errors_remain_redacted() {
+    async fn handler() -> Result<(), AuthzRejection> {
+        Err(AuthzRejection::Auth(hypgm_authn::AuthError::Internal(
+            "secret detail".into(),
+        )))
+    }
+    let app = Router::new().route("/internal", get(handler));
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/internal")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(!response.headers().contains_key("www-authenticate"));
+    assert_eq!(
+        response
+            .extensions()
+            .get::<hypgm_errors::PublicErrorInfo>()
+            .unwrap()
+            .status,
+        StatusCode::INTERNAL_SERVER_ERROR
+    );
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    assert!(!String::from_utf8_lossy(&body).contains("secret detail"));
+}

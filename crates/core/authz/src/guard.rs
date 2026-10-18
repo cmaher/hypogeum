@@ -65,7 +65,10 @@ impl PublicError for AuthzRejection {
 
 impl IntoResponse for AuthzRejection {
     fn into_response(self) -> Response {
-        render_public_error(&self)
+        match self {
+            Self::Auth(err) => hypgm_authn::AuthRejection(err).into_response(),
+            Self::Authz(err) => render_public_error(&err),
+        }
     }
 }
 
