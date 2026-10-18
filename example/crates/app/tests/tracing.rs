@@ -21,7 +21,12 @@ impl TracingServer {
         let endpoint = format!("http://{}", listener.local_addr().unwrap());
         let (stop, stopped) = oneshot::channel();
         let router_dispatch = dispatch.clone();
-        let app = router(service).layer(axum::middleware::from_fn(
+        let components = exemplum_app::AppComponentsFactory {
+            hello_service: service,
+            ..Default::default()
+        }
+        .build();
+        let app = router(components).layer(axum::middleware::from_fn(
             move |req, next: axum::middleware::Next| {
                 let dispatch = router_dispatch.clone();
                 async move { next.run(req).with_subscriber(dispatch).await }

@@ -1,0 +1,39 @@
+[package]
+name = "exemplum-dmn-auth"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+hypgm-errors = { path = "../../../../crates/core/errors" }
+hypgm-authn = { path = "../../../../crates/core/authn" }
+hypgmx-rdbms = { path = "../../../../crates/ext/rdbms", features = ["postgres"] }
+sqlx = { workspace = true, features = ["macros"] }
+sea-orm.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+async-trait.workspace = true
+tokio.workspace = true
+thiserror.workspace = true
+axum = { version = "0.8", default-features = false, features = ["tokio", "json"] }
+axum-login = "0.18"
+tower-sessions = "0.14"
+rmp-serde = "1"
+jsonwebtoken = "9"
+serde_urlencoded = "0.7"
+hypgm-http = { path = "../../../../crates/core/http" }
+base64 = "0.22"
+urlencoding = "2.1"
+getrandom = "0.2"
+tracing = "0.1"
+
+[dev-dependencies]
+hypgm-test-support = { path = "../../../../crates/core/test-support" }
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+time = "0.3"
+
+[lints]
+workspace = true

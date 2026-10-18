@@ -6,22 +6,32 @@ rust-version.workspace = true
 
 [dependencies]
 exemplum-dmn-hello-world = { path = "../domain/hello-world" }
+exemplum-dmn-users = { path = "../domain/users" }
+exemplum-dmn-auth = { path = "../domain/auth" }
 axum = { version = "0.8", default-features = false, features = ["tokio", "http2"] }
 hypgm-http = { path = "../../../crates/core/http" }
+hypgm-authn = { path = "../../../crates/core/authn" }
+hypgm-authz = { path = "../../../crates/core/authz" }
+hypgm-errors = { path = "../../../crates/core/errors" }
+hypgmx-rdbms = { path = "../../../crates/ext/rdbms", features = ["postgres"] }
+sqlx.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+async-trait.workspace = true
 tower = "0.5"
+tower-sessions = "0.14"
+axum-login = "0.18"
 
 [dev-dependencies]
 tokio.workspace = true
-hypgm-errors = { path = "../../../crates/core/errors" }
 reqwest = { version = "0.12", default-features = false }
-serde.workspace = true
-serde_json.workspace = true
-uuid.workspace = true
 tower = { version = "0.5", features = ["util"] }
 hypgm-logging = { path = "../../../crates/core/logging" }
 tracing = "0.1"
-async-trait.workspace = true
 futures-util = "0.3"
+hypgm-test-support = { path = "../../../crates/core/test-support" }
 
 [lints]
 workspace = true

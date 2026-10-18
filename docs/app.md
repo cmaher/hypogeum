@@ -62,20 +62,39 @@ crates/domain/hello-world (service.rs)
 Routers are composed hierarchically using native Axum `.nest()`:
 
 ```rust
-pub fn router(hello_service: Arc<dyn HelloWorldService>) -> Router<()> {
-    let hello = hello_world::controller::router(hello_service);
-    let api = Router::new().nest("/hello", hello);
+pub fn router<S>(components: AppComponents<S>) -> Router<()>
+where
+    S: tower_sessions::SessionStore + Clone + Send + Sync + 'static,
+{
+    let hello_components = HelloComponents::new(
+        components.hello_service,
+        components.authorizer,
+        components.user_service,
+    );
+    let hello = hello_world::controller::router(hello_components);
+    let auth_components = AuthComponents::new(
+        components.auth_repo.clone(),
+        components.token_config.clone(),
+        components.password_config,
+    );
+    let auth_routes = auth::controller::router(auth_components);
+
+    let api = Router::new()
+        .nest("/hello", hello)
+        .nest("/auth", auth_routes);
 
     Router::new()
         .route("/healthz", get(healthz))
         .nest("/api", api)
         .fallback(not_found_handler)
+        .layer(auth_layer)
+        .layer(Extension(jwt_validator))
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         .layer(trace_layer())
 }
 ```
 
-- Each domain controller returns `Router<()>` with its own dependencies injected via `.with_state(...)`.
+- Each domain controller returns a self-contained `Router<()>` accepting its own domain `Components`.
 - Mount points are owned by `app/src/router.rs`, ensuring domain crates remain independent of global URL prefix assumptions.
 - Canonical endpoints:
   - `GET /healthz` - Health probe.
@@ -116,22 +135,23 @@ X-Request-Id: 550e8400-e29b-41d4-a716-446655440000
    ```
    *(where `WidgetError` implements `PublicError`).*
 3. Define request/response DTOs in `src/api.rs`.
-4. Create a thin Axum controller in `src/controller.rs`:
+4. Create a thin Axum controller in `src/controller.rs` taking domain components:
    ```rust
-   pub fn router(service: Arc<dyn WidgetService>) -> Router<()> {
+   pub fn router(components: WidgetComponents) -> Router<()> {
        Router::new()
            .route("/{id}", get(get_widget))
-           .with_state(service)
+           .with_state(components)
    }
    ```
 5. In `crates/domain/app/src/router.rs`, nest the new controller under `/api`:
    ```rust
-   let widgets = widget::controller::router(widget_service);
+   let widget_components = WidgetComponents::new(components.widget_service);
+   let widgets = widget::controller::router(widget_components);
    let api = Router::new()
        .nest("/hello", hello)
        .nest("/widgets", widgets);
    ```
-6. In `cmd/app/src/main.rs`, construct the service and pass it to `router(...)`.
+6. In `AppComponents`, include the new dependency with constructor injection.
 
 ---
 
@@ -171,7 +191,9 @@ JSON Error Envelope (Safe status, code, message) + Extensions (PublicErrorInfo)
 
 ### Uniform Error Response Format
 
-All error responses adhere to the standard JSON envelope:
+Application error responses adhere to the standard JSON envelope. The OAuth token
+endpoint uses `error` and `error_description` fields, supplies a matching challenge
+for failed HTTP authentication, and disables response caching:
 
 ```json
 {
@@ -264,14 +286,23 @@ Every HTTP request traverses `trace_layer` (`TraceLayer`):
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `HYPOGEUM_APP_BIND` | `127.0.0.1:8080` | Socket address for public HTTP listener |
-| `HYPOGEUM_LOG` | `info` | Tracing filter directive |
-| `HYPOGEUM_LOG_FORMAT` | `text` | Log format: `text` or `json` |
-| `HYPOGEUM_ENV_FILE` | *(unset)* | Selects `.env` file (e.g. `env/local.env`; empty disables) |
+| `EXEMPLUM_APP_BIND` | `127.0.0.1:8080` | Socket address for public HTTP listener |
+| `EXEMPLUM_APP_DATABASE_URL` | required | PostgreSQL URL using restricted `exemplum_users` credentials |
+| `EXEMPLUM_APP_JWT_SECRET` | required | Private signing secret, at least 32 bytes |
+| `EXEMPLUM_APP_MAX_PASSWORD_VERIFICATIONS` | `4` | Maximum concurrent password checks; must be positive and fit the semaphore capacity |
+| `EXEMPLUM_APP_SESSION_CLEANUP_INTERVAL_SECONDS` | `3600` | Positive interval between expired-session cleanup runs |
+| `EXEMPLUM_APP_CEDAR_SCHEMA` | `config/schema.cedarschema` | Schema loaded at startup |
+| `EXEMPLUM_APP_CEDAR_POLICIES` | `config/policies.cedar` | Policies loaded at startup |
+| `EXEMPLUM_LOG` | `info` | Tracing filter directive |
+| `EXEMPLUM_LOG_FORMAT` | `text` | Log format: `text` or `json` |
+| `EXEMPLUM_ENV_FILE` | *(unset)* | Selects `.env` file (e.g. `env/local.env`; empty disables) |
 
 ### Local Execution
 
-Start the app locally with Cargo Make:
+Follow [the example setup](../example/README.md#running-the-application) to
+provision and migrate PostgreSQL and configure a private signing secret. The
+binary checks the runtime adapters before opening its listener and never
+migrates on startup. Run from `example/` so the default policy paths resolve:
 
 ```sh
 cargo make app
@@ -280,7 +311,7 @@ cargo make app
 Or run the binary directly:
 
 ```sh
-cargo run --locked -p app-cli --bin app
+cargo run --locked -p exemplum-app-cli --bin app
 ```
 
 Test with curl:

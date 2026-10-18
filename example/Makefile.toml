@@ -53,6 +53,6 @@ command = "cargo"
 args = ["run", "--locked", "-p", "exemplum-db-cli", "--bin", "exemplum-db", "--", "verify"]
 
 [tasks.app]
-description = "Run the public HTTP application without a database"
+description = "Run the public HTTP application against provisioned PostgreSQL"
 command = "cargo"
 args = ["run", "--locked", "-p", "exemplum-app-cli", "--bin", "app"]

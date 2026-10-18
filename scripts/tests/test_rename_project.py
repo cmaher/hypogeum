@@ -101,7 +101,21 @@ class RenameProjectTests(unittest.TestCase):
             "example/crates/domain/users/src/repo/entity.rs",
             "example/crates/domain/users/src/repo/postgres.rs",
             "example/crates/domain/users/src/pg/migrations/m20260101_000001_create_users.rs",
+            "example/crates/domain/users/src/pg/migrations/m20260101_000002_create_auth_identities.rs",
+            "example/crates/domain/auth/Cargo.toml",
+            "example/crates/domain/auth/src/lib.rs",
+            "example/crates/domain/auth/src/models.rs",
+            "example/crates/domain/auth/src/backend.rs",
+            "example/crates/domain/auth/src/controller.rs",
+            "example/crates/domain/auth/src/repo/mod.rs",
+            "example/crates/domain/auth/src/repo/postgres.rs",
+            "example/crates/domain/auth/src/session.rs",
+            "example/crates/app/src/components.rs",
+            "example/crates/app/src/router.rs",
             "example/infra/postgres/provision.sql",
+            "example/config/schema.cedarschema",
+            "example/config/policies.cedar",
+            "example/env/local.env.example",
         ]
         root_paths = [
             "Cargo.toml",
@@ -118,19 +132,36 @@ class RenameProjectTests(unittest.TestCase):
         self.git("add", ".")
         self.run_script(TARGET)
 
-        compose = (self.root / paths[1]).read_text()
-        app_main = (self.root / paths[2]).read_text()
-        db_main = (self.root / paths[3]).read_text()
-        app_cargo = (self.root / paths[4]).read_text()
-        entity = (self.root / paths[5]).read_text()
-        postgres = (self.root / paths[6]).read_text()
-        migration = (self.root / paths[7]).read_text()
-        provision = (self.root / paths[8]).read_text()
+        compose = (self.root / "example/docker-compose.yml").read_text()
+        app_main = (self.root / "example/cmd/app/src/main.rs").read_text()
+        db_main = (self.root / "example/cmd/db/src/main.rs").read_text()
+        app_cargo = (self.root / "example/crates/app/Cargo.toml").read_text()
+        entity = (self.root / "example/crates/domain/users/src/repo/entity.rs").read_text()
+        postgres = (self.root / "example/crates/domain/users/src/repo/postgres.rs").read_text()
+        migration = (self.root / "example/crates/domain/users/src/pg/migrations/m20260101_000001_create_users.rs").read_text()
+        migration_auth = (self.root / "example/crates/domain/users/src/pg/migrations/m20260101_000002_create_auth_identities.rs").read_text()
+        auth_cargo = (self.root / "example/crates/domain/auth/Cargo.toml").read_text()
+        auth_backend = (self.root / "example/crates/domain/auth/src/backend.rs").read_text()
+        auth_models = (self.root / "example/crates/domain/auth/src/models.rs").read_text()
+        auth_session = (self.root / "example/crates/domain/auth/src/session.rs").read_text()
+        app_components = (self.root / "example/crates/app/src/components.rs").read_text()
+        provision = (self.root / "example/infra/postgres/provision.sql").read_text()
 
         self.assertIn(f"{TARGET}-app", app_cargo)
+        self.assertIn(f"{TARGET}-dmn-auth", auth_cargo)
+        self.assertIn(f"pub struct {display(TARGET)}AuthBackend", auth_backend)
+        self.assertIn(f'schema_name = "{TARGET}"', auth_models)
+        self.assertIn(f'new_with_schema(pool, "{TARGET}")', auth_session)
+        self.assertIn(f'new_with_schema(pool.clone(), "{TARGET}")', app_components)
+        self.assertIn(f'GRANT SELECT, INSERT, UPDATE, DELETE ON {TARGET}.auth_identities TO {TARGET}_users', migration_auth)
+        self.assertIn(f'GRANT SELECT, INSERT, UPDATE, DELETE ON {TARGET}.sessions TO {TARGET}_users', migration_auth)
         self.assertIn(f"POSTGRES_DB: {TARGET}", compose)
         self.assertIn(f"{TARGET.upper()}_POSTGRES_PASSWORD", compose)
         self.assertIn(f'"{TARGET.upper()}_APP_"', app_main)
+        app_env = (self.root / "example/env/local.env.example").read_text()
+        self.assertIn(f"{TARGET.upper()}_APP_DATABASE_URL=postgres://{TARGET}_users", app_env)
+        self.assertIn(f"{TARGET.upper()}_APP_JWT_SECRET=", app_env)
+        self.assertIn(f"{TARGET.upper()}_APP_CEDAR_POLICIES=config/policies.cedar", app_env)
         self.assertIn(f'"{TARGET.upper()}_MIGRATION_"', db_main)
         self.assertIn(f"Usage: {TARGET}-db", db_main)
         self.assertIn(f'schema_name = "{TARGET}"', entity)

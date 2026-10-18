@@ -1,6 +1,8 @@
+pub mod api_key;
 pub mod error;
 pub mod extractor;
 pub mod jwt;
+pub mod password;
 pub mod principal;
 pub mod session;
 

@@ -1,0 +1,7 @@
+entity User;
+entity Resource;
+
+action "greet" appliesTo {
+    principal: [User],
+    resource: [Resource]
+};

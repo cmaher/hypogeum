@@ -3,6 +3,7 @@ members = [
     "cmd/app",
     "cmd/db",
     "crates/app",
+    "crates/domain/auth",
     "crates/domain/hello-world",
     "crates/domain/users",
 ]
