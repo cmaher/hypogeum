@@ -47,7 +47,11 @@ async fn mode_requires_exact_hx_request_true() {
     assert_eq!(mode_for(&[]).await, "full");
     assert_eq!(mode_for(&[("HX-Request", "true")]).await, "fragment");
     for value in ["True", "TRUE", "1", "false", "", " true"] {
-        assert_eq!(mode_for(&[("HX-Request", value)]).await, "full", "{value:?}");
+        assert_eq!(
+            mode_for(&[("HX-Request", value)]).await,
+            "full",
+            "{value:?}"
+        );
     }
 }
 
@@ -169,7 +173,10 @@ async fn html_method_not_allowed_preserves_allow() {
 
 fn page_router() -> Router {
     Router::new()
-        .route("/page", get(|| async { html_response(StatusCode::OK, "ok".into()) }))
+        .route(
+            "/page",
+            get(|| async { html_response(StatusCode::OK, "ok".into()) }),
+        )
         .fallback(html_not_found_handler)
         .layer(axum::middleware::from_fn(html_error_middleware))
         .layer(trace_layer())
@@ -188,14 +195,22 @@ async fn routing_errors_render_html_through_trace_layer() {
         .await
         .unwrap();
     assert_classified(&response, PublicErrorInfo::METHOD_NOT_ALLOWED);
-    let allow = response.headers()[header::ALLOW].to_str().unwrap().to_owned();
+    let allow = response.headers()[header::ALLOW]
+        .to_str()
+        .unwrap()
+        .to_owned();
     assert!(allow.contains("GET"), "{allow}");
     assert!(!allow.contains("DELETE"), "{allow}");
     assert!(response.headers().contains_key(&REQUEST_ID_HEADER));
     assert!(body_text(response).await.contains("Method not allowed"));
 
     let response = page_router()
-        .oneshot(Request::builder().uri("/missing").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri("/missing")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
     assert_classified(&response, PublicErrorInfo::NOT_FOUND);

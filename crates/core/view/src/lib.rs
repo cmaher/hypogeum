@@ -4,6 +4,10 @@
 //! detection, HTML response helpers and safe HTML error rendering. JSON
 //! rendering defaults in `hypgm-http` are unchanged.
 
+pub mod form;
+
+pub use form::{AppForm, is_form_content_type};
+
 use askama::Template;
 use axum::extract::{FromRequestParts, Request};
 use axum::http::request::Parts;
@@ -72,9 +76,10 @@ impl<S: Send + Sync> FromRequestParts<S> for HtmxRequest {
 pub fn append_vary_hx_request(headers: &mut HeaderMap) {
     let covered = headers.get_all(header::VARY).iter().any(|value| {
         value.to_str().is_ok_and(|value| {
-            value.split(',').map(str::trim).any(|token| {
-                token == "*" || token.eq_ignore_ascii_case(HX_REQUEST.as_str())
-            })
+            value
+                .split(',')
+                .map(str::trim)
+                .any(|token| token == "*" || token.eq_ignore_ascii_case(HX_REQUEST.as_str()))
         })
     });
     if !covered {

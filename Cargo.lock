@@ -1961,8 +1961,13 @@ version = "0.1.0"
 dependencies = [
  "askama",
  "axum",
+ "bytes",
+ "futures-util",
+ "http-body-util",
  "hypgm-errors",
  "hypgm-http",
+ "serde",
+ "serde_urlencoded",
  "thiserror",
  "tokio",
  "tower",
