@@ -77,7 +77,7 @@ async fn html_responses_set_content_type_and_vary() {
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(response.headers()[header::CONTENT_TYPE], HTML_CONTENT_TYPE);
     let vary: Vec<_> = response.headers().get_all(header::VARY).iter().collect();
-    assert_eq!(vary, vec!["HX-Request"]);
+    assert_eq!(vary, ["HX-Request"]);
     assert_eq!(body_text(response).await, "<p>ok</p>");
 }
 
@@ -87,7 +87,7 @@ fn vary_is_merged_without_replacing_existing_values() {
     headers.insert(header::VARY, HeaderValue::from_static("Accept-Encoding"));
     append_vary_hx_request(&mut headers);
     let vary: Vec<_> = headers.get_all(header::VARY).iter().collect();
-    assert_eq!(vary, vec!["Accept-Encoding", "HX-Request"]);
+    assert_eq!(vary, ["Accept-Encoding", "HX-Request"]);
 
     append_vary_hx_request(&mut headers);
     assert_eq!(headers.get_all(header::VARY).iter().count(), 2);
