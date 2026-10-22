@@ -4,8 +4,10 @@
 //! detection, HTML response helpers and safe HTML error rendering. JSON
 //! rendering defaults in `hypgm-http` are unchanged.
 
+pub mod assets;
 pub mod form;
 
+pub use assets::{HTMX_SCRIPT_URL, HTMX_VERSION, VIEW_SCRIPT_URL};
 pub use form::{AppForm, is_form_content_type};
 
 use askama::Template;
