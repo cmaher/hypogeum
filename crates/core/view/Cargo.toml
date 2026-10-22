@@ -1,0 +1,20 @@
+[package]
+name = "hypgm-view"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+askama = { version = "0.16", default-features = false, features = ["derive", "std"] }
+axum = { version = "0.8", default-features = false, features = ["tokio"] }
+hypgm-errors = { path = "../errors" }
+hypgm-http = { path = "../http" }
+tracing = "0.1"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+thiserror.workspace = true
+tower = { version = "0.5", features = ["util"] }
+
+[lints]
+workspace = true

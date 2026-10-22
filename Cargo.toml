@@ -9,6 +9,7 @@ members = [
     "crates/core/logging",
     "crates/core/rpc",
     "crates/core/test-support",
+    "crates/core/view",
     "crates/ext/file-storage",
     "crates/ext/rdbms",
     "crates/ext/tasks",
