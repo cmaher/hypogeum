@@ -1,11 +1,12 @@
 use axum::extract::DefaultBodyLimit;
 use axum::response::IntoResponse;
-use axum::routing::get;
+use axum::routing::{any, get};
 use axum::{Extension, Router};
 use exemplum_dmn_auth::AuthComponents;
 use exemplum_dmn_auth::backend::ExemplumAuthBackend;
 use hypgm_authn::{jwt::JwtValidator, session::PrincipalAuthBackend};
 use hypgm_http::{HealthCheck, MAX_BODY_BYTES, not_found_handler, trace_layer};
+use hypgm_view::{html_error_middleware, html_not_found_handler};
 use tower_sessions::SessionManagerLayer;
 
 use crate::components::AppComponents;
@@ -30,7 +31,8 @@ where
         components.authorizer,
         components.user_service,
     );
-    let hello = exemplum_dmn_hello_world::controller::router(hello_components);
+    let hello = exemplum_dmn_hello_world::controller::router(hello_components.clone());
+    let hello_pages = exemplum_dmn_hello_world::view::router(hello_components);
     let auth_components = AuthComponents::new(
         components.auth_repo.clone(),
         components.token_config.clone(),
@@ -38,9 +40,16 @@ where
     );
     let auth_routes = exemplum_dmn_auth::controller::router(auth_components);
 
+    // `/api` owns JSON errors for every path beneath it; page routes own HTML errors.
     let api = Router::new()
         .nest("/hello", hello)
-        .nest("/auth", auth_routes);
+        .nest("/auth", auth_routes)
+        .fallback(not_found_handler);
+
+    let pages = Router::new()
+        .merge(hello_pages)
+        .nest("/assets", hypgm_view::assets::router())
+        .layer(axum::middleware::from_fn(html_error_middleware));
 
     let backend = ExemplumAuthBackend::from_arc(components.auth_repo);
     let login_backend = PrincipalAuthBackend::new(backend);
@@ -52,7 +61,10 @@ where
     Router::new()
         .route("/healthz", get(healthz))
         .nest("/api", api)
-        .fallback(not_found_handler)
+        // Nested fallbacks cover `/api` and `/api/{*path}` but not `/api/`.
+        .route("/api/", any(not_found_handler))
+        .merge(pages)
+        .fallback(html_not_found_handler)
         .layer(auth_layer)
         .layer(Extension(jwt_validator))
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))

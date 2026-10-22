@@ -235,7 +235,7 @@ async fn templates_escape_user_input() {
     let body = body_text(response).await;
     assert!(!body.contains("<script>"));
     assert!(!body.contains("\"x\""));
-    assert!(body.contains("&lt;script&gt;"));
+    assert!(body.contains("&#60;script&#62;"));
 }
 
 #[tokio::test]

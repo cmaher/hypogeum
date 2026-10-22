@@ -10,6 +10,7 @@ exemplum-dmn-users = { path = "../domain/users" }
 exemplum-dmn-auth = { path = "../domain/auth" }
 axum = { version = "0.8", default-features = false, features = ["tokio", "http2"] }
 hypgm-http = { path = "../../../crates/core/http" }
+hypgm-view = { path = "../../../crates/core/view" }
 hypgm-authn = { path = "../../../crates/core/authn" }
 hypgm-authz = { path = "../../../crates/core/authz" }
 hypgm-errors = { path = "../../../crates/core/errors" }

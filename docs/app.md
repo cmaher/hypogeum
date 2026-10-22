@@ -1,31 +1,30 @@
 # App Architecture and HTTP API
 
-The `app` binary (`cmd/app`) is the public HTTP entry point for the Hypogeum workspace. It replaces legacy public RPC with a modular, composed [Axum](https://docs.rs/axum) HTTP service providing JSON APIs, structured health monitoring, bounded payload handling, typed error envelopes, and integrated distributed tracing.
+The `app` binary (`example/cmd/app`) is the public HTTP entry point for the Exemplum reference application. It replaces legacy public RPC with a modular, composed [Axum](https://docs.rs/axum) HTTP service providing JSON APIs, server-rendered HTML pages with progressive HTMX enhancement, structured health monitoring, bounded payload handling, typed error envelopes, and integrated distributed tracing.
 
-Internal services (such as User CRUD in `crates/domain/users`) retain internal gRPC over private listeners (`127.0.0.1:50051`), while public endpoints are exposed through `app` (`127.0.0.1:8080`).
+Internal services (such as User CRUD in `example/crates/domain/users`) retain internal gRPC over private listeners (`127.0.0.1:50051`), while public endpoints are exposed through `app` (`127.0.0.1:8080`).
 
 ---
 
 ## 1. Composition Root and Architectural Boundaries
 
 ```
-cmd/app (main.rs)
-  │  Loads HYPOGEUM_APP_* config & HYPOGEUM_LOG_* via crates/core/envconfig
+example/cmd/app (main.rs)
+  │  Loads EXEMPLUM_APP_* config & EXEMPLUM_LOG_* via crates/core/envconfig
   │  Initializes crates/core/logging subscriber
   │  Constructs domain services (Arc<dyn Service>)
   │  Wired to graceful shutdown signal
   ▼
-crates/domain/app (router.rs)
-  │  Composes top-level router: GET /healthz, /api
+example/crates/app (router.rs)
+  │  Composes top-level router: GET /healthz, /api, page routes, /assets
   │  Applies 16KiB DefaultBodyLimit & trace_layer from crates/core/http
-  │  Installs JSON 404 fallback
+  │  Installs JSON 404 fallback for /api and HTML 404 fallback for pages
   ▼
-crates/domain/hello-world (controller.rs)
-  │  Extracts AppJson<HelloRequest> (16KiB limit, JSON validation)
-  │  Maps HelloWorldError (PublicError) -> HttpError
-  │  Returns AppJson<HelloResponse>
-  ▼
-crates/domain/hello-world (service.rs)
+example/crates/domain/hello-world (controller.rs)   example/crates/domain/hello-world (view.rs)
+  │  Extracts AppJson<HelloRequest>                │  Extracts AppForm<GreetingForm> + HtmxRequest
+  │  Maps HelloWorldError -> HttpError (JSON)       │  Renders Askama page or section (HTML)
+  ▼                                                ▼
+example/crates/domain/hello-world (service.rs)
      Pure business logic (HelloWorldService trait & DefaultHelloWorldService)
      Returns Result<T, HelloWorldError> implementing PublicError
      Zero HTTP / Axum / transport dependencies
@@ -33,7 +32,7 @@ crates/domain/hello-world (service.rs)
 
 ### Component Responsibilities
 
-1. **`cmd/app` (`app-cli` package):**
+1. **`example/cmd/app` (`exemplum-app-cli` package):**
    The composition root executable.
    - Loads environment configuration via `hypgm-envconfig` (`crates/core/envconfig`) once at startup.
    - Initializes structured logging via `hypgm-logging` (`crates/core/logging`).
@@ -41,17 +40,17 @@ crates/domain/hello-world (service.rs)
    - Binds the TCP listener (default `127.0.0.1:8080`).
    - Handles graceful shutdown on `SIGINT` (Ctrl+C) and `SIGTERM`, draining in-flight requests.
 
-2. **`crates/domain/app` (`hypgm-dmn-app` package):**
+2. **`example/crates/app` (`exemplum-app` package):**
    The application glue router.
-   - Mounts health checks (`GET /healthz`) and API namespaces (`/api`).
+   - Mounts health checks (`GET /healthz`), API namespaces (`/api`), domain page routes, and shared view assets (`/assets`).
    - Enforces global HTTP policies: 16KiB raw body limits, request tracing layer, and 404/405 error translations.
    - Accepts injected domain services; contains no business logic.
 
-3. **Domain Layer (`crates/domain/<domain>`):**
+3. **Domain Layer (`example/crates/domain/<domain>`):**
    - **`src/service.rs`:** Domain service trait and implementation. Operates strictly on plain Rust types and returns `Result<T, DomainError>` where `DomainError` implements `PublicError`. Contains no HTTP concepts or Axum dependencies.
    - **`src/api.rs`:** DTOs for JSON requests and responses, deriving `serde::Deserialize` and `serde::Serialize`.
    - **`src/controller.rs`:** Thin HTTP transport adapter. Defines route handlers that extract `AppJson<Req>`, invoke the domain service, and return `Result<AppJson<Res>, HttpError>`. Returns a self-contained `Router<()>` with its private state injected.
-   - **Future View Boundary:** Server-rendered HTML or HTMX templates live alongside API controllers as separate route handlers within the domain, reusing the same domain services without architectural changes.
+   - **`src/view.rs` and `templates/`:** Optional HTML adapter. Domain-owned Askama templates and handlers built on `hypgm-view` (`crates/core/view`). Views call the same injected services as controllers directly; they never call the JSON API over HTTP. See [HTML Views and HTMX](#7-html-views-and-htmx).
 
 ---
 
@@ -71,22 +70,28 @@ where
         components.authorizer,
         components.user_service,
     );
-    let hello = hello_world::controller::router(hello_components);
-    let auth_components = AuthComponents::new(
-        components.auth_repo.clone(),
-        components.token_config.clone(),
-        components.password_config,
-    );
-    let auth_routes = auth::controller::router(auth_components);
+    let hello = hello_world::controller::router(hello_components.clone());
+    let hello_pages = hello_world::view::router(hello_components);
+    // ... auth routes ...
 
+    // `/api` owns JSON errors for every path beneath it.
     let api = Router::new()
         .nest("/hello", hello)
-        .nest("/auth", auth_routes);
+        .nest("/auth", auth_routes)
+        .fallback(not_found_handler);
+
+    // Page routes own HTML errors.
+    let pages = Router::new()
+        .merge(hello_pages)
+        .nest("/assets", hypgm_view::assets::router())
+        .layer(axum::middleware::from_fn(html_error_middleware));
 
     Router::new()
         .route("/healthz", get(healthz))
         .nest("/api", api)
-        .fallback(not_found_handler)
+        .route("/api/", any(not_found_handler))
+        .merge(pages)
+        .fallback(html_not_found_handler)
         .layer(auth_layer)
         .layer(Extension(jwt_validator))
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
@@ -99,6 +104,9 @@ where
 - Canonical endpoints:
   - `GET /healthz` - Health probe.
   - `POST /api/hello` - Composed endpoint from `/api` -> `/hello` -> controller `POST /`.
+  - `GET /` - Greeting page from `hello_world::view::router`.
+  - `POST /hello` - Greeting form submission (`application/x-www-form-urlencoded`).
+  - `GET /assets/htmx-<version>.min.js`, `GET /assets/view.js` - Shared view assets.
 
 ### Concrete Request / Response Example
 
@@ -143,7 +151,7 @@ X-Request-Id: 550e8400-e29b-41d4-a716-446655440000
            .with_state(components)
    }
    ```
-5. In `crates/domain/app/src/router.rs`, nest the new controller under `/api`:
+5. In `example/crates/app/src/router.rs`, nest the new controller under `/api`:
    ```rust
    let widget_components = WidgetComponents::new(components.widget_service);
    let widgets = widget::controller::router(widget_components);
@@ -221,7 +229,9 @@ let item = service.find(id).await.map_err(|e| {
 - **Strict Content-Type Validation:**
   `AppJson` requires valid MIME syntax with `Content-Type: application/json` or structured JSON subtypes (`application/<subtype>+json`). Malformed media types, syntax errors, or non-JSON media types return `415 Unsupported Media Type`.
 - **Trailing Slash Discipline:**
-  `/api/hello` is the canonical route. Requesting `/api/hello/` returns `404 Not Found` without redirect, preventing ambiguous redirection loops.
+  `/api/hello` is the canonical route. Requesting `/api/hello/` returns `404 Not Found` without redirect, preventing ambiguous redirection loops. Page paths have no trailing slash except `/`; `/hello/` returns an HTML `404 Not Found`.
+- **Error Format by Namespace:**
+  Every path under `/api` (including `/api` and `/api/`) returns the JSON error envelope. Page routes, `/assets`, and unknown paths outside `/api` return safe HTML errors that carry the same classification, status, `Allow` header, and `X-Request-Id`. `/healthz` behavior is unchanged.
 - **Strict Method Enforcement:**
   Unsupported methods on registered routes return `405 Method Not Allowed` along with a valid `Allow` header (e.g., `Allow: POST`).
 - **Same-Origin Defaults:**
@@ -239,7 +249,7 @@ Logging and request tracing are provided by `crates/core/logging` (`hypgm-loggin
 
 ### Subscriber Setup (`crates/core/logging`)
 
-The subscriber is initialized once in `cmd/app/src/main.rs`:
+The subscriber is initialized once in `example/cmd/app/src/main.rs`:
 
 ```rust
 logging::init(&config.log, config.log_format)?;
@@ -325,3 +335,76 @@ curl -i -X POST http://127.0.0.1:8080/api/hello \
   -H "Content-Type: application/json" \
   -d '{"name": "World"}'
 ```
+
+---
+
+## 7. HTML Views and HTMX
+
+Server-rendered pages work as ordinary HTML forms and are progressively enhanced
+with [HTMX](https://htmx.org/). Reusable support lives in `hypgm-view`
+(`crates/core/view`); greeting routes and templates live in
+`example/crates/domain/hello-world` (`src/view.rs`, `templates/`).
+
+### Routes
+
+| Route | Behavior |
+| --- | --- |
+| `GET /` | Full greeting document. |
+| `POST /hello` | Consumes `application/x-www-form-urlencoded`. `HX-Request: true` returns the greeting section; ordinary submissions return the full document. |
+| `GET /assets/htmx-2.0.11.min.js` | Vendored, pinned HTMX release (`crates/core/view/assets/LICENSE.htmx` records version, checksum and license). |
+| `GET /assets/view.js` | Shared HTMX configuration. |
+
+Greeting is non-mutating, so `POST /hello` renders directly. Future
+state-changing forms should use post/redirect/get. `Content-Type` controls body
+parsing only; there is no content-type dispatch between HTML and JSON adapters.
+
+### `hypgm-view` building blocks
+
+- **`HtmxRequest`:** Extracts `ViewMode::Fragment` only for an exact
+  `HX-Request: true`. History restoration requests (`HX-History-Restore-Request: true`)
+  always receive full pages.
+- **HTML responses:** `render_template`, `render_error_template` and
+  `html_response` set `text/html; charset=utf-8` and append `Vary: HX-Request`
+  without replacing existing `Vary` values. A template rendering failure returns
+  a minimal, template-free HTML 500.
+- **`AppForm<T>`:** Bounded URL-encoded form extractor using `MAX_BODY_BYTES`
+  for both declared and streamed bodies. Rejections are safe HTML `415`, `413`
+  and `400` responses.
+- **HTML errors:** `HtmlError`, `html_error_response` and `html_error_middleware`
+  reuse `PublicErrorInfo` classification and attach the same tracing extensions
+  as JSON errors. Askama autoescapes all interpolated values; templates never
+  mark user input as safe.
+- **Assets:** `hypgm_view::assets::router()` serves only the listed embedded
+  files. There is no CDN, frontend build or filesystem serving.
+
+### Form section convention
+
+A domain wraps each enhanced form and its results in an element marked
+`data-view-section`. The form keeps its ordinary `method` and `action` and adds
+`hx-post` to the same URL with `hx-target="closest [data-view-section]"` and
+`hx-swap="outerHTML"`. The section contains an empty `data-view-feedback`
+element. Fragment responses render the same section markup that the full page
+includes.
+
+`view.js` sets `historyRestoreAsHxRequest = false`, swaps HTML `4xx`/`5xx`
+responses containing a `data-view-section` (for example validation errors with
+status `400`) without rewriting their status, and shows the safe message from
+shared HTML errors or a generic message for non-HTML responses, network
+failures and timeouts in the section's feedback element. `hx-boost` and history
+pushing are not enabled.
+
+### Browser smoke checks
+
+`example/tests/browser` contains a Playwright suite that runs with JavaScript
+enabled and disabled against `example/crates/app/examples/view_smoke_server.rs`,
+which composes the real router with in-memory services and no database:
+
+```sh
+cd example/tests/browser
+npm install
+npx playwright install chromium
+npm test
+```
+
+The submitted name `server-error` makes the smoke server's injected service fail,
+exercising server-error feedback; network failures are simulated by the browser.

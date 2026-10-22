@@ -143,9 +143,9 @@ async fn test_json_404_fallbacks() {
     for path in [
         "/api",
         "/api/",
-        "/unknown",
-        "/hypogeum.public.v1.PublicHelloWorld/SayHello",
-        "/hypogeum.users.v1.Users/GetUser",
+        "/api/unknown",
+        "/api/hello/",
+        "/api/hypogeum.public.v1.PublicHelloWorld/SayHello",
     ] {
         let resp = client
             .get(format!("{}{path}", server.endpoint))

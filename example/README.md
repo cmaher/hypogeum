@@ -14,6 +14,8 @@ example/
 │   └── postgres/
 │       ├── provision.sql # Database, role, and permission provisioning
 │       └── database.sql  # Database-level grants and defaults
+├── tests/
+│   └── browser/          # Playwright smoke checks for HTML views
 ├── cmd/
 │   ├── app/              # HTTP server executable (app / exemplum-app-cli)
 │   └── db/               # Database migration CLI (exemplum-db / exemplum-db-cli)
@@ -21,7 +23,7 @@ example/
     ├── app/              # Composed HTTP router (exemplum-app)
     └── domain/
         ├── auth/         # Credential verification, sessions, and token exchange
-        ├── hello-world/  # In-memory greeting service (exemplum-dmn-hello-world)
+        ├── hello-world/  # Greeting service, JSON API and HTML view (exemplum-dmn-hello-world)
         └── users/        # User entity, SeaORM migrations, gRPC (exemplum-dmn-users)
 ```
 
@@ -102,6 +104,24 @@ Verify the running application:
 ```sh
 curl http://127.0.0.1:8080/healthz
 curl -X POST http://127.0.0.1:8080/api/hello -H "Content-Type: application/json" -d '{"name":"Ada"}'
+curl -X POST http://127.0.0.1:8080/hello -d 'name=Ada'
+```
+
+Open `http://127.0.0.1:8080/` for the server-rendered greeting page. The form
+works without JavaScript and is enhanced with the vendored HTMX served from
+`/assets`. Every path under `/api` keeps the JSON error envelope; page routes
+return safe HTML errors. See [HTML Views and HTMX](../docs/app.md#7-html-views-and-htmx).
+
+### Browser Smoke Checks
+
+`tests/browser` runs Playwright with JavaScript enabled and disabled against a
+database-free server (`crates/app/examples/view_smoke_server.rs`):
+
+```sh
+cd tests/browser
+npm install
+npx playwright install chromium
+npm test
 ```
 
 ### Verification & CI

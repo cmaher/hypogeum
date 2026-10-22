@@ -1284,6 +1284,7 @@ dependencies = [
  "hypgm-http",
  "hypgm-logging",
  "hypgm-test-support",
+ "hypgm-view",
  "hypgmx-rdbms",
  "reqwest",
  "serde",
