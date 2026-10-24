@@ -207,6 +207,16 @@ async fn user_repository_connects_and_persists_under_runtime_privileges(
     // Readiness must reject the wrong role and an altered schema contract.
     assert!(exemplum_dmn_users::repo::check_ready(&tasks).await.is_err());
     let mut admin = PgConnection::connect(&db.admin_url).await.unwrap();
+    sqlx::raw_sql("REVOKE INSERT ON apalis.jobs FROM exemplum_users")
+        .execute(&mut admin)
+        .await
+        .unwrap();
+    assert!(exemplum_dmn_users::repo::check_ready(&pool).await.is_err());
+    sqlx::raw_sql("GRANT INSERT ON apalis.jobs TO exemplum_users")
+        .execute(&mut admin)
+        .await
+        .unwrap();
+    exemplum_dmn_users::repo::check_ready(&pool).await.unwrap();
     sqlx::raw_sql("CREATE OR REPLACE FUNCTION exemplum.schema_version() RETURNS bigint LANGUAGE sql AS 'SELECT 0::bigint'").execute(&mut admin).await.unwrap();
     assert!(exemplum_dmn_users::repo::check_ready(&pool).await.is_err());
     // Applied migrations do not silently rewrite objects after manual tampering.

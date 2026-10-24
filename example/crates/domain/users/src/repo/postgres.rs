@@ -128,5 +128,20 @@ pub async fn check_ready(pool: &PgPool) -> Result<(), RepoError> {
             "Users schema is not ready; run explicit migrations".into(),
         ));
     }
+    // The application role produces welcome jobs inside account transactions,
+    // but cannot use queue lifecycle tables or the tasks-role readiness function.
+    let producer_ready: bool = sqlx::query_scalar(
+        "SELECT has_schema_privilege(current_user, 'apalis', 'USAGE')
+             AND has_type_privilege(current_user, 'apalis.hstore', 'USAGE')
+             AND has_table_privilege(current_user, 'apalis.jobs', 'INSERT')",
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(RepoError::database)?;
+    if !producer_ready {
+        return Err(RepoError::InvalidInput(
+            "Welcome queue producer is not ready; run explicit migrations".into(),
+        ));
+    }
     Ok(())
 }

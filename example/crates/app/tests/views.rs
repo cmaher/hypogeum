@@ -247,7 +247,7 @@ async fn cross_site_form_posts_are_rejected() {
         assert_html_error(response, 403, CROSS_SITE_FORM.message).await;
     }
 
-    // Safe methods and the JSON API are not affected.
+    // Safe methods remain accessible.
     let response = reqwest::Client::new()
         .get(server.url("/"))
         .header("sec-fetch-site", "cross-site")
@@ -349,5 +349,57 @@ async fn api_and_health_keep_json_semantics() {
     assert_eq!(response.status(), 200);
     assert_eq!(response.text().await.unwrap(), "ok");
 
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn json_writes_share_page_origin_protection() {
+    let server = Server::start().await;
+    let client = reqwest::Client::new();
+    for path in [
+        "/api/auth/register",
+        "/api/auth/login",
+        "/api/auth/logout",
+        "/api/admin/users/00000000-0000-0000-0000-000000000000/approve",
+    ] {
+        for (header, value) in [
+            ("sec-fetch-site", "cross-site"),
+            ("sec-fetch-site", "same-site"),
+            ("origin", "https://other.example"),
+        ] {
+            let response = client
+                .post(server.url(path))
+                .header(header, value)
+                .header("cookie", "id=browser-session")
+                .header("content-type", "application/json")
+                .body("{}")
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), 403, "{path}: {header}={value}");
+            assert!(
+                response.headers()["content-type"]
+                    .to_str()
+                    .unwrap()
+                    .starts_with("application/json")
+            );
+        }
+    }
+    let response = client
+        .get(server.url("/api/admin/users"))
+        .header("sec-fetch-site", "cross-site")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 401);
+    let response = client
+        .post(server.url("/api/auth/login"))
+        .header("origin", server.endpoint.as_str())
+        .header("content-type", "application/json")
+        .body("{}")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 400);
     server.shutdown().await;
 }

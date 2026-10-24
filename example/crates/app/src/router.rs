@@ -1,5 +1,7 @@
-use axum::extract::DefaultBodyLimit;
+use axum::extract::{DefaultBodyLimit, Request};
+use axum::middleware::Next;
 use axum::response::IntoResponse;
+use axum::response::Response;
 use axum::routing::{any, get};
 use axum::{Extension, Router};
 use exemplum_dmn_auth::AuthComponents;
@@ -52,7 +54,8 @@ where
         .nest("/hello", hello)
         .nest("/auth", auth_routes)
         .nest("/admin", admin)
-        .fallback(not_found_handler);
+        .fallback(not_found_handler)
+        .layer(axum::middleware::from_fn(api_same_origin));
 
     let pages = Router::new()
         .merge(hello_pages)
@@ -91,4 +94,14 @@ where
         .layer(Extension(jwt_validator))
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         .layer(trace_layer())
+}
+
+// Apply the page origin policy to JSON writes too: login and logout can mutate
+// browser sessions, and admin approvals accept those same session cookies.
+async fn api_same_origin(request: Request, next: Next) -> Response {
+    let (parts, body) = request.into_parts();
+    if !parts.method.is_safe() && hypgm_view::is_cross_site_request(&parts) {
+        return hypgm_http::HttpError::from(hypgm_authz::AuthzError::Forbidden).into_response();
+    }
+    next.run(Request::from_parts(parts, body)).await
 }

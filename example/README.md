@@ -136,3 +136,23 @@ cargo make ci           # Run full CI suite (fmt, clippy, build, test)
 ## Template Customization
 
 Exemplum serves as the target template for new project generation. The repository-level script `scripts/rename-project.py` is scoped to inspect and customize files within `example/`, replacing `exemplum` / `Exemplum` identities with your project's chosen identity.
+
+## Registration and account administration
+
+The composed app provides browser forms at `/register` and `/login`, with JSON
+registration at `POST /api/auth/register`. Registrations remain pending until an
+administrator approves them through `/admin/users` or
+`POST /api/admin/users/{id}/approve`; `GET /api/admin/users` lists account state.
+Administrator authorization reloads account flags on every request.
+
+Approval commits the account transition and welcome job together using the
+application pool. Run the separate task binary to process welcome jobs; the app
+never starts a worker or applies migrations. Startup checks the users schema,
+producer privileges, authentication storage, and session storage before listening.
+Both HTML and JSON writes reject cross-site fetch metadata or a foreign Origin.
+
+`AppComponentsFactory::default()` keeps transport tests database-free using focused
+user, authentication and approved-account fakes. Override `account_service` when a
+test needs registration, pending accounts, or administrator behavior. The
+`view_smoke_server` uses these defaults for greeting-page checks; use the real app
+and task binary for durable account lifecycle scenarios.
