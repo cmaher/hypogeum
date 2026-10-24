@@ -7,9 +7,9 @@ use axum::routing::get;
 use hypgm_errors::{PublicError, PublicErrorInfo};
 use hypgm_http::{ErrorClassification, ErrorCode, REQUEST_ID_HEADER, trace_layer};
 use hypgm_view::{
-    HTML_CONTENT_TYPE, HtmlError, HtmxRequest, ViewMode, append_vary_hx_request,
-    html_error_middleware, html_error_response, html_method_not_allowed, html_not_found_handler,
-    html_response, render_error_template, render_html_public_error, render_template,
+    HTML_CONTENT_TYPE, HtmlError, HtmxRequest, ViewMode, append_vary_htmx, html_error_middleware,
+    html_error_response, html_method_not_allowed, html_not_found_handler, html_response,
+    render_error_template, render_html_public_error, render_template,
 };
 use tower::ServiceExt;
 
@@ -77,29 +77,59 @@ async fn html_responses_set_content_type_and_vary() {
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(response.headers()[header::CONTENT_TYPE], HTML_CONTENT_TYPE);
     let vary: Vec<_> = response.headers().get_all(header::VARY).iter().collect();
-    assert_eq!(vary, ["HX-Request"]);
+    assert_eq!(vary, ["HX-Request", "HX-History-Restore-Request"]);
+    assert_eq!(
+        response.headers()[header::X_CONTENT_TYPE_OPTIONS],
+        "nosniff"
+    );
+    assert_eq!(response.headers()[header::X_FRAME_OPTIONS], "DENY");
     assert_eq!(body_text(response).await, "<p>ok</p>");
+}
+
+#[test]
+fn security_headers_keep_explicit_values() {
+    let response = hypgm_view::with_html_headers(
+        (
+            [(header::X_FRAME_OPTIONS, "SAMEORIGIN")],
+            "<p>ok</p>".to_owned(),
+        )
+            .into_response(),
+    );
+    let frame: Vec<_> = response
+        .headers()
+        .get_all(header::X_FRAME_OPTIONS)
+        .iter()
+        .collect();
+    assert_eq!(frame, ["SAMEORIGIN"]);
 }
 
 #[test]
 fn vary_is_merged_without_replacing_existing_values() {
     let mut headers = axum::http::HeaderMap::new();
     headers.insert(header::VARY, HeaderValue::from_static("Accept-Encoding"));
-    append_vary_hx_request(&mut headers);
+    append_vary_htmx(&mut headers);
     let vary: Vec<_> = headers.get_all(header::VARY).iter().collect();
-    assert_eq!(vary, ["Accept-Encoding", "HX-Request"]);
+    assert_eq!(
+        vary,
+        [
+            "Accept-Encoding",
+            "HX-Request",
+            "HX-History-Restore-Request"
+        ]
+    );
 
-    append_vary_hx_request(&mut headers);
-    assert_eq!(headers.get_all(header::VARY).iter().count(), 2);
+    append_vary_htmx(&mut headers);
+    assert_eq!(headers.get_all(header::VARY).iter().count(), 3);
 
     let mut covered = axum::http::HeaderMap::new();
     covered.insert(header::VARY, HeaderValue::from_static("origin, hx-request"));
-    append_vary_hx_request(&mut covered);
-    assert_eq!(covered.get_all(header::VARY).iter().count(), 1);
+    append_vary_htmx(&mut covered);
+    let vary: Vec<_> = covered.get_all(header::VARY).iter().collect();
+    assert_eq!(vary, ["origin, hx-request", "HX-History-Restore-Request"]);
 
     let mut wildcard = axum::http::HeaderMap::new();
     wildcard.insert(header::VARY, HeaderValue::from_static("*"));
-    append_vary_hx_request(&mut wildcard);
+    append_vary_htmx(&mut wildcard);
     assert_eq!(wildcard.get_all(header::VARY).iter().count(), 1);
 }
 
@@ -260,8 +290,19 @@ struct FailingTemplate {
     value: FailingDisplay,
 }
 
+#[test]
+#[should_panic(expected = "use render_error_template")]
+#[cfg(debug_assertions)]
+fn render_template_rejects_error_statuses_in_debug_builds() {
+    let _ = render_template(StatusCode::NOT_FOUND, &EchoTemplate { value: "x" });
+}
+
 #[tokio::test]
 async fn render_failures_return_safe_html_500() {
+    let (subscriber, writer) =
+        hypgm_logging::create_test_subscriber("error", hypgm_logging::LogFormat::Json).unwrap();
+    let _guard = tracing::subscriber::set_default(subscriber);
+
     for response in [
         render_template(
             StatusCode::OK,
@@ -280,5 +321,21 @@ async fn render_failures_return_safe_html_500() {
         let body = body_text(response).await;
         assert!(body.contains("Internal server error"));
         assert!(!body.contains("private"));
+    }
+
+    // The cause and template stay server-side for diagnosis.
+    let logs = writer.lines();
+    assert_eq!(logs.len(), 2, "{logs:?}");
+    for line in logs {
+        let event: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(event["fields"]["message"], "HTML template rendering failed");
+        assert!(
+            event["fields"]["template"]
+                .as_str()
+                .unwrap()
+                .ends_with("FailingTemplate"),
+            "{line}"
+        );
+        assert!(!event["fields"]["error"].as_str().unwrap().is_empty());
     }
 }

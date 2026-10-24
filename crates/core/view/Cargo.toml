@@ -9,7 +9,6 @@ askama = { version = "0.16", default-features = false, features = ["derive", "st
 axum = { version = "0.8", default-features = false, features = ["tokio"] }
 hypgm-errors = { path = "../errors" }
 hypgm-http = { path = "../http" }
-http-body-util = "0.1"
 serde.workspace = true
 serde_urlencoded = "0.7"
 tracing = "0.1"
@@ -17,6 +16,8 @@ tracing = "0.1"
 [dev-dependencies]
 bytes = "1"
 futures-util = "0.3"
+hypgm-logging = { path = "../logging" }
+serde_json.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 thiserror.workspace = true
 tower = { version = "0.5", features = ["util"] }

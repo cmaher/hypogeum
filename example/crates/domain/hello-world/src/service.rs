@@ -3,10 +3,16 @@ use axum::response::{IntoResponse, Response};
 use hypgm_errors::{PublicError, PublicErrorInfo, RepoError};
 use thiserror::Error;
 
+/// Rejection message for names that are too long or contain NUL.
+pub const NAME_VALIDATION_MESSAGE: &str =
+    "Names can have at most 200 characters and cannot contain NUL characters.";
+
 #[derive(Debug, Error)]
 pub enum HelloWorldError {
+    /// Carries a fixed, user-safe message that HTML views may display. The
+    /// JSON API still returns the generic validation classification.
     #[error("Validation failed: {0}")]
-    Validation(String),
+    Validation(&'static str),
     #[error("Greeting not found")]
     NotFound,
     #[error(transparent)]
@@ -45,9 +51,7 @@ impl HelloWorldService for DefaultHelloWorldService {
     async fn say_hello(&self, name: &str) -> Result<String, HelloWorldError> {
         let name = name.trim();
         if name.contains('\0') || name.chars().count() > 200 {
-            return Err(HelloWorldError::Validation(
-                "Name must contain at most 200 characters without NUL".into(),
-            ));
+            return Err(HelloWorldError::Validation(NAME_VALIDATION_MESSAGE));
         }
         let name = if name.is_empty() { "world" } else { name };
         Ok(format!("Hello, {name}!"))

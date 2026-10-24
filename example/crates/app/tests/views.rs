@@ -1,5 +1,5 @@
 use exemplum_app::router;
-use exemplum_dmn_hello_world::view::NAME_VALIDATION_MESSAGE;
+use exemplum_dmn_hello_world::service::NAME_VALIDATION_MESSAGE;
 use hypgm_view::{HTMX_SCRIPT_URL, VIEW_SCRIPT_URL};
 use std::time::Duration;
 use tokio::net::TcpListener;
@@ -75,6 +75,16 @@ fn assert_html(response: &reqwest::Response, status: u16) {
     assert!(!header(response, "x-request-id").is_empty());
 }
 
+fn assert_htmx_vary(response: &reqwest::Response) {
+    let vary: Vec<_> = response
+        .headers()
+        .get_all("vary")
+        .iter()
+        .map(|value| value.to_str().unwrap())
+        .collect();
+    assert_eq!(vary, ["HX-Request", "HX-History-Restore-Request"]);
+}
+
 async fn assert_html_error(response: reqwest::Response, status: u16, message: &str) {
     assert_html(&response, status);
     let body = response.text().await.unwrap();
@@ -96,7 +106,9 @@ async fn root_serves_full_page_with_shared_assets() {
 
     let response = client.get(server.url("/")).send().await.unwrap();
     assert_html(&response, 200);
-    assert_eq!(header(&response, "vary"), "HX-Request");
+    assert_htmx_vary(&response);
+    assert_eq!(header(&response, "x-frame-options"), "DENY");
+    assert_eq!(header(&response, "x-content-type-options"), "nosniff");
     let body = response.text().await.unwrap();
     assert!(body.starts_with("<!DOCTYPE html>"));
     assert!(body.contains(r#"method="post" action="/hello""#));
@@ -127,7 +139,7 @@ async fn greeting_form_supports_ordinary_and_htmx_submissions() {
 
     let response = server.post_form("name=Ada", true).await;
     assert_html(&response, 200);
-    assert_eq!(header(&response, "vary"), "HX-Request");
+    assert_htmx_vary(&response);
     let fragment = response.text().await.unwrap();
     assert!(fragment.starts_with("<section"));
     assert!(fragment.contains("Hello, Ada!"));
@@ -204,6 +216,33 @@ async fn form_transport_errors_are_safe_html() {
     let oversized = format!("name={}", "x".repeat(16_384));
     let response = server.post_form(&oversized, true).await;
     assert_html_error(response, 413, "Payload too large").await;
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn cross_site_form_posts_are_rejected() {
+    let server = Server::start().await;
+
+    let response = reqwest::Client::new()
+        .post(server.url("/hello"))
+        .header("content-type", FORM)
+        .header("sec-fetch-site", "cross-site")
+        .body("name=Ada")
+        .send()
+        .await
+        .unwrap();
+    assert_html_error(response, 403, "Cross-site form submissions are not allowed").await;
+
+    let response = reqwest::Client::new()
+        .post(server.url("/hello"))
+        .header("content-type", FORM)
+        .header("origin", server.endpoint.as_str())
+        .body("name=Ada")
+        .send()
+        .await
+        .unwrap();
+    assert_html(&response, 200);
 
     server.shutdown().await;
 }

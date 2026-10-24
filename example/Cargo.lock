@@ -2030,7 +2030,6 @@ version = "0.1.0"
 dependencies = [
  "askama",
  "axum",
- "http-body-util",
  "hypgm-errors",
  "hypgm-http",
  "serde",

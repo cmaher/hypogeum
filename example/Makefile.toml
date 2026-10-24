@@ -22,6 +22,11 @@ description = "All tests; Docker must be running for self-contained integration 
 command = "cargo"
 args = ["test", "--locked", "--workspace", "--all-features"]
 
+[tasks.test-browser]
+description = "Playwright smoke checks for HTML views with JavaScript on and off; requires Node.js"
+script_runner = "@shell"
+script = ['cd tests/browser && npm ci && npx playwright install chromium && npm test']
+
 [tasks.ci]
 dependencies = ["fmt", "clippy", "build", "test"]
 

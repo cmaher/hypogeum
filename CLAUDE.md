@@ -70,5 +70,6 @@ cargo make db-verify    # Verify database schema contracts
 cargo make db-down      # Stop local PostgreSQL container
 cargo make app          # Run public HTTP application (127.0.0.1:8080)
 cargo make test         # Run example unit and integration tests
+cargo make test-browser # Run Playwright HTML view smoke checks (requires Node.js)
 cargo make ci           # Run full Exemplum CI (fmt, clippy, build, test)
 ```

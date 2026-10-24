@@ -8,7 +8,7 @@ pub mod assets;
 pub mod form;
 
 pub use assets::{HTMX_SCRIPT_URL, HTMX_VERSION, VIEW_SCRIPT_URL};
-pub use form::{AppForm, is_form_content_type};
+pub use form::{AppForm, CROSS_SITE_FORM, is_cross_site_request, is_form_content_type};
 
 use askama::Template;
 use axum::extract::{FromRequestParts, Request};
@@ -74,28 +74,47 @@ impl<S: Send + Sync> FromRequestParts<S> for HtmxRequest {
     }
 }
 
-/// Appends `Vary: HX-Request` unless an existing `Vary` value already covers it.
-pub fn append_vary_hx_request(headers: &mut HeaderMap) {
-    let covered = headers.get_all(header::VARY).iter().any(|value| {
+fn vary_covers(headers: &HeaderMap, name: &HeaderName) -> bool {
+    headers.get_all(header::VARY).iter().any(|value| {
         value.to_str().is_ok_and(|value| {
             value
                 .split(',')
                 .map(str::trim)
-                .any(|token| token == "*" || token.eq_ignore_ascii_case(HX_REQUEST.as_str()))
+                .any(|token| token == "*" || token.eq_ignore_ascii_case(name.as_str()))
         })
-    });
-    if !covered {
-        headers.append(header::VARY, HeaderValue::from_static("HX-Request"));
+    })
+}
+
+/// Appends `Vary` entries for every header [`HtmxRequest`] reads
+/// (`HX-Request` and `HX-History-Restore-Request`), skipping any that an
+/// existing `Vary` value already covers.
+pub fn append_vary_htmx(headers: &mut HeaderMap) {
+    for (name, value) in [
+        (&HX_REQUEST, "HX-Request"),
+        (&HX_HISTORY_RESTORE_REQUEST, "HX-History-Restore-Request"),
+    ] {
+        if !vary_covers(headers, name) {
+            headers.append(header::VARY, HeaderValue::from_static(value));
+        }
     }
 }
 
-/// Sets the HTML content type and merges `Vary: HX-Request` into a response.
+/// Sets the HTML content type, merges the HTMX `Vary` entries, and adds
+/// `X-Content-Type-Options: nosniff` and `X-Frame-Options: DENY` unless the
+/// response already sets them.
 pub fn with_html_headers(mut response: Response) -> Response {
-    response.headers_mut().insert(
+    let headers = response.headers_mut();
+    headers.insert(
         header::CONTENT_TYPE,
         HeaderValue::from_static(HTML_CONTENT_TYPE),
     );
-    append_vary_hx_request(response.headers_mut());
+    append_vary_htmx(headers);
+    headers
+        .entry(header::X_CONTENT_TYPE_OPTIONS)
+        .or_insert(HeaderValue::from_static("nosniff"));
+    headers
+        .entry(header::X_FRAME_OPTIONS)
+        .or_insert(HeaderValue::from_static("DENY"));
     response
 }
 
@@ -104,10 +123,19 @@ pub fn html_response(status: StatusCode, body: String) -> Response {
 }
 
 /// Renders an Askama template, falling back to a static HTML 500 on failure.
+///
+/// Use only for non-error statuses. Error responses must go through
+/// [`render_error_template`]: without a classification, routing middleware
+/// ([`html_error_middleware`] and `hypgm_http::trace_layer`) replaces 404 and
+/// 405 bodies with generic error pages. Debug builds assert this.
 pub fn render_template<T: Template>(status: StatusCode, template: &T) -> Response {
+    debug_assert!(
+        !status.is_client_error() && !status.is_server_error(),
+        "render_template called with error status {status}; use render_error_template"
+    );
     match template.render() {
         Ok(body) => html_response(status, body),
-        Err(_) => render_failure_response(),
+        Err(err) => template_failure::<T>(&err),
     }
 }
 
@@ -123,14 +151,19 @@ pub fn render_error_template<T: Template>(
             attach_classification(&mut response, classification);
             response
         }
-        Err(_) => render_failure_response(),
+        Err(err) => template_failure::<T>(&err),
     }
 }
 
-/// Minimal safe HTML 500 used when template rendering fails. It never
-/// renders a template, so it cannot fail recursively.
-pub fn render_failure_response() -> Response {
-    tracing::error!("HTML template rendering failed");
+/// Logs the rendering failure with its cause and template type, then returns
+/// a minimal safe HTML 500. It never renders a template, so it cannot fail
+/// recursively, and the cause never reaches the response.
+fn template_failure<T>(err: &askama::Error) -> Response {
+    tracing::error!(
+        error = %err,
+        template = std::any::type_name::<T>(),
+        "HTML template rendering failed"
+    );
     html_error_response(PublicErrorInfo::INTERNAL_ERROR)
 }
 

@@ -48,7 +48,10 @@ where
 
     let pages = Router::new()
         .merge(hello_pages)
-        .nest("/assets", hypgm_view::assets::router())
+        .nest(
+            hypgm_view::assets::ASSETS_MOUNT,
+            hypgm_view::assets::router(),
+        )
         .layer(axum::middleware::from_fn(html_error_middleware));
 
     let backend = ExemplumAuthBackend::from_arc(components.auth_repo);

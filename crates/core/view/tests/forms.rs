@@ -5,7 +5,7 @@ use axum::response::Response;
 use axum::routing::post;
 use hypgm_errors::PublicErrorInfo;
 use hypgm_http::{ErrorClassification, MAX_BODY_BYTES};
-use hypgm_view::{AppForm, HTML_CONTENT_TYPE};
+use hypgm_view::{AppForm, CROSS_SITE_FORM, HTML_CONTENT_TYPE};
 use tower::ServiceExt;
 
 const FORM: &str = "application/x-www-form-urlencoded";
@@ -114,6 +114,61 @@ async fn fixed_length_boundary() {
 
     let response = send(Some(FORM), Body::from("name=Ada"), Some(MAX_BODY_BYTES + 1)).await;
     assert_html_rejection(response, PublicErrorInfo::PAYLOAD_TOO_LARGE).await;
+}
+
+async fn send_with_headers(headers: &[(&str, &str)]) -> Response {
+    let mut request = Request::builder()
+        .method("POST")
+        .uri("/form")
+        .header(header::CONTENT_TYPE, FORM);
+    for (name, value) in headers {
+        request = request.header(*name, *value);
+    }
+    router()
+        .oneshot(request.body(Body::from("name=Ada")).unwrap())
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn same_origin_and_non_browser_submissions_are_accepted() {
+    for headers in [
+        &[][..],
+        &[("sec-fetch-site", "same-origin")],
+        &[("sec-fetch-site", "none")],
+        &[
+            ("origin", "http://app.test:8080"),
+            ("host", "app.test:8080"),
+        ],
+        &[("origin", "https://APP.test"), ("host", "app.test")],
+    ] {
+        let response = send_with_headers(headers).await;
+        assert_eq!(response.status(), StatusCode::OK, "{headers:?}");
+        assert_eq!(body_text(response).await, "Ada");
+    }
+}
+
+#[tokio::test]
+async fn cross_site_submissions_are_html_403() {
+    for headers in [
+        &[("sec-fetch-site", "cross-site")][..],
+        &[("sec-fetch-site", "same-site")],
+        // Fetch metadata wins over a matching Origin.
+        &[
+            ("sec-fetch-site", "cross-site"),
+            ("origin", "http://app.test"),
+            ("host", "app.test"),
+        ],
+        &[("origin", "http://evil.test"), ("host", "app.test")],
+        &[
+            ("origin", "http://app.test:9090"),
+            ("host", "app.test:8080"),
+        ],
+        &[("origin", "null"), ("host", "app.test")],
+    ] {
+        let response = send_with_headers(headers).await;
+        assert_html_rejection(response, CROSS_SITE_FORM).await;
+    }
 }
 
 fn streamed(total_bytes: usize) -> Body {

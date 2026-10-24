@@ -60,15 +60,10 @@ async fn view_configuration_is_served() {
         response.headers()[header::CONTENT_TYPE],
         "text/javascript; charset=utf-8"
     );
-    let body = body_text(response).await;
-    assert!(body.contains("htmx.config.historyRestoreAsHxRequest = false;"));
-    // Controlled HTML errors swap; statuses are never rewritten to 200.
-    assert!(body.contains(r#"{ code: "[45]..", swap: true, error: true }"#));
-    assert!(body.contains("htmx:sendError"));
-    assert!(body.contains("htmx:timeout"));
-    assert!(body.contains("data-view-feedback"));
-    assert!(!body.contains("hx-boost"));
-    assert!(!body.contains("historyRestoreAsHxRequest = true"));
+    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-cache");
+    // Behaviour is exercised in a browser by `example/tests/browser`
+    // (`cargo make --cwd example test-browser`).
+    assert_eq!(body_text(response).await, include_str!("../assets/view.js"));
 }
 
 #[tokio::test]

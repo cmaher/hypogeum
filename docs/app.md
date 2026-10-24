@@ -83,7 +83,7 @@ where
     // Page routes own HTML errors.
     let pages = Router::new()
         .merge(hello_pages)
-        .nest("/assets", hypgm_view::assets::router())
+        .nest(hypgm_view::assets::ASSETS_MOUNT, hypgm_view::assets::router())
         .layer(axum::middleware::from_fn(html_error_middleware));
 
     Router::new()
@@ -364,12 +364,25 @@ parsing only; there is no content-type dispatch between HTML and JSON adapters.
   `HX-Request: true`. History restoration requests (`HX-History-Restore-Request: true`)
   always receive full pages.
 - **HTML responses:** `render_template`, `render_error_template` and
-  `html_response` set `text/html; charset=utf-8` and append `Vary: HX-Request`
-  without replacing existing `Vary` values. A template rendering failure returns
-  a minimal, template-free HTML 500.
+  `html_response` set `text/html; charset=utf-8`, append `Vary: HX-Request` and
+  `Vary: HX-History-Restore-Request` without replacing existing `Vary` values,
+  and add `X-Content-Type-Options: nosniff` and `X-Frame-Options: DENY` unless
+  already set. A template rendering failure logs its cause and template type
+  server-side and returns a minimal, template-free HTML 500.
+  `render_template` is for non-error statuses; render error pages with
+  `render_error_template` so routing middleware does not replace them with
+  generic 404/405 pages (debug builds assert this).
 - **`AppForm<T>`:** Bounded URL-encoded form extractor using `MAX_BODY_BYTES`
   for both declared and streamed bodies. Rejections are safe HTML `415`, `413`
   and `400` responses.
+- **Cross-site forms:** URL-encoded posts need no CORS preflight, so `AppForm`
+  rejects browser submissions from other sites with an HTML `403` before
+  reading the body: `Sec-Fetch-Site` must be `same-origin` or `none`, or,
+  without it, `Origin` must match the request's `Host`. Requests without
+  either header (non-browser clients) are accepted. Session cookies also
+  default to `SameSite=Strict` (`tower-sessions`); keep that default for
+  form-authenticated pages. Deployments behind a proxy that rewrites `Host`
+  must forward the original host.
 - **HTML errors:** `HtmlError`, `html_error_response` and `html_error_middleware`
   reuse `PublicErrorInfo` classification and attach the same tracing extensions
   as JSON errors. Askama autoescapes all interpolated values; templates never
@@ -397,13 +410,11 @@ pushing are not enabled.
 
 `example/tests/browser` contains a Playwright suite that runs with JavaScript
 enabled and disabled against `example/crates/app/examples/view_smoke_server.rs`,
-which composes the real router with in-memory services and no database:
+which composes the real router with in-memory services and no database. It is
+the behavioural coverage for `view.js` and requires Node.js:
 
 ```sh
-cd example/tests/browser
-npm install
-npx playwright install chromium
-npm test
+cargo make --cwd example test-browser
 ```
 
 The submitted name `server-error` makes the smoke server's injected service fail,

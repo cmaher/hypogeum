@@ -4,8 +4,10 @@ use axum::http::{Request, StatusCode, header};
 use axum::response::Response;
 use exemplum_dmn_hello_world::HelloWorldError;
 use exemplum_dmn_hello_world::controller::HelloComponentsFactory;
-use exemplum_dmn_hello_world::service::{DefaultHelloWorldService, HelloWorldService};
-use exemplum_dmn_hello_world::view::{NAME_VALIDATION_MESSAGE, router};
+use exemplum_dmn_hello_world::service::{
+    DefaultHelloWorldService, HelloWorldService, NAME_VALIDATION_MESSAGE,
+};
+use exemplum_dmn_hello_world::view::router;
 use hypgm_errors::PublicErrorInfo;
 use hypgm_http::ErrorClassification;
 use hypgm_view::{HTML_CONTENT_TYPE, HTMX_SCRIPT_URL, VIEW_SCRIPT_URL};
@@ -55,7 +57,8 @@ async fn body_text(response: Response) -> String {
 fn assert_html(response: &Response, status: StatusCode) {
     assert_eq!(response.status(), status);
     assert_eq!(response.headers()[header::CONTENT_TYPE], HTML_CONTENT_TYPE);
-    assert_eq!(response.headers()[header::VARY], "HX-Request");
+    let vary: Vec<_> = response.headers().get_all(header::VARY).iter().collect();
+    assert_eq!(vary, ["HX-Request", "HX-History-Restore-Request"]);
 }
 
 #[tokio::test]
@@ -125,7 +128,6 @@ async fn validation_keeps_status_safe_message_and_escaped_value() {
         assert!(body.contains(r#"aria-invalid="true""#));
         assert!(body.contains(&"&#60;b&#62;".repeat(70)) || body.contains(&"&lt;b&gt;".repeat(70)));
         assert!(!body.contains(&long_name));
-        assert!(!body.contains("Name must contain"));
         assert_eq!(body.contains("<html"), !htmx);
     }
 
@@ -175,6 +177,24 @@ async fn submissions_invoke_injected_service_directly() {
             .contains("Greetings from the injected service")
     );
     assert_eq!(*service.names.lock().unwrap(), [" Grace ".to_owned()]);
+}
+
+struct RejectingService;
+
+#[async_trait]
+impl HelloWorldService for RejectingService {
+    async fn say_hello(&self, _name: &str) -> Result<String, HelloWorldError> {
+        Err(HelloWorldError::Validation("That name is reserved."))
+    }
+}
+
+#[tokio::test]
+async fn validation_shows_the_service_message() {
+    let response = post_form(app(Arc::new(RejectingService)), "name=admin", true).await;
+    assert_html(&response, StatusCode::BAD_REQUEST);
+    let body = body_text(response).await;
+    assert!(body.contains("That name is reserved."), "{body}");
+    assert!(!body.contains(NAME_VALIDATION_MESSAGE));
 }
 
 struct FailingService;

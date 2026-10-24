@@ -115,13 +115,11 @@ return safe HTML errors. See [HTML Views and HTMX](../docs/app.md#7-html-views-a
 ### Browser Smoke Checks
 
 `tests/browser` runs Playwright with JavaScript enabled and disabled against a
-database-free server (`crates/app/examples/view_smoke_server.rs`):
+database-free server (`crates/app/examples/view_smoke_server.rs`). It requires
+Node.js:
 
 ```sh
-cd tests/browser
-npm install
-npx playwright install chromium
-npm test
+cargo make test-browser
 ```
 
 ### Verification & CI

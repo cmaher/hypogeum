@@ -19,10 +19,6 @@ use hypgm_view::{
 };
 use serde::Deserialize;
 
-/// Safe validation text shown instead of internal service error details.
-pub const NAME_VALIDATION_MESSAGE: &str =
-    "Names can have at most 200 characters and cannot contain NUL characters.";
-
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
 pub struct GreetingForm {
     #[serde(default)]
@@ -80,13 +76,13 @@ async fn greet(
                 error: "",
             },
         )),
-        Err(err @ HelloWorldError::Validation(_)) => Ok(render(
+        Err(err @ HelloWorldError::Validation(message)) => Ok(render(
             htmx.mode,
             Some(err.public_error()),
             &GreetingView {
                 name: form.name,
                 message: String::new(),
-                error: NAME_VALIDATION_MESSAGE,
+                error: message,
             },
         )),
         Err(err) => Err(HtmlError::from(err)),
