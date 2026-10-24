@@ -69,6 +69,10 @@ where
             "/registration-pending",
             get(exemplum_dmn_auth::view::pending),
         )
+        .route(
+            "/admin",
+            get(|| async { axum::response::Redirect::to("/admin/users") }),
+        )
         .nest("/admin", admin_pages)
         .nest(
             hypgm_view::assets::ASSETS_MOUNT,

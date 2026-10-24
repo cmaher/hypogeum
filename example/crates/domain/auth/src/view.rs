@@ -9,13 +9,15 @@ use axum::{
     routing::get,
 };
 use hypgm_authn::session::PrincipalAuthBackend;
-use hypgm_view::{AppForm, HtmlError, render_template};
+use hypgm_view::{AppForm, HtmlError, render_error_template, render_template};
 
-#[derive(Template)]
+#[derive(Default, Template)]
 #[template(path = "auth.html")]
 struct AuthPage {
     register: bool,
     message: &'static str,
+    display_name: String,
+    username: String,
 }
 
 pub fn router(components: AuthComponents) -> Router<()> {
@@ -29,7 +31,7 @@ async fn register_page() -> Response {
         StatusCode::OK,
         &AuthPage {
             register: true,
-            message: "",
+            ..Default::default()
         },
     )
 }
@@ -38,7 +40,7 @@ async fn login_page() -> Response {
         StatusCode::OK,
         &AuthPage {
             register: false,
-            message: "",
+            ..Default::default()
         },
     )
 }
@@ -46,10 +48,15 @@ async fn register(
     State(components): State<AuthComponents>,
     AppForm(request): AppForm<RegistrationRequest>,
 ) -> Result<Response, HtmlError> {
-    components
-        .register(request)
-        .await
-        .map_err(HtmlError::from_http)?;
+    let page = AuthPage {
+        register: true,
+        display_name: request.display_name.clone(),
+        username: request.username.clone(),
+        ..Default::default()
+    };
+    if let Err(error) = components.register(request).await {
+        return Ok(form_error(page, error));
+    }
     Ok(Redirect::to("/registration-pending").into_response())
 }
 pub async fn pending() -> Response {
@@ -58,6 +65,7 @@ pub async fn pending() -> Response {
         &AuthPage {
             register: false,
             message: "Registration received. Awaiting administrator approval before you can log in.",
+            ..Default::default()
         },
     )
 }
@@ -66,14 +74,25 @@ async fn login(
     mut session: axum_login::AuthSession<PrincipalAuthBackend>,
     AppForm(request): AppForm<LoginRequest>,
 ) -> Result<Response, HtmlError> {
-    let principal = crate::controller::authenticate(&components, request)
-        .await
-        .map_err(HtmlError::from_http)?;
+    let page = AuthPage {
+        username: request.username.clone(),
+        ..Default::default()
+    };
+    let principal = match crate::controller::authenticate(&components, request).await {
+        Ok(principal) => principal,
+        Err(error) => return Ok(form_error(page, error)),
+    };
     session
         .login(&principal)
         .await
         .map_err(|_| HtmlError::from_http(hypgm_http::HttpError::internal_error()))?;
     Ok(Redirect::to("/").into_response())
+}
+
+fn form_error(mut page: AuthPage, error: hypgm_http::HttpError) -> Response {
+    let classification = error.classification();
+    page.message = classification.message;
+    render_error_template(classification, &page)
 }
 
 #[cfg(test)]

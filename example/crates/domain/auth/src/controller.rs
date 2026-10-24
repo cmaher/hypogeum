@@ -162,9 +162,11 @@ pub(crate) async fn authenticate(
     components: &AuthComponents,
     req: LoginRequest,
 ) -> Result<Principal, HttpError> {
+    let username = exemplum_dmn_users::accounts::normalize_username(&req.username)
+        .map_err(|_| AuthError::InvalidCredentials)?;
     let identity = components
         .repo
-        .find_active_by_type_and_identifier("password", &req.username)
+        .find_active_by_type_and_identifier("password", username)
         .await
         .map_err(|e| AuthError::Internal(e.to_string()))?;
 

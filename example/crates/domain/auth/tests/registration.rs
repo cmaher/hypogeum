@@ -127,7 +127,7 @@ async fn registration_is_pending_and_gates_password_backend_and_tokens() {
             .unwrap()
             .is_none()
     );
-    let login = serde_json::json!({"username":"Alice","password":"long password!"});
+    let login = serde_json::json!({"username":" Alice ","password":"long password!"});
     assert_eq!(
         app.clone()
             .oneshot(request("/login", login.clone()))
@@ -282,4 +282,54 @@ async fn bearer_claims_cannot_bypass_current_approval() {
         .unwrap()
         .approval_status = ApprovalStatus::Approved;
     assert_eq!(app.oneshot(req()).await.unwrap().status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn duplicate_browser_registration_retains_profile_but_not_password() {
+    let repo = Arc::new(InMemoryAuthRepo::new());
+    let accounts = Arc::new(Accounts {
+        account: Mutex::new(None),
+        repo: repo.clone(),
+    });
+    let components = AuthComponentsFactory {
+        repo,
+        accounts,
+        ..Default::default()
+    }
+    .build();
+    components
+        .register(RegistrationRequest {
+            display_name: "Alice".into(),
+            username: "alice".into(),
+            password: "long password!".into(),
+        })
+        .await
+        .unwrap();
+    let app = exemplum_dmn_auth::view::router(components)
+        .layer(axum::middleware::from_fn(hypgm_view::html_error_middleware));
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/register")
+                .header("content-type", "application/x-www-form-urlencoded")
+                .body(Body::from(
+                    "display_name=Alice&username=alice&password=long+password%21",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let html = String::from_utf8(
+        axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap();
+    assert!(html.contains("<form"));
+    assert!(html.contains("value=\"Alice\""));
+    assert!(html.contains("value=\"alice\""));
+    assert!(!html.contains("long password!"));
 }
