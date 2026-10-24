@@ -54,7 +54,7 @@ impl<Args> Queue<Args> {
         &self,
         lifecycle: &worker::Lifecycle,
     ) -> Result<worker::Builder<Args>, TasksError> {
-        check_ready(lifecycle.pool()).await?;
+        check_ready(lifecycle.pool(), &self.config.tasks_role).await?;
         Ok(WorkerBuilder::new(lifecycle.context())
             .backend(
                 PostgresStorage::new(lifecycle.pool()).with_config(self.storage.config().clone()),
@@ -63,17 +63,19 @@ impl<Args> Queue<Args> {
             .retry(worker::policy(&self.config)))
     }
     pub async fn check_ready(&self) -> Result<(), TasksError> {
-        check_ready(self.storage.pool()).await
+        check_ready(self.storage.pool(), &self.config.tasks_role).await
     }
 }
 
 /// Runtime readiness uses a narrow owner-defined contract, never ledger access or DDL.
-pub async fn check_ready(pool: &PgPool) -> Result<(), TasksError> {
+pub async fn check_ready(pool: &PgPool, expected_role: &str) -> Result<(), TasksError> {
+    hypgmx_rdbms::validate_identifier(expected_role)
+        .map_err(|e| TasksError::Config(e.to_string()))?;
     let user: String = sqlx::query_scalar("SELECT current_user")
         .fetch_one(pool)
         .await
         .map_err(|_| TasksError::NotReady)?;
-    if user != "hypogeum_tasks" {
+    if user != expected_role {
         return Err(TasksError::NotReady);
     }
     let version: i64 = sqlx::query_scalar("SELECT apalis.schema_version()")

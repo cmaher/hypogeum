@@ -10,6 +10,7 @@ apalis-board.workspace = true
 axum = "0.8"
 apalis-postgres.workspace = true
 hypgm-errors = { path = "../../core/errors", default-features = false }
+hypgmx-rdbms = { path = "../rdbms", default-features = false }
 sqlx = { workspace = true, features = ["macros"] }
 tower = { version = "0.5", features = ["retry", "limit"] }
 tokio = { version = "1", features = ["full"] }
