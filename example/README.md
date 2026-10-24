@@ -156,3 +156,56 @@ user, authentication and approved-account fakes. Override `account_service` when
 test needs registration, pending accounts, or administrator behavior. The
 `view_smoke_server` uses these defaults for greeting-page checks; use the real app
 and task binary for durable account lifecycle scenarios.
+
+### Run the registration demo
+
+From `example/`, with Docker running, create the local configuration and set a
+private `EXEMPLUM_APP_JWT_SECRET` (for example, `openssl rand -hex 32`):
+
+```sh
+cp env/local.env.example env/local.env
+cargo make db-up
+cargo make db-provision
+cargo make db-migrate
+cargo make db-verify
+EXEMPLUM_ADMIN_DATABASE_URL=postgres://exemplum_users:password@127.0.0.1:5432/exemplum \
+  cargo run --locked -p exemplum-admin-cli --bin exemplum-admin -- \
+  bootstrap --username admin --display-name Administrator
+```
+
+The bootstrap command prompts for a password without echoing it. Repeating it
+preserves existing credentials; it can also promote an existing registration.
+Use `--password-stdin` to read one line from a secret provider for automation.
+The bootstrap uses the restricted users role, never the migration account.
+
+In separate terminals, from `example/`, run `cargo make app` and
+`cargo make tasks`. Visit `http://127.0.0.1:8080/register` and register an account.
+Log in as `admin`, visit `/admin/users`, and click **Approve**. Approval appears
+immediately; the worker persists a welcome timestamp. With JavaScript enabled the
+row polls until completion; without JavaScript refresh to see the timestamp.
+The default worker cadence can take about 30 seconds to pick up new work.
+Stopping the worker before approval leaves durable queued work, which completes
+when `cargo make tasks` starts again. The timestamp is a demo effect, not email.
+
+### Verify the complete flow
+
+The process integration suite provisions its own PostgreSQL container and starts
+real app/worker executables; no local database or configuration is used:
+
+```sh
+cargo test --locked -p exemplum-tasks-cli --test runtime
+```
+
+For real Chromium registration/approval checks with JavaScript both enabled and
+disabled, install the browser dependencies once, then run the same isolated suite:
+
+```sh
+(cd tests/browser && npm ci && npx playwright install chromium)
+EXEMPLUM_TEST_BROWSER=1 cargo test --locked -p exemplum-tasks-cli --test runtime
+```
+
+The suite checks rollback when enqueue fails, simultaneous approval, completion
+without UI polling, stopped-worker queue durability, and duplicate delivery after
+worker restart. `cargo make test-browser` also runs the database-free greeting
+smoke checks. Root `cargo make ci` includes process/database suites and rename
+checks; the Chromium checks are an explicit additional command.

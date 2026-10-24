@@ -20,5 +20,12 @@ sqlx.workspace = true
 tokio.workspace = true
 tracing = "0.1"
 
+[dev-dependencies]
+hypgm-test-support = { path = "../../../crates/core/test-support" }
+hypgm-authn = { path = "../../../crates/core/authn" }
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
+serde_json.workspace = true
+uuid.workspace = true
+
 [lints]
 workspace = true
