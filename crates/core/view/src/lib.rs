@@ -135,7 +135,7 @@ pub fn render_template<T: Template>(status: StatusCode, template: &T) -> Respons
     );
     match template.render() {
         Ok(body) => html_response(status, body),
-        Err(err) => template_failure::<T>(&err),
+        Err(err) => render_failure_response(template, &err),
     }
 }
 
@@ -146,33 +146,41 @@ pub fn render_error_template<T: Template>(
     template: &T,
 ) -> Response {
     match template.render() {
-        Ok(body) => {
-            let mut response = html_response(classification.status, body);
-            attach_classification(&mut response, classification);
-            response
-        }
-        Err(err) => template_failure::<T>(&err),
+        Ok(body) => with_classification(html_response(classification.status, body), classification),
+        Err(err) => render_failure_response(template, &err),
     }
 }
 
-/// Logs the rendering failure with its cause and template type, then returns
-/// a minimal safe HTML 500. It never renders a template, so it cannot fail
-/// recursively, and the cause never reaches the response.
-fn template_failure<T>(err: &askama::Error) -> Response {
+/// Minimal safe HTML 500 for a failed template render. Logs the cause and the
+/// template type server-side; neither reaches the response. It never renders
+/// a template, so it cannot fail recursively.
+///
+/// [`render_template`] and [`render_error_template`] call this; use it
+/// directly when a handler renders a template itself, for example to
+/// post-process the body.
+pub fn render_failure_response<T: Template + ?Sized>(
+    template: &T,
+    err: &askama::Error,
+) -> Response {
     tracing::error!(
         error = %err,
-        template = std::any::type_name::<T>(),
+        template = std::any::type_name_of_val(template),
         "HTML template rendering failed"
     );
     html_error_response(PublicErrorInfo::INTERNAL_ERROR)
 }
 
-fn attach_classification(response: &mut Response, classification: PublicErrorInfo) {
+/// Attaches `classification` and its status and code to a response's
+/// extensions, as JSON errors do, so tracing records the error and routing
+/// middleware leaves the body in place. Use it for error responses built from
+/// bodies a handler rendered itself.
+pub fn with_classification(mut response: Response, classification: PublicErrorInfo) -> Response {
     response.extensions_mut().insert(classification);
     response.extensions_mut().insert(classification.status);
     response
         .extensions_mut()
         .insert(ErrorCode(classification.code));
+    response
 }
 
 /// Escapes text for HTML element content and quoted attribute values.
@@ -203,9 +211,7 @@ pub fn html_error_response(classification: PublicErrorInfo) -> Response {
          <title>{message}</title>\n</head>\n<body>\n<main>\n<h1>{message}</h1>\n\
          <p data-view-error role=\"alert\">{message}</p>\n</main>\n</body>\n</html>\n"
     );
-    let mut response = html_response(classification.status, body);
-    attach_classification(&mut response, classification);
-    response
+    with_classification(html_response(classification.status, body), classification)
 }
 
 pub fn render_html_public_error<E: PublicError + ?Sized>(err: &E) -> Response {

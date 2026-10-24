@@ -14,8 +14,8 @@ use axum::response::Response;
 use axum::routing::{get, post};
 use hypgm_errors::{PublicError, PublicErrorInfo};
 use hypgm_view::{
-    AppForm, HTMX_SCRIPT_URL, HtmlError, HtmxRequest, VIEW_SCRIPT_URL, ViewMode,
-    render_error_template, render_template,
+    AppForm, HTMX_SCRIPT_URL, HtmlError, HtmxRequest, VIEW_SCRIPT_URL, ViewMode, html_response,
+    render_failure_response, with_classification,
 };
 use serde::Deserialize;
 
@@ -90,15 +90,13 @@ async fn greet(
 }
 
 fn render(mode: ViewMode, error: Option<PublicErrorInfo>, view: &GreetingView) -> Response {
-    // Browsers replace NUL while parsing; do so explicitly when echoing input.
-    let name = view.name.replace('\0', "\u{FFFD}");
     match mode {
         ViewMode::FullPage => respond(
             error,
             &PageTemplate {
                 htmx_script_url: HTMX_SCRIPT_URL,
                 view_script_url: VIEW_SCRIPT_URL,
-                name: &name,
+                name: &view.name,
                 message: &view.message,
                 error: view.error,
             },
@@ -106,7 +104,7 @@ fn render(mode: ViewMode, error: Option<PublicErrorInfo>, view: &GreetingView) -
         ViewMode::Fragment => respond(
             error,
             &GreetingTemplate {
-                name: &name,
+                name: &view.name,
                 message: &view.message,
                 error: view.error,
             },
@@ -114,9 +112,18 @@ fn render(mode: ViewMode, error: Option<PublicErrorInfo>, view: &GreetingView) -
     }
 }
 
+/// Renders the template directly so the body can be post-processed before
+/// it is sent; `render_failure_response` keeps failures safe and logged.
 fn respond<T: Template>(error: Option<PublicErrorInfo>, template: &T) -> Response {
+    let body = match template.render() {
+        // Browsers replace NUL while parsing; do so explicitly in echoed input.
+        Ok(body) => body.replace('\0', "\u{FFFD}"),
+        Err(err) => return render_failure_response(template, &err),
+    };
     match error {
-        Some(classification) => render_error_template(classification, template),
-        None => render_template(StatusCode::OK, template),
+        Some(classification) => {
+            with_classification(html_response(classification.status, body), classification)
+        }
+        None => html_response(StatusCode::OK, body),
     }
 }

@@ -9,7 +9,7 @@ use hypgm_http::{ErrorClassification, ErrorCode, REQUEST_ID_HEADER, trace_layer}
 use hypgm_view::{
     HTML_CONTENT_TYPE, HtmlError, HtmxRequest, ViewMode, append_vary_htmx, html_error_middleware,
     html_error_response, html_method_not_allowed, html_not_found_handler, html_response,
-    render_error_template, render_html_public_error, render_template,
+    render_error_template, render_failure_response, render_html_public_error, render_template,
 };
 use tower::ServiceExt;
 
@@ -303,7 +303,13 @@ async fn render_failures_return_safe_html_500() {
         hypgm_logging::create_test_subscriber("error", hypgm_logging::LogFormat::Json).unwrap();
     let _guard = tracing::subscriber::set_default(subscriber);
 
+    let failing = FailingTemplate {
+        value: FailingDisplay,
+    };
+    let err = failing.render().unwrap_err();
+
     for response in [
+        render_failure_response(&failing, &err),
         render_template(
             StatusCode::OK,
             &FailingTemplate {
@@ -325,7 +331,7 @@ async fn render_failures_return_safe_html_500() {
 
     // The cause and template stay server-side for diagnosis.
     let logs = writer.lines();
-    assert_eq!(logs.len(), 2, "{logs:?}");
+    assert_eq!(logs.len(), 3, "{logs:?}");
     for line in logs {
         let event: serde_json::Value = serde_json::from_str(&line).unwrap();
         assert_eq!(event["fields"]["message"], "HTML template rendering failed");

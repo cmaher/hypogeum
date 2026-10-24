@@ -368,7 +368,11 @@ parsing only; there is no content-type dispatch between HTML and JSON adapters.
   `Vary: HX-History-Restore-Request` without replacing existing `Vary` values,
   and add `X-Content-Type-Options: nosniff` and `X-Frame-Options: DENY` unless
   already set. A template rendering failure logs its cause and template type
-  server-side and returns a minimal, template-free HTML 500.
+  server-side and returns a minimal, template-free HTML 500
+  (`render_failure_response`). Handlers that render a template themselves, for
+  example to post-process the body as the greeting view does, call
+  `render_failure_response` on failure and `with_classification` to mark error
+  responses.
   `render_template` is for non-error statuses; render error pages with
   `render_error_template` so routing middleware does not replace them with
   generic 404/405 pages (debug builds assert this).
