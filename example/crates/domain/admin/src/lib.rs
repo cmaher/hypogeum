@@ -1,58 +1,102 @@
 //! Authorized example account administration shared by JSON and HTML adapters.
+//! Cross-site write protection is owned by the composition root.
 pub mod api;
 pub mod authorization;
+pub mod view;
 
+use async_trait::async_trait;
 use exemplum_dmn_users::{
-    accounts::{Account, AccountPage, AccountService},
+    accounts::{Account, AccountError, AccountPage, AccountService},
     models::PageRequest,
 };
 use hypgm_authn::Principal;
-use hypgm_authz::Authorizer;
-use hypgm_http::HttpError;
+use hypgm_authz::{Authorizer, AuthzError};
+use hypgm_errors::{PublicError, PublicErrorInfo, RepoError};
 use std::sync::Arc;
 use uuid::Uuid;
 
-#[derive(Clone)]
-pub struct AdminService {
+#[derive(Debug, thiserror::Error)]
+pub enum AdminError {
+    #[error(transparent)]
+    Authz(#[from] AuthzError),
+    #[error(transparent)]
+    Account(#[from] AccountError),
+}
+impl PublicError for AdminError {
+    fn public_error(&self) -> PublicErrorInfo {
+        match self {
+            Self::Authz(error) => error.public_error(),
+            Self::Account(error) => error.public_error(),
+        }
+    }
+}
+
+/// Account administration that authorizes every call against current authority.
+#[async_trait]
+pub trait AdminService: Send + Sync {
+    async fn list(
+        &self,
+        principal: &Principal,
+        page: PageRequest,
+    ) -> Result<AccountPage, AdminError>;
+    async fn get(&self, principal: &Principal, id: Uuid) -> Result<Account, AdminError>;
+    async fn approve(&self, principal: &Principal, id: Uuid) -> Result<Account, AdminError>;
+}
+
+pub struct DefaultAdminService {
     accounts: Arc<dyn AccountService>,
     authorizer: Arc<Authorizer>,
 }
-impl AdminService {
+impl DefaultAdminService {
     pub fn new(accounts: Arc<dyn AccountService>, authorizer: Arc<Authorizer>) -> Self {
         Self {
             accounts,
             authorizer,
         }
     }
-    async fn authorize(&self, principal: &Principal, action: &str) -> Result<(), HttpError> {
+    async fn authorize(&self, principal: &Principal, action: &str) -> Result<(), AdminError> {
         // Always reload authority: sessions and JWT claims never supply roles.
-        let account = self
-            .accounts
-            .get(principal.user_id)
-            .await
-            .map_err(|_| HttpError::from(hypgm_authz::AuthzError::Forbidden))?;
-        authorization::authorize(&self.authorizer, principal, &account, action)
-            .map_err(HttpError::from)
+        let account = match self.accounts.get(principal.user_id).await {
+            Ok(account) => account,
+            // A principal without an account has no authority; lookup failures stay visible.
+            Err(AccountError::Repo(RepoError::NotFound)) => {
+                return Err(AuthzError::Forbidden.into());
+            }
+            Err(error) => return Err(error.into()),
+        };
+        authorization::authorize(&self.authorizer, principal, &account, action)?;
+        Ok(())
     }
-    pub async fn list(
+}
+#[async_trait]
+impl AdminService for DefaultAdminService {
+    async fn list(
         &self,
         principal: &Principal,
         page: PageRequest,
-    ) -> Result<AccountPage, HttpError> {
+    ) -> Result<AccountPage, AdminError> {
         self.authorize(principal, authorization::VIEW_ADMIN_USERS)
             .await?;
-        self.accounts.list(page).await.map_err(HttpError::from)
+        Ok(self.accounts.list(page).await?)
     }
-    pub async fn get(&self, principal: &Principal, id: Uuid) -> Result<Account, HttpError> {
+    async fn get(&self, principal: &Principal, id: Uuid) -> Result<Account, AdminError> {
         self.authorize(principal, authorization::VIEW_ADMIN_USERS)
             .await?;
-        self.accounts.get(id).await.map_err(HttpError::from)
+        Ok(self.accounts.get(id).await?)
     }
-    pub async fn approve(&self, principal: &Principal, id: Uuid) -> Result<Account, HttpError> {
+    async fn approve(&self, principal: &Principal, id: Uuid) -> Result<Account, AdminError> {
         self.authorize(principal, authorization::APPROVE_USER)
             .await?;
-        self.accounts.approve(id).await.map_err(HttpError::from)
+        Ok(self.accounts.approve(id).await?)
     }
 }
 
-pub mod view;
+#[derive(Clone)]
+pub struct AdminComponents {
+    pub service: Arc<dyn AdminService>,
+}
+impl AdminComponents {
+    pub fn new(service: Arc<dyn AdminService>) -> Self {
+        Self { service }
+    }
+}

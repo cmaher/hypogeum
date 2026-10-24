@@ -65,8 +65,12 @@ pub async fn bearer_gate(
     next: axum::middleware::Next,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    match validate_bearer(&backend, request.headers(), request.extensions()).await {
-        Ok(()) => next.run(request).await,
+    let (parts, body) = request.into_parts();
+    match validate_bearer(&backend, &parts).await {
+        Ok(()) => {
+            next.run(axum::extract::Request::from_parts(parts, body))
+                .await
+        }
         Err(error) => hypgm_authn::extractor::AuthRejection(error).into_response(),
     }
 }
@@ -78,8 +82,12 @@ pub async fn html_bearer_gate(
     next: axum::middleware::Next,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    match validate_bearer(&backend, request.headers(), request.extensions()).await {
-        Ok(()) => next.run(request).await,
+    let (parts, body) = request.into_parts();
+    match validate_bearer(&backend, &parts).await {
+        Ok(()) => {
+            next.run(axum::extract::Request::from_parts(parts, body))
+                .await
+        }
         Err(error) => {
             let mut response = hypgm_view::HtmlError::from(error).into_response();
             if response.status() == axum::http::StatusCode::UNAUTHORIZED {
@@ -93,25 +101,15 @@ pub async fn html_bearer_gate(
     }
 }
 
+/// Uses the framework extractor so the gate sees exactly the bearer principal
+/// that `RequireAuth` will accept. Extraction failures pass through for the
+/// extractor to reject; session principals are already revalidated on load.
 async fn validate_bearer(
     backend: &ExemplumAuthBackend,
-    headers: &axum::http::HeaderMap,
-    extensions: &axum::http::Extensions,
+    parts: &axum::http::request::Parts,
 ) -> Result<(), AuthError> {
-    let authorization = headers
-        .get(axum::http::header::AUTHORIZATION)
-        .and_then(|value| value.to_str().ok());
-    if let Some((scheme, token)) =
-        authorization.and_then(|value| value.trim().split_once(char::is_whitespace))
-        && scheme.eq_ignore_ascii_case("bearer")
-        && let Some(validator) = extensions
-            .get::<hypgm_authn::jwt::JwtValidator>()
-            .or_else(|| {
-                extensions
-                    .get::<Arc<hypgm_authn::jwt::JwtValidator>>()
-                    .map(Arc::as_ref)
-            })
-        && let Ok(principal) = validator.verify_token(token.trim())
+    if let Ok(Some(principal)) = hypgm_authn::extractor::extract_principal_from_parts(parts)
+        && principal.method == hypgm_authn::AuthMethod::BearerJwt
     {
         match backend.resolve_principal(principal.auth_id).await {
             Ok(Some(current)) if current.user_id == principal.user_id => {}

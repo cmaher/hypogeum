@@ -1,7 +1,6 @@
 pub mod m20260101_000001_create_users;
 pub mod m20260101_000002_create_auth_identities;
 pub mod m20261024_000003_account_lifecycle;
-pub mod m20261024_000004_welcome_scheduling;
 
 use sea_orm_migration::prelude::*;
 
@@ -14,7 +13,6 @@ impl MigratorTrait for Migrator {
             Box::new(m20260101_000001_create_users::Migration),
             Box::new(m20260101_000002_create_auth_identities::Migration),
             Box::new(m20261024_000003_account_lifecycle::Migration),
-            Box::new(m20261024_000004_welcome_scheduling::Migration),
         ]
     }
 

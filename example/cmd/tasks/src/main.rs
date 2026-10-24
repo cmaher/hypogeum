@@ -118,9 +118,9 @@ async fn main() -> anyhow::Result<()> {
             )
         })?;
     let queue = exemplum_dmn_users::jobs::welcome_queue(lifecycle.pool().clone(), policy.clone())?;
-    let repo = Arc::new(exemplum_dmn_users::repo::PgAccountRepo::new(
-        handler_pool.clone(),
-    ));
+    let repo: Arc<dyn exemplum_dmn_users::accounts::WelcomeRepo> = Arc::new(
+        exemplum_dmn_users::repo::PgAccountRepo::new(handler_pool.clone()),
+    );
     let worker = queue
         .worker(&lifecycle)
         .await

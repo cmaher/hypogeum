@@ -56,8 +56,8 @@ async fn run() -> Result<Value, String> {
                 ..hypgmx_rdbms::ServiceContract::new(
                     "exemplum",
                     "exemplum_users",
-                    3,
-                    Some("m20261024_000004_welcome_scheduling"),
+                    2,
+                    Some("m20261024_000003_account_lifecycle"),
                     "users",
                 )
             })
@@ -66,7 +66,7 @@ async fn run() -> Result<Value, String> {
                 ..hypgmx_rdbms::ServiceContract::new(
                     "exemplum",
                     "exemplum_users",
-                    3,
+                    2,
                     Some("m20260101_000002_create_auth_identities"),
                     "auth_identities",
                 )
@@ -76,7 +76,7 @@ async fn run() -> Result<Value, String> {
                 ..hypgmx_rdbms::ServiceContract::new(
                     "exemplum",
                     "exemplum_users",
-                    3,
+                    2,
                     Some("m20260101_000002_create_auth_identities"),
                     "sessions",
                 )

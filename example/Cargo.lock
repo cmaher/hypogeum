@@ -1442,6 +1442,7 @@ dependencies = [
  "hypgm-view",
  "serde",
  "serde_json",
+ "thiserror",
  "tokio",
  "tower",
  "uuid",

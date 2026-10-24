@@ -14,14 +14,15 @@ hypgm-http = { path = "../../../../crates/core/http" }
 hypgm-view = { path = "../../../../crates/core/view" }
 cedar-policy = "4"
 axum = { version = "0.8", default-features = false, features = ["tokio", "json", "query"] }
+async-trait.workspace = true
+chrono.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+thiserror.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
-async-trait.workspace = true
 tokio.workspace = true
-chrono.workspace = true
 tower = { version = "0.5", features = ["util"] }
 
 [lints]

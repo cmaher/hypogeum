@@ -81,6 +81,13 @@ pub trait AccountRepo: Send + Sync {
     async fn get(&self, id: Uuid) -> Result<Account, AccountError>;
     async fn list(&self, page: PageRequest) -> Result<AccountPage, AccountError>;
 }
+/// Persists the durable welcome effect. Delivery is at least once, so
+/// implementations must preserve the first completion and treat missing
+/// accounts as successful no-ops.
+#[async_trait]
+pub trait WelcomeRepo: Send + Sync {
+    async fn process_welcome(&self, id: Uuid) -> Result<(), AccountError>;
+}
 #[async_trait]
 pub trait AccountService: Send + Sync {
     async fn register(
@@ -100,6 +107,19 @@ impl DefaultAccountService {
     pub fn new(repo: Arc<dyn AccountRepo>) -> Self {
         Self { repo }
     }
+}
+pub const PASSWORD_MIN_CHARS: usize = 12;
+pub const PASSWORD_MAX_CHARS: usize = 128;
+pub const PASSWORD_MAX_BYTES: usize = 1024;
+/// Plaintext password policy shared by registration and administrator creation.
+pub fn validate_password(password: &str) -> Result<(), AccountError> {
+    if !(PASSWORD_MIN_CHARS..=PASSWORD_MAX_CHARS).contains(&password.chars().count())
+        || password.len() > PASSWORD_MAX_BYTES
+        || password.contains('\0')
+    {
+        return Err(AccountError::Validation);
+    }
+    Ok(())
 }
 /// Username matching remains case-sensitive after whitespace normalization.
 pub fn normalize_username(username: &str) -> Result<&str, AccountError> {
@@ -149,6 +169,10 @@ mod tests {
             assert!(normalize_username(bad).is_err());
         }
         assert!(normalize_username(&"界".repeat(200)).is_ok());
+        assert!(validate_password(&"界".repeat(128)).is_ok());
+        for bad in ["x".repeat(11), "x".repeat(129), "long password\0".into()] {
+            assert!(validate_password(&bad).is_err());
+        }
         assert!(PageRequest::new(None, 0).is_err());
         assert!(PageRequest::new(None, 101).is_err());
         assert_eq!(

@@ -92,10 +92,10 @@ async fn registration_approval_and_durable_worker(
     let pool = sqlx::PgPool::connect(&db.users_url).await.unwrap();
     let admin = sqlx::PgPool::connect(&db.admin_url).await.unwrap();
     let repo = PgAccountRepo::new(pool.clone());
-    repo.bootstrap_admin(
+    repo.create_admin(
         "Administrator",
         "admin",
-        Some(&hypgm_authn::password::hash_password("admin-password-123").unwrap()),
+        &hypgm_authn::password::hash_password("admin-password-123").unwrap(),
     )
     .await
     .unwrap();

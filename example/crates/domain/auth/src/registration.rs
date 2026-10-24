@@ -23,14 +23,11 @@ impl AuthComponents {
     ) -> Result<RegistrationResponse, HttpError> {
         let username = exemplum_dmn_users::accounts::normalize_username(&request.username)?;
         let name = request.display_name.trim();
-        if name.is_empty()
-            || name.chars().count() > 200
-            || name.contains('\0')
-            || !(12..=128).contains(&request.password.chars().count())
-            || request.password.len() > 1024
-        {
-            return Err(HttpError::validation_error());
-        }
+        // Reject invalid input before spending password-hashing capacity.
+        exemplum_dmn_users::models::validate_name(name)
+            .map_err(|_| HttpError::validation_error())?;
+        exemplum_dmn_users::accounts::validate_password(&request.password)
+            .map_err(|_| HttpError::validation_error())?;
         let permit = self
             .password_verifications
             .clone()

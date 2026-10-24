@@ -9,6 +9,7 @@ use exemplum_dmn_auth::backend::ExemplumAuthBackend;
 use hypgm_authn::{jwt::JwtValidator, session::PrincipalAuthBackend};
 use hypgm_http::{HealthCheck, MAX_BODY_BYTES, not_found_handler, trace_layer};
 use hypgm_view::{cross_site_middleware, html_error_middleware, html_not_found_handler};
+use std::sync::Arc;
 use tower_sessions::SessionManagerLayer;
 
 use crate::components::AppComponents;
@@ -28,12 +29,14 @@ pub fn router<S>(components: AppComponents<S>) -> Router<()>
 where
     S: tower_sessions::SessionStore + Clone + Send + Sync + 'static,
 {
-    let admin_service = exemplum_dmn_admin::AdminService::new(
-        components.account_service.clone(),
-        components.authorizer,
-    );
-    let admin = exemplum_dmn_admin::api::router(admin_service.clone());
-    let admin_pages = exemplum_dmn_admin::view::router(admin_service);
+    let admin_components = exemplum_dmn_admin::AdminComponents::new(Arc::new(
+        exemplum_dmn_admin::DefaultAdminService::new(
+            components.account_service.clone(),
+            components.authorizer,
+        ),
+    ));
+    let admin = exemplum_dmn_admin::api::router(admin_components.clone());
+    let admin_pages = exemplum_dmn_admin::view::router(admin_components);
     let hello_components = exemplum_dmn_hello_world::HelloComponents::new(
         components.hello_service,
         components.user_service,
@@ -106,6 +109,7 @@ where
 
 // Apply the page origin policy to JSON writes too: login and logout can mutate
 // browser sessions, and admin approvals accept those same session cookies.
+// Domain routers rely on this layer rather than installing their own copy.
 async fn api_same_origin(request: Request, next: Next) -> Response {
     let (parts, body) = request.into_parts();
     if !parts.method.is_safe() && hypgm_view::is_cross_site_request(&parts) {

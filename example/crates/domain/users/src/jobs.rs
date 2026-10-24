@@ -28,7 +28,7 @@ pub fn welcome_queue(
 /// Inject a users-role repository, independently of the queue lifecycle pool.
 pub async fn handle_welcome(
     job: WelcomeJob,
-    repo: std::sync::Arc<crate::repo::PgAccountRepo>,
+    repo: std::sync::Arc<dyn crate::accounts::WelcomeRepo>,
 ) -> Result<(), crate::accounts::AccountError> {
     repo.process_welcome(job.user_id).await
 }

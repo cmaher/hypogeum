@@ -73,4 +73,4 @@ transaction; a stopped worker does not block approval. Delivery is at least once
 and the handler preserves the first `welcome_processed_at` value on redelivery.
 Neither app nor worker applies migrations. See [the runnable registration
 demo](../example/README.md#run-the-registration-demo) for provisioning, administrator
-bootstrap, separate process commands, and real PostgreSQL/browser verification.
+creation, separate process commands, and real PostgreSQL/browser verification.

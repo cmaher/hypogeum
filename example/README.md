@@ -145,7 +145,7 @@ administrator approves them through `/admin/users` or
 `POST /api/admin/users/{id}/approve`; `GET /api/admin/users` lists account state.
 Administrator authorization reloads account flags on every request.
 Only accounts with a persisted `welcome_scheduled_at` poll for completion;
-bootstrap and migrated accounts without welcome work show “Not scheduled”.
+CLI-created administrators and migrated accounts without welcome work show “Not scheduled”.
 
 Approval commits the account transition and welcome job together using the
 application pool. Run the separate task binary to process welcome jobs; the app
@@ -172,13 +172,17 @@ cargo make db-migrate
 cargo make db-verify
 EXEMPLUM_ADMIN_DATABASE_URL=postgres://exemplum_users:password@127.0.0.1:5432/exemplum \
   cargo run --locked -p exemplum-admin-cli --bin exemplum-admin -- \
-  bootstrap --username admin --display-name Administrator
+  create --username admin --display-name Administrator
 ```
 
-The bootstrap command prompts for a password without echoing it. Repeating it
-preserves existing credentials; it can also promote an existing registration.
-Use `--password-stdin` to read one line from a secret provider for automation.
-The bootstrap uses the restricted users role, never the migration account.
+No account is an administrator by default and none is seeded; this command
+requires database access. It prompts for a password without echoing it; use
+`--password-stdin` to read one line from a secret provider for automation. If the
+username already belongs to an account, creation fails and changes nothing. To make
+an existing account an administrator, pass `--promote` instead of
+`--display-name`; promotion approves it and keeps its credentials and profile.
+The output reports `"action": "created"` or `"promoted"`. The command uses the
+restricted users role, never the migration account.
 
 In separate terminals, from `example/`, run `cargo make app` and
 `cargo make tasks`. Visit `http://127.0.0.1:8080/register` and register an account.

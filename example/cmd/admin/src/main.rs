@@ -1,29 +1,40 @@
-use exemplum_dmn_users::{accounts::AccountError, repo::PgAccountRepo};
+use exemplum_dmn_users::{
+    accounts::{AccountError, PASSWORD_MAX_BYTES},
+    repo::PgAccountRepo,
+};
 use hypgm_envconfig::{EnvSource, Secret};
+use hypgm_errors::RepoError;
 use serde::Deserialize;
 use std::{
     io::{self, BufRead, Read},
     process::ExitCode,
 };
 
+const USAGE: &str = "Usage: exemplum-admin create --username NAME (--display-name NAME [--password-stdin] | --promote)";
+
 #[derive(Deserialize)]
 struct Config {
     database_url: Secret,
 }
 
-struct Input {
-    username: String,
-    display_name: String,
-    stdin: bool,
+#[derive(Debug, PartialEq)]
+enum Command {
+    /// Create a new administrator; an existing username is a hard error.
+    Create {
+        username: String,
+        display_name: String,
+        stdin: bool,
+    },
+    /// Explicitly promote the existing account that owns the username.
+    Promote { username: String },
 }
-fn parse(args: &[String]) -> Result<Input, &'static str> {
+fn parse(args: &[String]) -> Result<Command, &'static str> {
     let mut username = None;
     let mut display_name = None;
     let mut stdin = false;
-    if args.first().map(String::as_str) != Some("bootstrap") {
-        return Err(
-            "Usage: exemplum-admin bootstrap --username NAME --display-name NAME [--password-stdin]",
-        );
+    let mut promote = false;
+    if args.first().map(String::as_str) != Some("create") {
+        return Err(USAGE);
     }
     let mut args = args[1..].iter();
     while let Some(arg) = args.next() {
@@ -31,15 +42,23 @@ fn parse(args: &[String]) -> Result<Input, &'static str> {
             "--username" if username.is_none() => username = args.next().cloned(),
             "--display-name" if display_name.is_none() => display_name = args.next().cloned(),
             "--password-stdin" if !stdin => stdin = true,
+            "--promote" if !promote => promote = true,
             _ => return Err("Invalid command arguments"),
         }
     }
     let username = username.ok_or("Username required")?;
     exemplum_dmn_users::accounts::normalize_username(&username).map_err(|_| "Invalid username")?;
+    if promote {
+        // Promotion keeps the existing profile and credentials.
+        if display_name.is_some() || stdin {
+            return Err("--promote cannot be combined with --display-name or --password-stdin");
+        }
+        return Ok(Command::Promote { username });
+    }
     let display_name = display_name.ok_or("Display name required")?;
     exemplum_dmn_users::models::validate_name(display_name.trim())
         .map_err(|_| "Invalid display name")?;
-    Ok(Input {
+    Ok(Command::Create {
         username,
         display_name,
         stdin,
@@ -49,7 +68,8 @@ fn read_password(mut reader: impl BufRead) -> Result<String, &'static str> {
     let mut bytes = Vec::new();
     reader
         .by_ref()
-        .take(1027)
+        // Read past the byte limit (plus a line ending) so oversized input is rejected.
+        .take(PASSWORD_MAX_BYTES as u64 + 3)
         .read_until(b'\n', &mut bytes)
         .map_err(|_| "Could not read password")?;
     if bytes.last() == Some(&b'\n') {
@@ -63,13 +83,8 @@ fn read_password(mut reader: impl BufRead) -> Result<String, &'static str> {
     Ok(password)
 }
 fn validate_password(password: &str) -> Result<(), &'static str> {
-    if !(12..=128).contains(&password.chars().count())
-        || password.len() > 1024
-        || password.contains('\0')
-    {
-        return Err("Password must contain 12 to 128 characters (at most 1024 bytes)");
-    }
-    Ok(())
+    exemplum_dmn_users::accounts::validate_password(password)
+        .map_err(|_| "Password must contain 12 to 128 characters without NUL")
 }
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -78,18 +93,28 @@ async fn main() -> ExitCode {
         println!(
             "{}",
             serde_json::json!({
-                "commands": {"bootstrap": {"required": ["--username", "--display-name"], "optional": ["--password-stdin"]}},
+                "commands": {"create": {
+                    "required": ["--username"],
+                    "modes": {
+                        "create": {"required": ["--display-name"], "optional": ["--password-stdin"]},
+                        "promote": {"required": ["--promote"]}
+                    }
+                }},
                 "configuration": "EXEMPLUM_ADMIN_DATABASE_URL (restricted exemplum_users role)",
                 "output": "json",
-                "password": "New accounts require a hidden prompt or one line on stdin; existing credentials are preserved"
+                "password": "New accounts require a hidden prompt or one line on stdin",
+                "existing_usernames": "Rejected unless --promote is passed; promotion preserves credentials and profile"
             })
         );
         return ExitCode::SUCCESS;
     }
 
     match run().await {
-        Ok(id) => {
-            println!("{}", serde_json::json!({"ok":true,"account_id":id}));
+        Ok((id, action)) => {
+            println!(
+                "{}",
+                serde_json::json!({"ok":true,"account_id":id,"action":action})
+            );
             ExitCode::SUCCESS
         }
         Err(message) => {
@@ -98,8 +123,8 @@ async fn main() -> ExitCode {
         }
     }
 }
-async fn run() -> Result<String, &'static str> {
-    let input = parse(&std::env::args().skip(1).collect::<Vec<_>>())?;
+async fn run() -> Result<(String, &'static str), &'static str> {
+    let command = parse(&std::env::args().skip(1).collect::<Vec<_>>())?;
     let env = EnvSource::load_for("EXEMPLUM").map_err(|_| "Could not load configuration")?;
     let config: Config = env
         .deserialize("EXEMPLUM_ADMIN_")
@@ -111,34 +136,52 @@ async fn run() -> Result<String, &'static str> {
         .await
         .map_err(|_| "Database readiness check failed")?;
     let repo = PgAccountRepo::new(pool);
-    match repo
-        .bootstrap_admin(&input.display_name, &input.username, None)
-        .await
-    {
-        Ok(account) => return Ok(account.id.to_string()),
-        Err(AccountError::Repo(hypgm_errors::RepoError::NotFound)) => {}
-        Err(_) => return Err("Administrator bootstrap failed"),
+    match command {
+        Command::Promote { username } => repo
+            .promote_admin(&username)
+            .await
+            .map(|account| (account.id.to_string(), "promoted"))
+            .map_err(|error| match error {
+                AccountError::Repo(RepoError::NotFound) => "No active account has that username",
+                _ => "Administrator promotion failed",
+            }),
+        Command::Create {
+            username,
+            display_name,
+            stdin,
+        } => {
+            let password = if stdin {
+                read_password(io::stdin().lock())?
+            } else {
+                let password = rpassword::prompt_password("New administrator password: ")
+                    .map_err(|_| "Could not read password")?;
+                validate_password(&password)?;
+                password
+            };
+            let hash = tokio::task::spawn_blocking(move || {
+                hypgm_authn::password::hash_password(&password)
+            })
+            .await
+            .map_err(|_| "Password hashing failed")?
+            .map_err(|_| "Password hashing failed")?;
+            repo.create_admin(&display_name, &username, &hash)
+                .await
+                .map(|account| (account.id.to_string(), "created"))
+                .map_err(|error| match error {
+                    AccountError::DuplicateUsername => {
+                        "Username already exists; pass --promote to make that account an administrator"
+                    }
+                    _ => "Administrator creation failed",
+                })
+        }
     }
-    let password = if input.stdin {
-        read_password(io::stdin().lock())?
-    } else {
-        let password = rpassword::prompt_password("New administrator password: ")
-            .map_err(|_| "Could not read password")?;
-        validate_password(&password)?;
-        password
-    };
-    let hash = tokio::task::spawn_blocking(move || hypgm_authn::password::hash_password(&password))
-        .await
-        .map_err(|_| "Password hashing failed")?
-        .map_err(|_| "Password hashing failed")?;
-    repo.bootstrap_admin(&input.display_name, &input.username, Some(&hash))
-        .await
-        .map(|account| account.id.to_string())
-        .map_err(|_| "Administrator bootstrap failed")
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn args(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| (*value).to_owned()).collect()
+    }
     #[test]
     fn passwords_are_bounded_and_preserve_spaces() {
         assert_eq!(
@@ -156,16 +199,35 @@ mod tests {
     }
     #[test]
     fn arguments_never_accept_passwords() {
-        let args = [
-            "bootstrap",
-            "--username",
-            "admin",
-            "--display-name",
-            "Admin",
-        ];
-        assert!(parse(&args.map(str::to_owned)).is_ok());
-        let mut args = args.map(str::to_owned).to_vec();
-        args.extend(["--password".into(), "secret".into()]);
-        assert_eq!(parse(&args).err(), Some("Invalid command arguments"));
+        let create = args(&["create", "--username", "admin", "--display-name", "Admin"]);
+        assert!(parse(&create).is_ok());
+        let mut with_password = create.clone();
+        with_password.extend(args(&["--password", "secret"]));
+        assert_eq!(
+            parse(&with_password).err(),
+            Some("Invalid command arguments")
+        );
+    }
+    #[test]
+    fn promotion_requires_an_explicit_flag_and_no_creation_inputs() {
+        assert_eq!(
+            parse(&args(&["create", "--username", "alice"])).err(),
+            Some("Display name required")
+        );
+        assert_eq!(
+            parse(&args(&["create", "--username", "alice", "--promote"])).unwrap(),
+            Command::Promote {
+                username: "alice".into()
+            }
+        );
+        for extra in [&["--display-name", "Alice"][..], &["--password-stdin"][..]] {
+            let mut promote = args(&["create", "--username", "alice", "--promote"]);
+            promote.extend(args(extra));
+            assert!(parse(&promote).is_err());
+        }
+        assert_eq!(
+            parse(&args(&["bootstrap", "--username", "alice"])).err(),
+            Some(USAGE)
+        );
     }
 }
