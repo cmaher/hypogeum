@@ -327,7 +327,8 @@ async fn account_registration_is_atomic_and_paginated(
     options: PgConnectOptions,
 ) {
     use exemplum_dmn_users::accounts::{
-        AccountError, AccountRepo, AccountService, ApprovalStatus, DefaultAccountService,
+        AccountError, AccountQuery, AccountRepo, AccountService, ApprovalStatus,
+        DefaultAccountService,
     };
     use exemplum_dmn_users::repo::PgAccountRepo;
     use std::sync::Arc;
@@ -367,27 +368,78 @@ async fn account_registration_is_atomic_and_paginated(
         .unwrap();
     assert_eq!(count, 1);
     let second = service.register("Other", "alice", "hash").await.unwrap();
-    let mut seen = Vec::new();
-    let mut cursor = None;
-    loop {
-        let page = service
-            .list(PageRequest::new(cursor, 1).unwrap())
+    let third = service.register("Third", "third", "hash").await.unwrap();
+    // Pin registration times: `first` is newest; `second` and `third` tie, so
+    // the id breaks the tie.
+    for (id, at) in [
+        (first.id, "2026-03-01T00:00:00Z"),
+        (second.id, "2026-01-01T00:00:00Z"),
+        (third.id, "2026-01-01T00:00:00Z"),
+    ] {
+        sqlx::query("UPDATE exemplum.users SET created_at = $2::timestamptz WHERE id = $1")
+            .bind(id)
+            .bind(at)
+            .execute(&admin)
             .await
             .unwrap();
-        assert!(page.accounts.len() <= 1);
-        for account in &page.accounts {
-            let json = serde_json::to_string(account).unwrap();
-            assert!(!json.contains("hash") && !json.contains("username"));
-            seen.push(account.id);
-        }
-        match page.next_after {
-            Some(next) => cursor = Some(next),
-            None => break,
-        }
     }
-    assert_eq!(seen.len(), 2);
-    assert!(seen.windows(2).all(|pair| pair[0] < pair[1]));
-    assert!(seen.contains(&first.id) && seen.contains(&second.id));
+    repo.approve(third.id).await.unwrap();
+    let (tie_high, tie_low) = if second.id > third.id {
+        (second.id, third.id)
+    } else {
+        (third.id, second.id)
+    };
+    let list_all = |status| {
+        let service = &service;
+        async move {
+            let mut seen = Vec::new();
+            let mut cursor = None;
+            loop {
+                let page = service
+                    .list(AccountQuery {
+                        page: PageRequest::new(cursor, 1).unwrap(),
+                        status,
+                    })
+                    .await
+                    .unwrap();
+                assert!(page.accounts.len() <= 1);
+                for managed in page.accounts {
+                    let json = serde_json::to_string(&managed).unwrap();
+                    assert!(!json.contains("hash"));
+                    seen.push((managed.account.id, managed.username));
+                }
+                match page.next_after {
+                    Some(next) => cursor = Some(next),
+                    None => break,
+                }
+            }
+            seen
+        }
+    };
+    let ids = |seen: Vec<(Uuid, Option<String>)>| -> Vec<Uuid> {
+        seen.into_iter().map(|(id, _)| id).collect()
+    };
+    let all = list_all(None).await;
+    assert!(all.contains(&(first.id, Some("Alice".into()))));
+    assert!(all.contains(&(second.id, Some("alice".into()))));
+    assert_eq!(ids(all), [first.id, tie_high, tie_low]);
+    assert_eq!(
+        ids(list_all(Some(ApprovalStatus::Pending)).await),
+        [first.id, second.id]
+    );
+    assert_eq!(
+        ids(list_all(Some(ApprovalStatus::Approved)).await),
+        [third.id]
+    );
+    assert!(matches!(
+        service
+            .list(AccountQuery {
+                page: PageRequest::new(Some(Uuid::new_v4()), 1).unwrap(),
+                status: None,
+            })
+            .await,
+        Err(AccountError::Repo(RepoError::InvalidInput(_)))
+    ));
     for (name, username, hash) in [
         ("", "valid", "hash"),
         ("Valid", "bad\0name", "hash"),
@@ -421,10 +473,12 @@ async fn approval_is_atomic_and_repeat_safe(
     let approved = a.unwrap();
     // The row lock serializes approvals, so both see the same first approval.
     assert_eq!(approved, b.unwrap());
+    assert_eq!(approved.username.as_deref(), Some("approve"));
+    let approved = approved.account;
     assert_eq!(approved.approval_status, ApprovalStatus::Approved);
     assert!(approved.approved_at.is_some());
     assert!(!approved.is_admin);
-    assert_eq!(repo.approve(account.id).await.unwrap(), approved);
+    assert_eq!(repo.approve(account.id).await.unwrap().account, approved);
     assert_eq!(repo.get(account.id).await.unwrap(), approved);
     assert!(matches!(
         repo.approve(Uuid::new_v4()).await,

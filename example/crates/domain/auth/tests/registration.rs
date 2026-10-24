@@ -6,7 +6,7 @@ use axum::{
 use exemplum_dmn_auth::{
     AuthComponentsFactory, AuthRepo, ExemplumAuthBackend, InMemoryAuthRepo, RegistrationRequest,
 };
-use exemplum_dmn_users::{accounts::*, models::PageRequest};
+use exemplum_dmn_users::accounts::*;
 use hypgm_authn::{
     password::verify_password,
     session::{AuthBackend, PrincipalAuthBackend},
@@ -53,7 +53,7 @@ impl AccountService for Accounts {
         *self.account.lock().unwrap() = Some(account.clone());
         Ok(account)
     }
-    async fn approve(&self, _: uuid::Uuid) -> Result<Account, AccountError> {
+    async fn approve(&self, _: uuid::Uuid) -> Result<ManagedAccount, AccountError> {
         Err(AccountError::Validation)
     }
     async fn get(&self, _: uuid::Uuid) -> Result<Account, AccountError> {
@@ -63,7 +63,7 @@ impl AccountService for Accounts {
             .clone()
             .ok_or(AccountError::Validation)
     }
-    async fn list(&self, _: PageRequest) -> Result<AccountPage, AccountError> {
+    async fn list(&self, _: AccountQuery) -> Result<AccountPage, AccountError> {
         unimplemented!()
     }
 }

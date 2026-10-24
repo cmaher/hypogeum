@@ -40,9 +40,26 @@ pub struct Account {
     pub approved_at: Option<DateTime<Utc>>,
 }
 
+/// An account with the login username an administrator is approving.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ManagedAccount {
+    #[serde(flatten)]
+    pub account: Account,
+    /// Active password identity; `None` when the account has no password login.
+    pub username: Option<String>,
+}
+
+/// Newest-first account listing, optionally narrowed to one approval status.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AccountQuery {
+    pub page: PageRequest,
+    pub status: Option<ApprovalStatus>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AccountPage {
-    pub accounts: Vec<Account>,
+    pub accounts: Vec<ManagedAccount>,
+    /// Cursor for the next page: the id of the last account on this page.
     pub next_after: Option<Uuid>,
 }
 
@@ -79,9 +96,10 @@ pub trait AccountRepo: Send + Sync {
         password_hash: &str,
     ) -> Result<Account, AccountError>;
     /// Approve a pending account; approving an approved account changes nothing.
-    async fn approve(&self, id: Uuid) -> Result<Account, AccountError>;
+    async fn approve(&self, id: Uuid) -> Result<ManagedAccount, AccountError>;
     async fn get(&self, id: Uuid) -> Result<Account, AccountError>;
-    async fn list(&self, page: PageRequest) -> Result<AccountPage, AccountError>;
+    /// List accounts by `created_at` descending, breaking ties by id.
+    async fn list(&self, query: AccountQuery) -> Result<AccountPage, AccountError>;
 }
 #[async_trait]
 pub trait AccountService: Send + Sync {
@@ -91,9 +109,9 @@ pub trait AccountService: Send + Sync {
         username: &str,
         password_hash: &str,
     ) -> Result<Account, AccountError>;
-    async fn approve(&self, id: Uuid) -> Result<Account, AccountError>;
+    async fn approve(&self, id: Uuid) -> Result<ManagedAccount, AccountError>;
     async fn get(&self, id: Uuid) -> Result<Account, AccountError>;
-    async fn list(&self, page: PageRequest) -> Result<AccountPage, AccountError>;
+    async fn list(&self, query: AccountQuery) -> Result<AccountPage, AccountError>;
 }
 pub struct DefaultAccountService {
     repo: Arc<dyn AccountRepo>,
@@ -103,18 +121,24 @@ impl DefaultAccountService {
         Self { repo }
     }
 }
-pub const PASSWORD_MIN_CHARS: usize = 12;
+pub const PASSWORD_MIN_CHARS: usize = 8;
 pub const PASSWORD_MAX_CHARS: usize = 128;
-pub const PASSWORD_MAX_BYTES: usize = 1024;
+/// Upper bound on a valid password's UTF-8 encoding, for bounded reads.
+pub const PASSWORD_MAX_BYTES: usize = PASSWORD_MAX_CHARS * 4;
 /// Plaintext password policy shared by registration and administrator creation.
 pub fn validate_password(password: &str) -> Result<(), AccountError> {
     if !(PASSWORD_MIN_CHARS..=PASSWORD_MAX_CHARS).contains(&password.chars().count())
-        || password.len() > PASSWORD_MAX_BYTES
         || password.contains('\0')
     {
         return Err(AccountError::Validation);
     }
     Ok(())
+}
+/// Human-readable statement of [`validate_password`]'s policy.
+pub fn password_policy() -> String {
+    format!(
+        "Password must contain {PASSWORD_MIN_CHARS} to {PASSWORD_MAX_CHARS} characters without NUL"
+    )
 }
 /// Username matching remains case-sensitive after whitespace normalization.
 pub fn normalize_username(username: &str) -> Result<&str, AccountError> {
@@ -143,14 +167,14 @@ impl AccountService for DefaultAccountService {
             .register(display_name, username, password_hash)
             .await
     }
-    async fn approve(&self, id: Uuid) -> Result<Account, AccountError> {
+    async fn approve(&self, id: Uuid) -> Result<ManagedAccount, AccountError> {
         self.repo.approve(id).await
     }
     async fn get(&self, id: Uuid) -> Result<Account, AccountError> {
         self.repo.get(id).await
     }
-    async fn list(&self, page: PageRequest) -> Result<AccountPage, AccountError> {
-        self.repo.list(page).await
+    async fn list(&self, query: AccountQuery) -> Result<AccountPage, AccountError> {
+        self.repo.list(query).await
     }
 }
 
@@ -165,7 +189,8 @@ mod tests {
         }
         assert!(normalize_username(&"界".repeat(200)).is_ok());
         assert!(validate_password(&"界".repeat(128)).is_ok());
-        for bad in ["x".repeat(11), "x".repeat(129), "long password\0".into()] {
+        assert!(validate_password(&"x".repeat(8)).is_ok());
+        for bad in ["x".repeat(7), "x".repeat(129), "password\0".into()] {
             assert!(validate_password(&bad).is_err());
         }
         assert!(PageRequest::new(None, 0).is_err());

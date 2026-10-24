@@ -6,9 +6,9 @@ use axum::{
 use exemplum_dmn_admin::{
     AdminComponents, AdminError, AdminService, DefaultAdminService, api, authorization::*,
 };
-use exemplum_dmn_users::{
-    accounts::{Account, AccountError, AccountPage, AccountService, ApprovalStatus},
-    models::PageRequest,
+use exemplum_dmn_users::accounts::{
+    Account, AccountError, AccountPage, AccountQuery, AccountService, ApprovalStatus,
+    ManagedAccount,
 };
 use hypgm_authn::{AuthMethod, Principal};
 use hypgm_authz::{Authorizer, AuthzError};
@@ -17,22 +17,38 @@ use std::sync::{Arc, Mutex};
 use tower::ServiceExt;
 use uuid::Uuid;
 
-struct Accounts(Mutex<Account>);
+/// One account that is both the acting administrator and every target; it
+/// records forwarded queries and approval targets.
+struct Accounts {
+    account: Mutex<Account>,
+    queries: Mutex<Vec<AccountQuery>>,
+    approved: Mutex<Vec<Uuid>>,
+}
+impl Accounts {
+    fn managed(&self) -> ManagedAccount {
+        ManagedAccount {
+            account: self.account.lock().unwrap().clone(),
+            username: Some("admin".into()),
+        }
+    }
+}
 #[async_trait]
 impl AccountService for Accounts {
     async fn register(&self, _: &str, _: &str, _: &str) -> Result<Account, AccountError> {
         unreachable!()
     }
     async fn get(&self, _: Uuid) -> Result<Account, AccountError> {
-        Ok(self.0.lock().unwrap().clone())
+        Ok(self.account.lock().unwrap().clone())
     }
-    async fn approve(&self, _: Uuid) -> Result<Account, AccountError> {
-        Ok(self.0.lock().unwrap().clone())
+    async fn approve(&self, id: Uuid) -> Result<ManagedAccount, AccountError> {
+        self.approved.lock().unwrap().push(id);
+        Ok(self.managed())
     }
-    async fn list(&self, _: PageRequest) -> Result<AccountPage, AccountError> {
+    async fn list(&self, query: AccountQuery) -> Result<AccountPage, AccountError> {
+        self.queries.lock().unwrap().push(query);
         Ok(AccountPage {
-            accounts: vec![self.0.lock().unwrap().clone()],
-            next_after: None,
+            accounts: vec![self.managed()],
+            next_after: Some(Uuid::nil()),
         })
     }
 }
@@ -45,10 +61,10 @@ impl AccountService for FailingAccounts {
     async fn get(&self, _: Uuid) -> Result<Account, AccountError> {
         Err((self.0)())
     }
-    async fn approve(&self, _: Uuid) -> Result<Account, AccountError> {
+    async fn approve(&self, _: Uuid) -> Result<ManagedAccount, AccountError> {
         unreachable!()
     }
-    async fn list(&self, _: PageRequest) -> Result<AccountPage, AccountError> {
+    async fn list(&self, _: AccountQuery) -> Result<AccountPage, AccountError> {
         unreachable!()
     }
 }
@@ -63,15 +79,19 @@ fn checked_in_authorizer() -> Arc<Authorizer> {
 fn setup() -> (AdminComponents, Arc<Accounts>, Principal) {
     let id = Uuid::new_v4();
     let now = chrono::Utc::now();
-    let accounts = Arc::new(Accounts(Mutex::new(Account {
-        id,
-        display_name: "Admin".into(),
-        created_at: now,
-        updated_at: now,
-        approval_status: ApprovalStatus::Approved,
-        is_admin: true,
-        approved_at: Some(now),
-    })));
+    let accounts = Arc::new(Accounts {
+        account: Mutex::new(Account {
+            id,
+            display_name: "Admin".into(),
+            created_at: now,
+            updated_at: now,
+            approval_status: ApprovalStatus::Approved,
+            is_admin: true,
+            approved_at: Some(now),
+        }),
+        queries: Mutex::default(),
+        approved: Mutex::default(),
+    });
     let service = DefaultAdminService::new(accounts.clone(), checked_in_authorizer());
     (
         AdminComponents::new(Arc::new(service)),
@@ -86,15 +106,16 @@ async fn checked_in_policy_allows_admin_actions_and_reloads_authority() {
     assert_ne!(principal.auth_id, principal.user_id);
     assert!(
         service
-            .list(&principal, PageRequest::default())
+            .list(&principal, AccountQuery::default())
             .await
             .is_ok()
     );
-    assert!(service.get(&principal, principal.user_id).await.is_ok());
-    assert!(service.approve(&principal, principal.user_id).await.is_ok());
-    accounts.0.lock().unwrap().is_admin = false;
+    let target = Uuid::new_v4();
+    assert!(service.approve(&principal, target).await.is_ok());
+    assert_eq!(*accounts.approved.lock().unwrap(), [target]);
+    accounts.account.lock().unwrap().is_admin = false;
     assert!(matches!(
-        service.list(&principal, PageRequest::default()).await,
+        service.list(&principal, AccountQuery::default()).await,
         Err(AdminError::Authz(AuthzError::Forbidden))
     ));
     assert!(
@@ -103,9 +124,15 @@ async fn checked_in_policy_allows_admin_actions_and_reloads_authority() {
             .await
             .is_err()
     );
-    accounts.0.lock().unwrap().is_admin = true;
-    accounts.0.lock().unwrap().approval_status = ApprovalStatus::Pending;
-    assert!(service.get(&principal, principal.user_id).await.is_err());
+    accounts.account.lock().unwrap().is_admin = true;
+    accounts.account.lock().unwrap().approval_status = ApprovalStatus::Pending;
+    assert!(
+        service
+            .list(&principal, AccountQuery::default())
+            .await
+            .is_err()
+    );
+    assert_eq!(accounts.approved.lock().unwrap().len(), 1);
 }
 #[tokio::test]
 async fn missing_accounts_are_forbidden_but_lookup_failures_are_internal() {
@@ -115,7 +142,7 @@ async fn missing_accounts_are_forbidden_but_lookup_failures_are_internal() {
         checked_in_authorizer(),
     );
     assert!(matches!(
-        missing.list(&principal, PageRequest::default()).await,
+        missing.list(&principal, AccountQuery::default()).await,
         Err(AdminError::Authz(AuthzError::Forbidden))
     ));
     let broken = DefaultAdminService::new(
@@ -153,7 +180,7 @@ async fn json_routes_authenticate_paginate_and_authorize_writes() {
         .clone()
         .oneshot(
             Request::builder()
-                .uri("/users")
+                .uri("/users?status=pending&limit=5")
                 .extension(principal.clone())
                 .body(Body::empty())
                 .unwrap(),
@@ -164,13 +191,17 @@ async fn json_routes_authenticate_paginate_and_authorize_writes() {
     let bytes = to_bytes(response.into_body(), 4096).await.unwrap();
     let data: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(data["accounts"][0]["display_name"], "Admin");
+    assert_eq!(data["accounts"][0]["username"], "admin");
     assert!(data["accounts"][0].get("password_hash").is_none());
-    for limit in [0, 101] {
+    let query = accounts.queries.lock().unwrap().pop().unwrap();
+    assert_eq!(query.status, Some(ApprovalStatus::Pending));
+    assert_eq!(query.page.limit(), 5);
+    for invalid in ["status=rejected", "limit=0", "limit=101"] {
         let response = app
             .clone()
             .oneshot(
                 Request::builder()
-                    .uri(format!("/users?limit={limit}"))
+                    .uri(format!("/users?{invalid}"))
                     .extension(principal.clone())
                     .body(Body::empty())
                     .unwrap(),
@@ -199,7 +230,7 @@ async fn json_routes_authenticate_paginate_and_authorize_writes() {
             .unwrap()
             .starts_with("application/json")
     );
-    accounts.0.lock().unwrap().is_admin = false;
+    accounts.account.lock().unwrap().is_admin = false;
     for (method, uri) in [
         ("GET", "/users".to_string()),
         ("POST", format!("/users/{}/approve", principal.user_id)),
@@ -236,7 +267,7 @@ fn missing_attributes_and_unknown_actions_deny() {
         authorize(
             &authorizer,
             &principal,
-            &accounts.0.lock().unwrap(),
+            &accounts.account.lock().unwrap(),
             "unknown"
         )
         .is_err()
@@ -246,7 +277,7 @@ fn missing_attributes_and_unknown_actions_deny() {
 #[tokio::test]
 async fn browser_rows_escape_and_enforce_current_authority() {
     let (components, accounts, principal) = setup();
-    accounts.0.lock().unwrap().display_name = "<script>alert(1)</script>".into();
+    accounts.account.lock().unwrap().display_name = "<script>alert(1)</script>".into();
     let app = exemplum_dmn_admin::view::router(components)
         .layer(axum::middleware::from_fn(hypgm_view::cross_site_middleware));
     let response = app
@@ -270,7 +301,7 @@ async fn browser_rows_escape_and_enforce_current_authority() {
         .clone()
         .oneshot(
             Request::builder()
-                .uri("/users")
+                .uri("/users?status=pending")
                 .extension(principal.clone())
                 .body(Body::empty())
                 .unwrap(),
@@ -284,6 +315,16 @@ async fn browser_rows_escape_and_enforce_current_authority() {
             .to_vec(),
     )
     .unwrap();
+    let query = accounts.queries.lock().unwrap().pop().unwrap();
+    assert_eq!(query.status, Some(ApprovalStatus::Pending));
+    assert!(html.contains("<td>admin</td>"));
+    assert!(html.contains("<strong aria-current=\"page\">Pending</strong>"));
+    assert!(html.contains("<a href=\"/admin/users\">All</a>"));
+    // The next-page link keeps the active filter.
+    assert!(html.contains(&format!(
+        "/admin/users?status=pending&#38;after={}",
+        Uuid::nil()
+    )));
     assert!(html.contains("Approved"));
     assert!(!html.contains("<button"));
     assert!(!html.contains("<script>alert"));
@@ -342,7 +383,7 @@ async fn browser_rows_escape_and_enforce_current_authority() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
-    accounts.0.lock().unwrap().is_admin = false;
+    accounts.account.lock().unwrap().is_admin = false;
     for (method, path) in [("GET", "/users".to_owned()), ("POST", approve)] {
         let response = app
             .clone()

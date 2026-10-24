@@ -5,9 +5,8 @@ pub mod authorization;
 pub mod view;
 
 use async_trait::async_trait;
-use exemplum_dmn_users::{
-    accounts::{Account, AccountError, AccountPage, AccountService},
-    models::PageRequest,
+use exemplum_dmn_users::accounts::{
+    AccountError, AccountPage, AccountQuery, AccountService, ManagedAccount,
 };
 use hypgm_authn::Principal;
 use hypgm_authz::{Authorizer, AuthzError};
@@ -37,10 +36,9 @@ pub trait AdminService: Send + Sync {
     async fn list(
         &self,
         principal: &Principal,
-        page: PageRequest,
+        query: AccountQuery,
     ) -> Result<AccountPage, AdminError>;
-    async fn get(&self, principal: &Principal, id: Uuid) -> Result<Account, AdminError>;
-    async fn approve(&self, principal: &Principal, id: Uuid) -> Result<Account, AdminError>;
+    async fn approve(&self, principal: &Principal, id: Uuid) -> Result<ManagedAccount, AdminError>;
 }
 
 pub struct DefaultAdminService {
@@ -73,18 +71,13 @@ impl AdminService for DefaultAdminService {
     async fn list(
         &self,
         principal: &Principal,
-        page: PageRequest,
+        query: AccountQuery,
     ) -> Result<AccountPage, AdminError> {
         self.authorize(principal, authorization::VIEW_ADMIN_USERS)
             .await?;
-        Ok(self.accounts.list(page).await?)
+        Ok(self.accounts.list(query).await?)
     }
-    async fn get(&self, principal: &Principal, id: Uuid) -> Result<Account, AdminError> {
-        self.authorize(principal, authorization::VIEW_ADMIN_USERS)
-            .await?;
-        Ok(self.accounts.get(id).await?)
-    }
-    async fn approve(&self, principal: &Principal, id: Uuid) -> Result<Account, AdminError> {
+    async fn approve(&self, principal: &Principal, id: Uuid) -> Result<ManagedAccount, AdminError> {
         self.authorize(principal, authorization::APPROVE_USER)
             .await?;
         Ok(self.accounts.approve(id).await?)

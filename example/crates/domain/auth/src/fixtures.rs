@@ -1,12 +1,12 @@
 //! Explicit in-memory composition defaults for transport examples and tests.
-use exemplum_dmn_users::{accounts::*, models::PageRequest};
+use exemplum_dmn_users::accounts::*;
 pub struct ApprovedAccounts;
 #[async_trait::async_trait]
 impl AccountService for ApprovedAccounts {
     async fn register(&self, _: &str, _: &str, _: &str) -> Result<Account, AccountError> {
         Err(AccountError::Validation)
     }
-    async fn approve(&self, _: uuid::Uuid) -> Result<Account, AccountError> {
+    async fn approve(&self, _: uuid::Uuid) -> Result<ManagedAccount, AccountError> {
         Err(AccountError::Validation)
     }
     async fn get(&self, id: uuid::Uuid) -> Result<Account, AccountError> {
@@ -20,7 +20,7 @@ impl AccountService for ApprovedAccounts {
             approved_at: None,
         })
     }
-    async fn list(&self, _: PageRequest) -> Result<AccountPage, AccountError> {
+    async fn list(&self, _: AccountQuery) -> Result<AccountPage, AccountError> {
         Err(AccountError::Validation)
     }
 }

@@ -5,5 +5,5 @@
 <form method="post" action="{% if register %}/register{% else %}/login{% endif %}">
 {% if register %}<label>Display name <input name="display_name" value="{{ display_name }}" required maxlength="200" autocomplete="name"></label>{% endif %}
 <label>Username <input name="username" value="{{ username }}" required maxlength="200" autocomplete="username"></label>
-<label>Password <input name="password" type="password" required {% if register %}minlength="12" maxlength="128" autocomplete="new-password"{% else %}autocomplete="current-password"{% endif %}></label>
+<label>Password <input name="password" type="password" required {% if register %}minlength="{{ self.password_min() }}" maxlength="{{ self.password_max() }}" autocomplete="new-password"{% else %}autocomplete="current-password"{% endif %}></label>
 <button type="submit">{% if register %}Register{% else %}Log in{% endif %}</button></form></main></body></html>

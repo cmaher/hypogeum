@@ -17,6 +17,10 @@ impl MigrationTrait for Migration {
              -- Existing accounts were backfilled as approved above; any insert
              -- that omits the status must start pending, never approved.
              ALTER TABLE exemplum.users ALTER COLUMN approval_status SET DEFAULT 'pending';
+             -- Account administration lists newest first, optionally by status.
+             CREATE INDEX idx_users_created_at_id ON exemplum.users (created_at DESC, id DESC);
+             CREATE INDEX idx_users_approval_status_created_at_id
+               ON exemplum.users (approval_status, created_at DESC, id DESC);
              CREATE OR REPLACE FUNCTION exemplum.schema_version() RETURNS bigint
              LANGUAGE sql IMMUTABLE SECURITY INVOKER SET search_path = pg_catalog, pg_temp
              AS $$ SELECT 2::bigint $$;",
@@ -29,7 +33,9 @@ impl MigrationTrait for Migration {
         manager
             .get_connection()
             .execute_unprepared(
-                "ALTER TABLE exemplum.users DROP COLUMN approved_at, DROP COLUMN is_admin,
+                "DROP INDEX exemplum.idx_users_approval_status_created_at_id;
+             DROP INDEX exemplum.idx_users_created_at_id;
+             ALTER TABLE exemplum.users DROP COLUMN approved_at, DROP COLUMN is_admin,
                DROP COLUMN approval_status;
              CREATE OR REPLACE FUNCTION exemplum.schema_version() RETURNS bigint
              LANGUAGE sql IMMUTABLE SECURITY INVOKER SET search_path = pg_catalog, pg_temp

@@ -143,7 +143,10 @@ The composed app provides browser forms at `/register` and `/login`, with JSON
 registration at `POST /api/auth/register`. A username that is already taken fails
 validation with “Username unavailable”. Registrations remain pending until an
 administrator approves them through `/admin/users` or
-`POST /api/admin/users/{id}/approve`; `GET /api/admin/users` lists account state.
+`POST /api/admin/users/{id}/approve`; `GET /api/admin/users` lists account state
+with each account's login username, newest registrations first. Both listings
+accept `status=pending` or `status=approved` to filter, and page with the `after`
+cursor returned as `next_after`. Passwords must contain 8 to 128 characters.
 Administrator authorization reloads account flags on every request.
 
 Approval locks the account row, so concurrent approvals apply once and approving

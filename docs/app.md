@@ -65,13 +65,10 @@ pub fn router<S>(components: AppComponents<S>) -> Router<()>
 where
     S: tower_sessions::SessionStore + Clone + Send + Sync + 'static,
 {
-    let admin_components = AdminComponents::new(
-        Arc::new(DefaultAdminService::new(
-            components.account_service.clone(),
-            components.authorizer,
-        )),
-        components.admin_config,
-    );
+    let admin_components = AdminComponents::new(Arc::new(DefaultAdminService::new(
+        components.account_service.clone(),
+        components.authorizer,
+    )));
     let hello_components = HelloComponents::new(
         components.hello_service,
         components.user_service,
@@ -126,8 +123,8 @@ where
   - `POST /hello` - Greeting form submission (`application/x-www-form-urlencoded`).
   - `GET|POST /register`, `GET|POST /login`, `GET /registration-pending` - Browser registration and login forms.
   - `POST /api/auth/register` - JSON registration; accounts start pending until approved.
-  - `GET /admin/users`, `GET /admin/users/{id}`, `POST /admin/users/{id}/approve` - Administrator pages.
-  - `GET /api/admin/users`, `POST /api/admin/users/{id}/approve` - Administrator JSON API.
+  - `GET /admin/users`, `POST /admin/users/{id}/approve` - Administrator user-management page; `?status=pending|approved` filters, `?after=<id>` pages.
+  - `GET /api/admin/users`, `POST /api/admin/users/{id}/approve` - Administrator JSON API; `GET` accepts `status`, `after`, and `limit` (1-100, default 50).
   - `GET /assets/htmx-<version>.min.js`, `GET /assets/view.js` - Shared view assets.
 
 ### Concrete Request / Response Example

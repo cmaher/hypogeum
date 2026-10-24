@@ -1,17 +1,19 @@
 use crate::{
     accounts::{
-        Account, AccountError, AccountPage, AccountRepo, ApprovalStatus, normalize_username,
+        Account, AccountError, AccountPage, AccountQuery, AccountRepo, ApprovalStatus,
+        ManagedAccount, normalize_username,
     },
-    models::{PageRequest, validate_name},
+    models::validate_name,
 };
 use async_trait::async_trait;
 use hypgm_errors::RepoError;
-use sea_orm::sea_query::{Alias, Query};
+use sea_orm::sea_query::{Alias, Expr, Query};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait, ExprTrait,
-    QueryFilter, QueryOrder, QuerySelect, Set, SqlxPostgresConnector, TransactionTrait,
+    ActiveModelTrait, ColumnTrait, Condition, ConnectionTrait, DatabaseConnection, EntityTrait,
+    ExprTrait, QueryFilter, QueryOrder, QuerySelect, Set, SqlxPostgresConnector, TransactionTrait,
 };
 use sqlx::PgPool;
+use std::collections::HashMap;
 use uuid::Uuid;
 
 pub(crate) mod entity {
@@ -76,9 +78,9 @@ impl PgAccountRepo {
         let lookup = Query::select()
             .column(Alias::new("user_id"))
             .from((Alias::new("exemplum"), Alias::new("auth_identities")))
-            .and_where(sea_orm::sea_query::Expr::col(Alias::new("identity_type")).eq("password"))
-            .and_where(sea_orm::sea_query::Expr::col(Alias::new("identifier")).eq(username))
-            .and_where(sea_orm::sea_query::Expr::col(Alias::new("revoked_at")).is_null())
+            .and_where(Expr::col(Alias::new("identity_type")).eq("password"))
+            .and_where(Expr::col(Alias::new("identifier")).eq(username))
+            .and_where(Expr::col(Alias::new("revoked_at")).is_null())
             .to_owned();
         let identity = tx
             .query_one(&lookup)
@@ -179,6 +181,36 @@ fn database(error: sea_orm::DbErr) -> AccountError {
     RepoError::database(error).into()
 }
 
+/// Pair accounts with their active password usernames in one lookup.
+async fn with_usernames(
+    db: &impl ConnectionTrait,
+    accounts: Vec<entity::Model>,
+) -> Result<Vec<ManagedAccount>, AccountError> {
+    if accounts.is_empty() {
+        return Ok(Vec::new());
+    }
+    let lookup = Query::select()
+        .columns([Alias::new("user_id"), Alias::new("identifier")])
+        .from((Alias::new("exemplum"), Alias::new("auth_identities")))
+        .and_where(Expr::col(Alias::new("user_id")).is_in(accounts.iter().map(|a| a.id)))
+        .and_where(Expr::col(Alias::new("identity_type")).eq("password"))
+        .and_where(Expr::col(Alias::new("revoked_at")).is_null())
+        .to_owned();
+    let mut usernames = HashMap::new();
+    for row in db.query_all(&lookup).await.map_err(database)? {
+        let user_id: Uuid = row.try_get("", "user_id").map_err(database)?;
+        let identifier: String = row.try_get("", "identifier").map_err(database)?;
+        usernames.insert(user_id, identifier);
+    }
+    Ok(accounts
+        .into_iter()
+        .map(|account| ManagedAccount {
+            username: usernames.remove(&account.id),
+            account: account.into(),
+        })
+        .collect())
+}
+
 #[async_trait]
 impl AccountRepo for PgAccountRepo {
     async fn register(
@@ -190,7 +222,7 @@ impl AccountRepo for PgAccountRepo {
         self.insert_account(display_name, username, password_hash, false)
             .await
     }
-    async fn approve(&self, id: Uuid) -> Result<Account, AccountError> {
+    async fn approve(&self, id: Uuid) -> Result<ManagedAccount, AccountError> {
         let tx = self.db.begin().await.map_err(database)?;
         let account = entity::Entity::find_by_id(id)
             .lock_exclusive()
@@ -206,8 +238,9 @@ impl AccountRepo for PgAccountRepo {
         } else {
             account
         };
+        let mut accounts = with_usernames(&tx, vec![account]).await?;
         tx.commit().await.map_err(database)?;
-        Ok(account.into())
+        Ok(accounts.remove(0))
     }
     async fn get(&self, id: Uuid) -> Result<Account, AccountError> {
         entity::Entity::find_by_id(id)
@@ -217,20 +250,33 @@ impl AccountRepo for PgAccountRepo {
             .map(Into::into)
             .ok_or_else(|| RepoError::NotFound.into())
     }
-    async fn list(&self, page: PageRequest) -> Result<AccountPage, AccountError> {
-        let mut query = entity::Entity::find()
-            .order_by_asc(entity::Column::Id)
+    async fn list(&self, query: AccountQuery) -> Result<AccountPage, AccountError> {
+        let page = query.page;
+        let mut select = entity::Entity::find()
+            .order_by_desc(entity::Column::CreatedAt)
+            .order_by_desc(entity::Column::Id)
             .limit(u64::from(page.limit()) + 1);
-        if let Some(after) = page.after() {
-            query = query.filter(entity::Column::Id.gt(after));
+        if let Some(status) = query.status {
+            select = select.filter(entity::Column::ApprovalStatus.eq(status));
         }
-        let mut accounts: Vec<Account> = query
-            .all(&self.db)
-            .await
-            .map_err(database)?
-            .into_iter()
-            .map(Into::into)
-            .collect();
+        if let Some(after) = page.after() {
+            // Keyset pagination: resume strictly after the cursor's (created_at, id).
+            let cursor = entity::Entity::find_by_id(after)
+                .one(&self.db)
+                .await
+                .map_err(database)?
+                .ok_or_else(|| RepoError::InvalidInput("Unknown page cursor".into()))?;
+            select = select.filter(
+                Condition::any()
+                    .add(entity::Column::CreatedAt.lt(cursor.created_at))
+                    .add(
+                        entity::Column::CreatedAt
+                            .eq(cursor.created_at)
+                            .and(entity::Column::Id.lt(cursor.id)),
+                    ),
+            );
+        }
+        let mut accounts = select.all(&self.db).await.map_err(database)?;
         let more = accounts.len() > page.limit() as usize;
         accounts.truncate(page.limit() as usize);
         let next_after = if more {
@@ -239,7 +285,7 @@ impl AccountRepo for PgAccountRepo {
             None
         };
         Ok(AccountPage {
-            accounts,
+            accounts: with_usernames(&self.db, accounts).await?,
             next_after,
         })
     }

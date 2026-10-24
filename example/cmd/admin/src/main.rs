@@ -1,3 +1,4 @@
+use clap::{ArgGroup, Args, Parser, Subcommand, error::ErrorKind};
 use exemplum_dmn_users::{
     accounts::{AccountError, PASSWORD_MAX_BYTES},
     repo::PgAccountRepo,
@@ -10,11 +11,53 @@ use std::{
     process::ExitCode,
 };
 
-const USAGE: &str = "Usage: exemplum-admin create --username NAME (--display-name NAME [--password-stdin] | --promote)";
-
 #[derive(Deserialize)]
 struct Config {
     database_url: Secret,
+}
+
+/// Bootstrap Exemplum administrators. Reads EXEMPLUM_ADMIN_DATABASE_URL
+/// (restricted exemplum_users role) and prints one JSON object.
+#[derive(Debug, Parser)]
+#[command(name = "exemplum-admin")]
+struct Cli {
+    #[command(subcommand)]
+    command: CliCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum CliCommand {
+    /// Create a new administrator, or promote an existing account with --promote.
+    Create(CreateArgs),
+}
+
+#[derive(Debug, Args)]
+#[command(group(ArgGroup::new("mode").required(true).args(["display_name", "promote"])))]
+struct CreateArgs {
+    /// Login username for the administrator.
+    #[arg(long, value_parser = parse_username)]
+    username: String,
+    /// Display name for a new administrator; an existing username is rejected.
+    #[arg(long, value_parser = parse_display_name)]
+    display_name: Option<String>,
+    /// Read the new password as one line from stdin instead of prompting.
+    #[arg(long, requires = "display_name", conflicts_with = "promote")]
+    password_stdin: bool,
+    /// Promote the existing account that owns the username, keeping its
+    /// credentials and profile.
+    #[arg(long)]
+    promote: bool,
+}
+
+fn parse_username(value: &str) -> Result<String, &'static str> {
+    exemplum_dmn_users::accounts::normalize_username(value)
+        .map(str::to_owned)
+        .map_err(|_| "invalid username")
+}
+fn parse_display_name(value: &str) -> Result<String, &'static str> {
+    let value = value.trim();
+    exemplum_dmn_users::models::validate_name(value).map_err(|_| "invalid display name")?;
+    Ok(value.to_owned())
 }
 
 #[derive(Debug, PartialEq)]
@@ -28,43 +71,30 @@ enum Command {
     /// Explicitly promote the existing account that owns the username.
     Promote { username: String },
 }
-fn parse(args: &[String]) -> Result<Command, &'static str> {
-    let mut username = None;
-    let mut display_name = None;
-    let mut stdin = false;
-    let mut promote = false;
-    if args.first().map(String::as_str) != Some("create") {
-        return Err(USAGE);
-    }
-    let mut args = args[1..].iter();
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--username" if username.is_none() => username = args.next().cloned(),
-            "--display-name" if display_name.is_none() => display_name = args.next().cloned(),
-            "--password-stdin" if !stdin => stdin = true,
-            "--promote" if !promote => promote = true,
-            _ => return Err("Invalid command arguments"),
+impl From<CreateArgs> for Command {
+    fn from(args: CreateArgs) -> Self {
+        // The required `mode` group guarantees exactly one of the two.
+        match args.display_name {
+            Some(display_name) => Self::Create {
+                username: args.username,
+                display_name,
+                stdin: args.password_stdin,
+            },
+            None => Self::Promote {
+                username: args.username,
+            },
         }
     }
-    let username = username.ok_or("Username required")?;
-    exemplum_dmn_users::accounts::normalize_username(&username).map_err(|_| "Invalid username")?;
-    if promote {
-        // Promotion keeps the existing profile and credentials.
-        if display_name.is_some() || stdin {
-            return Err("--promote cannot be combined with --display-name or --password-stdin");
-        }
-        return Ok(Command::Promote { username });
-    }
-    let display_name = display_name.ok_or("Display name required")?;
-    exemplum_dmn_users::models::validate_name(display_name.trim())
-        .map_err(|_| "Invalid display name")?;
-    Ok(Command::Create {
-        username,
-        display_name,
-        stdin,
-    })
 }
-fn read_password(mut reader: impl BufRead) -> Result<String, &'static str> {
+fn parse<I, T>(args: I) -> Result<Command, clap::Error>
+where
+    I: IntoIterator<Item = T>,
+    T: Into<std::ffi::OsString> + Clone,
+{
+    let CliCommand::Create(args) = Cli::try_parse_from(args)?.command;
+    Ok(args.into())
+}
+fn read_password(mut reader: impl BufRead) -> Result<String, String> {
     let mut bytes = Vec::new();
     reader
         .by_ref()
@@ -82,34 +112,33 @@ fn read_password(mut reader: impl BufRead) -> Result<String, &'static str> {
     validate_password(&password)?;
     Ok(password)
 }
-fn validate_password(password: &str) -> Result<(), &'static str> {
+fn validate_password(password: &str) -> Result<(), String> {
     exemplum_dmn_users::accounts::validate_password(password)
-        .map_err(|_| "Password must contain 12 to 128 characters without NUL")
+        .map_err(|_| exemplum_dmn_users::accounts::password_policy())
 }
 #[tokio::main]
 async fn main() -> ExitCode {
-    let args: Vec<_> = std::env::args().skip(1).collect();
-    if args == ["--help"] || args == ["--describe"] || args == ["-h"] {
-        println!(
-            "{}",
-            serde_json::json!({
-                "commands": {"create": {
-                    "required": ["--username"],
-                    "modes": {
-                        "create": {"required": ["--display-name"], "optional": ["--password-stdin"]},
-                        "promote": {"required": ["--promote"]}
-                    }
-                }},
-                "configuration": "EXEMPLUM_ADMIN_DATABASE_URL (restricted exemplum_users role)",
-                "output": "json",
-                "password": "New accounts require a hidden prompt or one line on stdin",
-                "existing_usernames": "Rejected unless --promote is passed; promotion preserves credentials and profile"
-            })
-        );
-        return ExitCode::SUCCESS;
-    }
-
-    match run().await {
+    let command = match parse(std::env::args_os()) {
+        Ok(command) => command,
+        Err(error)
+            if matches!(
+                error.kind(),
+                ErrorKind::DisplayHelp | ErrorKind::DisplayVersion
+            ) =>
+        {
+            let _ = error.print();
+            return ExitCode::SUCCESS;
+        }
+        Err(error) => {
+            let message = error.kind().as_str().unwrap_or("Invalid command arguments");
+            eprintln!(
+                "{}",
+                serde_json::json!({"ok":false,"error":message,"usage":error.render().to_string()})
+            );
+            return ExitCode::FAILURE;
+        }
+    };
+    match run(command).await {
         Ok((id, action)) => {
             println!(
                 "{}",
@@ -123,8 +152,7 @@ async fn main() -> ExitCode {
         }
     }
 }
-async fn run() -> Result<(String, &'static str), &'static str> {
-    let command = parse(&std::env::args().skip(1).collect::<Vec<_>>())?;
+async fn run(command: Command) -> Result<(String, &'static str), String> {
     let env = EnvSource::load_for("EXEMPLUM").map_err(|_| "Could not load configuration")?;
     let config: Config = env
         .deserialize("EXEMPLUM_ADMIN_")
@@ -142,8 +170,10 @@ async fn run() -> Result<(String, &'static str), &'static str> {
             .await
             .map(|account| (account.id.to_string(), "promoted"))
             .map_err(|error| match error {
-                AccountError::Repo(RepoError::NotFound) => "No active account has that username",
-                _ => "Administrator promotion failed",
+                AccountError::Repo(RepoError::NotFound) => {
+                    "No active account has that username".into()
+                }
+                _ => "Administrator promotion failed".into(),
             }),
         Command::Create {
             username,
@@ -169,9 +199,9 @@ async fn run() -> Result<(String, &'static str), &'static str> {
                 .map(|account| (account.id.to_string(), "created"))
                 .map_err(|error| match error {
                     AccountError::DuplicateUsername => {
-                        "Username already exists; pass --promote to make that account an administrator"
+                        "Username already exists; pass --promote to make that account an administrator".into()
                     }
-                    _ => "Administrator creation failed",
+                    _ => "Administrator creation failed".into(),
                 })
         }
     }
@@ -179,8 +209,13 @@ async fn run() -> Result<(String, &'static str), &'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn args(values: &[&str]) -> Vec<String> {
-        values.iter().map(|value| (*value).to_owned()).collect()
+    fn parse_args(values: &[&str]) -> Result<Command, clap::Error> {
+        parse(std::iter::once("exemplum-admin").chain(values.iter().copied()))
+    }
+    #[test]
+    fn cli_definition_is_consistent() {
+        use clap::CommandFactory;
+        Cli::command().debug_assert();
     }
     #[test]
     fn passwords_are_bounded_and_preserve_spaces() {
@@ -188,6 +223,7 @@ mod tests {
             read_password(&b"  secret phrase  \r\n"[..]).unwrap(),
             "  secret phrase  "
         );
+        assert_eq!(read_password(&b"eight ch\n"[..]).unwrap(), "eight ch");
         for password in [
             "short".to_owned(),
             "x".repeat(129),
@@ -196,38 +232,71 @@ mod tests {
             assert!(read_password(password.as_bytes()).is_err());
         }
         assert!(read_password("x".repeat(2000).as_bytes()).is_err());
+        assert_eq!(
+            read_password(&b"short\n"[..]).unwrap_err(),
+            "Password must contain 8 to 128 characters without NUL"
+        );
     }
     #[test]
     fn arguments_never_accept_passwords() {
-        let create = args(&["create", "--username", "admin", "--display-name", "Admin"]);
-        assert!(parse(&create).is_ok());
-        let mut with_password = create.clone();
-        with_password.extend(args(&["--password", "secret"]));
+        let create = ["create", "--username", "admin", "--display-name", "Admin"];
         assert_eq!(
-            parse(&with_password).err(),
-            Some("Invalid command arguments")
+            parse_args(&create).unwrap(),
+            Command::Create {
+                username: "admin".into(),
+                display_name: "Admin".into(),
+                stdin: false,
+            }
         );
+        let mut with_password = create.to_vec();
+        with_password.extend(["--password", "secret"]);
+        assert_eq!(
+            parse_args(&with_password).unwrap_err().kind(),
+            ErrorKind::UnknownArgument
+        );
+    }
+    #[test]
+    fn flag_values_are_never_swallowed_as_option_values() {
+        for args in [
+            &[
+                "create",
+                "--username",
+                "admin",
+                "--display-name",
+                "--password-stdin",
+            ][..],
+            &["create", "--username", "--promote"][..],
+            &["create", "--username"][..],
+            &["create", "--username", "a", "--username", "b", "--promote"][..],
+            &["create", "--username", " ", "--promote"][..],
+        ] {
+            assert!(parse_args(args).is_err(), "{args:?}");
+        }
     }
     #[test]
     fn promotion_requires_an_explicit_flag_and_no_creation_inputs() {
         assert_eq!(
-            parse(&args(&["create", "--username", "alice"])).err(),
-            Some("Display name required")
+            parse_args(&["create", "--username", "alice"])
+                .unwrap_err()
+                .kind(),
+            ErrorKind::MissingRequiredArgument
         );
         assert_eq!(
-            parse(&args(&["create", "--username", "alice", "--promote"])).unwrap(),
+            parse_args(&["create", "--username", " alice ", "--promote"]).unwrap(),
             Command::Promote {
                 username: "alice".into()
             }
         );
         for extra in [&["--display-name", "Alice"][..], &["--password-stdin"][..]] {
-            let mut promote = args(&["create", "--username", "alice", "--promote"]);
-            promote.extend(args(extra));
-            assert!(parse(&promote).is_err());
+            let mut promote = vec!["create", "--username", "alice", "--promote"];
+            promote.extend(extra);
+            assert!(parse_args(&promote).is_err());
         }
         assert_eq!(
-            parse(&args(&["bootstrap", "--username", "alice"])).err(),
-            Some(USAGE)
+            parse_args(&["bootstrap", "--username", "alice"])
+                .unwrap_err()
+                .kind(),
+            ErrorKind::InvalidSubcommand
         );
     }
 }

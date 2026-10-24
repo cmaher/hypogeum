@@ -19,6 +19,15 @@ struct AuthPage {
     display_name: String,
     username: String,
 }
+impl AuthPage {
+    // Browser hints mirror the server-side password policy.
+    fn password_min(&self) -> usize {
+        exemplum_dmn_users::accounts::PASSWORD_MIN_CHARS
+    }
+    fn password_max(&self) -> usize {
+        exemplum_dmn_users::accounts::PASSWORD_MAX_CHARS
+    }
+}
 
 pub fn router(components: AuthComponents) -> Router<()> {
     Router::new()
@@ -126,6 +135,7 @@ mod tests {
         )
         .unwrap();
         assert!(html.contains("autocomplete=\"new-password\""));
+        assert!(html.contains("minlength=\"8\" maxlength=\"128\""));
         let response = app.clone().oneshot(Request::builder().method("POST").uri("/register").header("content-type", "application/x-www-form-urlencoded").body(Body::from("display_name=Alice&username=alice&password=secret-echo-check&is_admin=true")).unwrap()).await.unwrap();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         let html = String::from_utf8(
