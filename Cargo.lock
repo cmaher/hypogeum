@@ -141,7 +141,7 @@ dependencies = [
 
 [[package]]
 name = "apalis-dashboard"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "axum",
@@ -1839,7 +1839,7 @@ dependencies = [
 
 [[package]]
 name = "hypgm-authn"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "argon2",
  "async-trait",
@@ -1864,7 +1864,7 @@ dependencies = [
 
 [[package]]
 name = "hypgm-authz"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "axum",
  "cedar-policy",
@@ -1883,7 +1883,7 @@ dependencies = [
 
 [[package]]
 name = "hypgm-envconfig"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "dotenvy",
  "envy",
@@ -1894,7 +1894,7 @@ dependencies = [
 
 [[package]]
 name = "hypgm-errors"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "http",
  "thiserror",
@@ -1903,7 +1903,7 @@ dependencies = [
 
 [[package]]
 name = "hypgm-http"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "axum",
  "bytes",
@@ -1923,7 +1923,7 @@ dependencies = [
 
 [[package]]
 name = "hypgm-logging"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -1935,7 +1935,7 @@ dependencies = [
 
 [[package]]
 name = "hypgm-rpc"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "prost",
  "prost-types",
@@ -1947,7 +1947,7 @@ dependencies = [
 
 [[package]]
 name = "hypgm-test-support"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "hypgmx-rdbms",
  "sqlx",
@@ -1957,7 +1957,7 @@ dependencies = [
 
 [[package]]
 name = "hypgm-view"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "askama",
  "axum",
@@ -1977,7 +1977,7 @@ dependencies = [
 
 [[package]]
 name = "hypgmx-file-storage"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "bytes",
@@ -1996,7 +1996,7 @@ dependencies = [
 
 [[package]]
 name = "hypgmx-rdbms"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "apalis-postgres",
  "async-trait",
@@ -2016,7 +2016,7 @@ dependencies = [
 
 [[package]]
 name = "hypgmx-tasks"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "apalis",
  "apalis-board",
