@@ -214,3 +214,122 @@ fn missing_attributes_and_unknown_actions_deny() {
         .is_err()
     );
 }
+
+#[tokio::test]
+async fn browser_rows_escape_poll_stop_and_enforce_current_authority() {
+    let (service, accounts, principal) = setup();
+    accounts.0.lock().unwrap().display_name = "<script>alert(1)</script>".into();
+    let app = exemplum_dmn_admin::view::router(service)
+        .layer(axum::middleware::from_fn(hypgm_view::cross_site_middleware));
+    for path in ["/users".to_owned(), format!("/users/{}", principal.user_id)] {
+        let response = app
+            .clone()
+            .oneshot(Request::builder().uri(&path).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert!(
+            response.headers()["content-type"]
+                .to_str()
+                .unwrap()
+                .contains("text/html")
+        );
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(&path)
+                    .extension(principal.clone())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let html = String::from_utf8(
+            to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        assert!(html.contains("hx-trigger=\"every 2s\""));
+        assert!(html.contains("Awaiting processing"));
+        assert!(!html.contains("<script>alert"));
+        assert!(
+            html.contains("&lt;script&gt;") || html.contains("&#60;script&#62;"),
+            "{html}"
+        );
+    }
+    let approve = format!("/users/{}/approve", principal.user_id);
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(&approve)
+                .extension(principal.clone())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    accounts.0.lock().unwrap().welcome_processed_at = Some(chrono::Utc::now());
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(&approve)
+                .header("hx-request", "true")
+                .extension(principal.clone())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let html = String::from_utf8(
+        to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap();
+    assert!(html.starts_with("<tr"));
+    assert!(!html.contains("hx-trigger"));
+    assert!(html.contains("<time>"));
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(&approve)
+                .header("sec-fetch-site", "cross-site")
+                .extension(principal.clone())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    accounts.0.lock().unwrap().is_admin = false;
+    for (method, path) in [
+        ("GET", "/users".to_owned()),
+        ("GET", format!("/users/{}", principal.user_id)),
+        ("POST", approve),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(path)
+                    .extension(principal.clone())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+}

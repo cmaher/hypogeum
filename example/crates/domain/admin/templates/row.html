@@ -1,0 +1,3 @@
+<tr id="user-{{ id }}" {% if processing %}hx-get="/admin/users/{{ id }}" hx-trigger="every 2s" hx-swap="outerHTML"{% endif %}>
+<td>{{ name }}</td><td>{% if pending %}Pending{% else %}Approved{% endif %}</td>
+<td>{% if pending %}<form method="post" action="/admin/users/{{ id }}/approve" hx-post="/admin/users/{{ id }}/approve" hx-target="#user-{{ id }}" hx-swap="outerHTML"><button type="submit">Approve</button></form>{% else if processing %}Awaiting processing{% else %}<time>{{ completed }}</time>{% endif %}</td></tr>

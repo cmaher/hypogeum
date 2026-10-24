@@ -16,3 +16,5 @@ pub use session::PostgresSessionStore;
 pub mod fixtures;
 pub mod registration;
 pub use api::{RegistrationRequest, RegistrationResponse};
+
+pub mod view;

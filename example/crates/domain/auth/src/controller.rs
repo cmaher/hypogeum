@@ -146,6 +146,22 @@ async fn login(
     mut auth_session: axum_login::AuthSession<PrincipalAuthBackend>,
     AppJson(req): AppJson<LoginRequest>,
 ) -> Result<AppJson<LoginResponse>, HttpError> {
+    let principal = authenticate(&components, req).await?;
+    auth_session
+        .login(&principal)
+        .await
+        .map_err(|e| AuthError::Internal(e.to_string()))?;
+
+    Ok(AppJson(LoginResponse {
+        auth_id: principal.auth_id,
+        user_id: principal.user_id,
+    }))
+}
+
+pub(crate) async fn authenticate(
+    components: &AuthComponents,
+    req: LoginRequest,
+) -> Result<Principal, HttpError> {
     let identity = components
         .repo
         .find_active_by_type_and_identifier("password", &req.username)
@@ -183,16 +199,11 @@ async fn login(
     {
         return Err(AuthError::InvalidCredentials.into());
     }
-    let principal = Principal::new(identity.id, identity.user_id, AuthMethod::Session);
-    auth_session
-        .login(&principal)
-        .await
-        .map_err(|e| AuthError::Internal(e.to_string()))?;
-
-    Ok(AppJson(LoginResponse {
-        auth_id: identity.id,
-        user_id: identity.user_id,
-    }))
+    Ok(Principal::new(
+        identity.id,
+        identity.user_id,
+        AuthMethod::Session,
+    ))
 }
 
 async fn logout(

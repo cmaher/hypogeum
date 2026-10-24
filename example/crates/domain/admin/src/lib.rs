@@ -54,3 +54,5 @@ impl AdminService {
         self.accounts.approve(id).await.map_err(HttpError::from)
     }
 }
+
+pub mod view;

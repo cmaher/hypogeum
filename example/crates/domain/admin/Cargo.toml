@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+askama = "0.16"
 exemplum-dmn-users = { path = "../users" }
 hypgm-authn = { path = "../../../../crates/core/authn" }
 hypgm-authz = { path = "../../../../crates/core/authz" }

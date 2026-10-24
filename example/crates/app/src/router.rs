@@ -26,10 +26,12 @@ pub fn router<S>(components: AppComponents<S>) -> Router<()>
 where
     S: tower_sessions::SessionStore + Clone + Send + Sync + 'static,
 {
-    let admin = exemplum_dmn_admin::api::router(exemplum_dmn_admin::AdminService::new(
+    let admin_service = exemplum_dmn_admin::AdminService::new(
         components.account_service.clone(),
         components.authorizer,
-    ));
+    );
+    let admin = exemplum_dmn_admin::api::router(admin_service.clone());
+    let admin_pages = exemplum_dmn_admin::view::router(admin_service);
     let hello_components = exemplum_dmn_hello_world::HelloComponents::new(
         components.hello_service,
         components.user_service,
@@ -42,7 +44,8 @@ where
         components.token_config.clone(),
         components.password_config,
     );
-    let auth_routes = exemplum_dmn_auth::controller::router(auth_components);
+    let auth_routes = exemplum_dmn_auth::controller::router(auth_components.clone());
+    let auth_pages = exemplum_dmn_auth::view::router(auth_components);
 
     // `/api` owns JSON errors for every path beneath it; page routes own HTML errors.
     let api = Router::new()
@@ -53,6 +56,12 @@ where
 
     let pages = Router::new()
         .merge(hello_pages)
+        .merge(auth_pages)
+        .route(
+            "/registration-pending",
+            get(exemplum_dmn_auth::view::pending),
+        )
+        .nest("/admin", admin_pages)
         .nest(
             hypgm_view::assets::ASSETS_MOUNT,
             hypgm_view::assets::router(),
