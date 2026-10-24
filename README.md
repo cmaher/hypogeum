@@ -21,7 +21,8 @@ The repository uses a two-tier architecture cleanly separating framework foundat
 │   │   ├── http/                 # Axum middleware, error mapping, and body limits
 │   │   ├── logging/              # Structured tracing subscriber configuration
 │   │   ├── rpc/                  # Generated gRPC protobuf client and server definitions
-│   │   └── test-support/         # Testcontainers bootstrap for isolated database tests
+│   │   ├── test-support/         # Testcontainers bootstrap for isolated database tests
+│   │   └── view/                 # Opt-in HTML views, HTMX support, and vendored assets
 │   └── ext/                      # External driver & stateful adapters (hypgmx-*)
 │       ├── file-storage/         # Streamed immutable byte storage
 │       ├── rdbms/

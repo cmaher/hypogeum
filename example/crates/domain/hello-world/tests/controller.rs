@@ -3,7 +3,9 @@ use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode, header};
 use exemplum_dmn_hello_world::HelloWorldError;
 use exemplum_dmn_hello_world::controller::{HelloComponentsFactory, router};
-use exemplum_dmn_hello_world::service::{DefaultHelloWorldService, HelloWorldService};
+use exemplum_dmn_hello_world::service::{
+    DefaultHelloWorldService, HelloWorldService, NAME_VALIDATION_MESSAGE,
+};
 use std::sync::Arc;
 use tower::ServiceExt;
 
@@ -86,8 +88,8 @@ async fn test_service_validation_errors_mapped_to_safe_400() {
     let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(json["code"], "validation_error");
     assert_eq!(json["message"], "Validation failed");
-    // Ensure raw error message ("Name must contain at most 200 characters without NUL") is not in response
-    assert!(!String::from_utf8_lossy(&bytes).contains("without NUL"));
+    // The JSON API keeps the generic classification, not the view's field message
+    assert!(!String::from_utf8_lossy(&bytes).contains(NAME_VALIDATION_MESSAGE));
 
     // Name exceeding 200 Unicode scalars
     let long_name = "🦀".repeat(201);

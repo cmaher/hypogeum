@@ -336,6 +336,9 @@ async fn test_context_inheritance_in_service_and_spawned_task() {
 async fn test_trace_layer_installation_and_execution() {
     use hypgm_http::TraceLayer;
 
+    let (subscriber, _writer) = create_test_subscriber("debug", LogFormat::Json).unwrap();
+    let _guard = tracing::subscriber::set_default(subscriber);
+
     // Verify both trace_layer() and TraceLayer::new() are installable and functional
     let app1 = Router::new()
         .route("/healthz", get(|| async { "ok" }))
@@ -372,6 +375,9 @@ async fn test_trace_layer_preserves_concurrency_limiter_readiness() {
     use std::time::Duration;
     use tower::limit::ConcurrencyLimit;
     use tower::{Layer, Service};
+
+    let (subscriber, _writer) = create_test_subscriber("debug", LogFormat::Json).unwrap();
+    let _guard = tracing::subscriber::set_default(subscriber);
 
     let inner = tower::service_fn(|_: Request<Body>| async {
         Ok::<_, Infallible>(StatusCode::OK.into_response())

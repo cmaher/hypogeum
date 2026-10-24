@@ -1,0 +1,14 @@
+<section id="greeting" data-view-section>
+<form method="post" action="/hello" hx-post="/hello" hx-target="closest [data-view-section]" hx-swap="outerHTML">
+<label for="greeting-name">Name</label>
+<input id="greeting-name" name="name" type="text" value="{{ name }}" autocomplete="off"{% if !error.is_empty() %} aria-invalid="true" aria-describedby="greeting-error"{% endif %}>
+<button type="submit">Say hello</button>
+</form>
+<p data-view-feedback role="alert" hidden></p>
+{%- if !error.is_empty() %}
+<p id="greeting-error" role="alert">{{ error }}</p>
+{%- endif %}
+{%- if !message.is_empty() %}
+<p data-greeting aria-live="polite">{{ message }}</p>
+{%- endif %}
+</section>

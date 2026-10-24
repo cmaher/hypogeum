@@ -99,7 +99,9 @@ pub fn is_json_content_type(content_type: &str) -> bool {
     false
 }
 
-fn is_length_limit_error(err: &axum::Error) -> bool {
+/// Whether a body read failed because it exceeded its length limit. Shared by
+/// body extractors so they classify `413` versus `400` identically.
+pub fn is_length_limit_error(err: &axum::Error) -> bool {
     let mut source: Option<&(dyn std::error::Error + 'static)> = Some(err);
     while let Some(e) = source {
         if e.is::<http_body_util::LengthLimitError>() {

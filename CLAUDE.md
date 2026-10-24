@@ -7,7 +7,7 @@ Read [the coding standards](docs/coding_standards.md) before changing code.
 This repository is organized into a two-tier architecture:
 
 1. **Hypogeum Framework Foundation** (root workspace):
-   - Foundation crates in `crates/core/` (`hypgm-*`): `authn`, `authz`, `envconfig`, `errors`, `http`, `logging`, `rpc`, `test-support`.
+   - Foundation crates in `crates/core/` (`hypgm-*`): `authn`, `authz`, `envconfig`, `errors`, `http`, `logging`, `rpc`, `test-support`, `view` (opt-in HTML/HTMX views).
    - External driver and stateful adapters in `crates/ext/` (`hypgmx-*`): `file-storage`, `rdbms`, `tasks`.
    - Standalone framework operations UI: `cmd/apalis-dashboard`.
 2. **Exemplum Reference Implementation** (`example/` workspace):
@@ -70,5 +70,6 @@ cargo make db-verify    # Verify database schema contracts
 cargo make db-down      # Stop local PostgreSQL container
 cargo make app          # Run public HTTP application (127.0.0.1:8080)
 cargo make test         # Run example unit and integration tests
+cargo make test-browser # Run Playwright HTML view smoke checks (requires Node.js)
 cargo make ci           # Run full Exemplum CI (fmt, clippy, build, test)
 ```
