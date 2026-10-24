@@ -8,8 +8,8 @@ use async_trait::async_trait;
 use hypgm_errors::RepoError;
 use sea_orm::sea_query::{Alias, Query};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait, QueryFilter,
-    QueryOrder, QuerySelect, Set, SqlxPostgresConnector, TransactionTrait,
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait, ExprTrait,
+    QueryFilter, QueryOrder, QuerySelect, Set, SqlxPostgresConnector, TransactionTrait,
 };
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -58,6 +58,87 @@ impl PgAccountRepo {
             db: SqlxPostgresConnector::from_sqlx_postgres_pool(pool.clone()),
             pool,
         }
+    }
+    /// Create an approved administrator, or promote an existing password identity.
+    /// Existing identity credentials and profile data are never replaced.
+    pub async fn bootstrap_admin(
+        &self,
+        display_name: &str,
+        username: &str,
+        password_hash: Option<&str>,
+    ) -> Result<Account, AccountError> {
+        let username = normalize_username(username)?;
+        let display_name = display_name.trim();
+        validate_name(display_name).map_err(|_| AccountError::Validation)?;
+        let tx = self.db.begin().await.map_err(database)?;
+        let lookup = Query::select()
+            .column(Alias::new("user_id"))
+            .from((Alias::new("exemplum"), Alias::new("auth_identities")))
+            .and_where(sea_orm::sea_query::Expr::col(Alias::new("identity_type")).eq("password"))
+            .and_where(sea_orm::sea_query::Expr::col(Alias::new("identifier")).eq(username))
+            .and_where(sea_orm::sea_query::Expr::col(Alias::new("revoked_at")).is_null())
+            .to_owned();
+        let identity = tx.query_one(&lookup).await.map_err(database)?;
+        let account = if let Some(identity) = identity {
+            let id: Uuid = identity.try_get("", "user_id").map_err(database)?;
+            let account = entity::Entity::find_by_id(id)
+                .lock_exclusive()
+                .one(&tx)
+                .await
+                .map_err(database)?
+                .ok_or(RepoError::NotFound)?;
+            if account.is_admin && account.approval_status == ApprovalStatus::Approved {
+                account
+            } else {
+                let approved_at = account.approved_at.or_else(|| Some(chrono::Utc::now()));
+                let mut account: entity::ActiveModel = account.into();
+                account.is_admin = Set(true);
+                account.approval_status = Set(ApprovalStatus::Approved);
+                account.approved_at = Set(approved_at);
+                account.update(&tx).await.map_err(database)?
+            }
+        } else {
+            let hash = password_hash.ok_or(RepoError::NotFound)?;
+            if hash.is_empty() || hash.contains('\0') {
+                return Err(AccountError::Validation);
+            }
+            let account = entity::ActiveModel {
+                id: Set(Uuid::new_v4()),
+                display_name: Set(display_name.to_owned()),
+                approval_status: Set(ApprovalStatus::Approved),
+                is_admin: Set(true),
+                approved_at: Set(Some(chrono::Utc::now())),
+                welcome_processed_at: Set(None),
+                ..Default::default()
+            }
+            .insert(&tx)
+            .await
+            .map_err(database)?;
+            let insert = Query::insert()
+                .into_table((Alias::new("exemplum"), Alias::new("auth_identities")))
+                .columns(
+                    [
+                        "id",
+                        "user_id",
+                        "identity_type",
+                        "identifier",
+                        "secret_hash",
+                    ]
+                    .map(Alias::new),
+                )
+                .values_panic([
+                    Uuid::new_v4().into(),
+                    account.id.into(),
+                    "password".into(),
+                    username.into(),
+                    hash.into(),
+                ])
+                .to_owned();
+            tx.execute(&insert).await.map_err(database)?;
+            account
+        };
+        tx.commit().await.map_err(database)?;
+        Ok(account.into())
     }
     /// Persist the welcome effect once; missing targets are successful no-ops.
     pub async fn process_welcome(&self, id: Uuid) -> Result<(), AccountError> {

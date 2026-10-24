@@ -597,3 +597,74 @@ async fn approval_and_welcome_are_atomic_and_repeat_safe(
     tasks.close().await;
     admin.close().await;
 }
+
+#[sqlx::test(migrations = false)]
+#[ignore = "run by integration_suite"]
+async fn administrator_bootstrap_is_atomic_repeatable_and_preserves_credentials(
+    _pool_options: sqlx::postgres::PgPoolOptions,
+    options: PgConnectOptions,
+) {
+    use exemplum_dmn_users::{
+        accounts::{AccountRepo, ApprovalStatus},
+        repo::PgAccountRepo,
+    };
+    let db = TestDatabase::provision(options).await;
+    db.migrate_with(&exemplum_config()).await;
+    let pool = sqlx::PgPool::connect(&db.users_url).await.unwrap();
+    let repo = PgAccountRepo::new(pool.clone());
+    let fresh = repo
+        .bootstrap_admin("Administrator", "admin", Some("original-hash"))
+        .await
+        .unwrap();
+    assert!(fresh.is_admin);
+    assert_eq!(fresh.approval_status, ApprovalStatus::Approved);
+    assert!(fresh.approved_at.is_some());
+    assert!(fresh.welcome_processed_at.is_none());
+    assert_eq!(
+        repo.bootstrap_admin("Changed", "admin", Some("replacement"))
+            .await
+            .unwrap(),
+        fresh
+    );
+    assert_eq!(
+        repo.bootstrap_admin("Changed", "admin", None)
+            .await
+            .unwrap(),
+        fresh
+    );
+    let pending = repo
+        .register("Pending", "pending-admin", "pending-hash")
+        .await
+        .unwrap();
+    let promoted = repo
+        .bootstrap_admin("Ignored", "pending-admin", None)
+        .await
+        .unwrap();
+    assert_eq!(promoted.id, pending.id);
+    assert_eq!(promoted.display_name, pending.display_name);
+    assert!(promoted.is_admin);
+    assert_eq!(promoted.approval_status, ApprovalStatus::Approved);
+    let hashes: Vec<String> =
+        sqlx::query_scalar("SELECT secret_hash FROM exemplum.auth_identities ORDER BY identifier")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(hashes, ["original-hash", "pending-hash"]);
+    let admin = sqlx::PgPool::connect(&db.admin_url).await.unwrap();
+    let jobs: i64 = sqlx::query_scalar("SELECT count(*) FROM apalis.jobs")
+        .fetch_one(&admin)
+        .await
+        .unwrap();
+    assert_eq!(jobs, 0);
+    sqlx::query("ALTER TABLE exemplum.auth_identities ADD CONSTRAINT reject_bootstrap CHECK (identifier <> 'blocked')").execute(&admin).await.unwrap();
+    assert!(
+        repo.bootstrap_admin("Rejected", "blocked", Some("hash"))
+            .await
+            .is_err()
+    );
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM exemplum.users")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 2);
+}
