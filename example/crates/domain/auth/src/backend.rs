@@ -104,7 +104,13 @@ async fn validate_bearer(
     if let Some((scheme, token)) =
         authorization.and_then(|value| value.trim().split_once(char::is_whitespace))
         && scheme.eq_ignore_ascii_case("bearer")
-        && let Some(validator) = extensions.get::<hypgm_authn::jwt::JwtValidator>()
+        && let Some(validator) = extensions
+            .get::<hypgm_authn::jwt::JwtValidator>()
+            .or_else(|| {
+                extensions
+                    .get::<Arc<hypgm_authn::jwt::JwtValidator>>()
+                    .map(Arc::as_ref)
+            })
         && let Ok(principal) = validator.verify_token(token.trim())
     {
         match backend.resolve_principal(principal.auth_id).await {

@@ -251,37 +251,66 @@ async fn bearer_claims_cannot_bypass_current_approval() {
         &jsonwebtoken::EncodingKey::from_secret(secret),
     )
     .unwrap();
-    let app = axum::Router::new()
-        .route(
-            "/me",
-            axum::routing::get(|_: hypgm_authn::extractor::RequireAuth| async { "ok" }),
-        )
-        .layer(axum::middleware::from_fn_with_state(
-            backend,
-            exemplum_dmn_auth::backend::bearer_gate,
-        ))
-        .layer(axum::Extension(
-            hypgm_authn::jwt::JwtValidator::from_hs256_secret(secret).unwrap(),
-        ));
-    let req = || {
-        Request::builder()
-            .uri("/me")
-            .header("authorization", format!("Bearer {token}"))
-            .body(Body::empty())
-            .unwrap()
-    };
-    assert_eq!(
-        app.clone().oneshot(req()).await.unwrap().status(),
-        StatusCode::UNAUTHORIZED
-    );
-    accounts
-        .account
-        .lock()
-        .unwrap()
-        .as_mut()
-        .unwrap()
-        .approval_status = ApprovalStatus::Approved;
-    assert_eq!(app.oneshot(req()).await.unwrap().status(), StatusCode::OK);
+    for shared_validator in [false, true] {
+        for html in [false, true] {
+            accounts
+                .account
+                .lock()
+                .unwrap()
+                .as_mut()
+                .unwrap()
+                .approval_status = ApprovalStatus::Pending;
+            let app = axum::Router::new().route(
+                "/me",
+                axum::routing::get(|_: hypgm_authn::extractor::RequireAuth| async { "ok" }),
+            );
+            let app = if html {
+                app.layer(axum::middleware::from_fn_with_state(
+                    backend.clone(),
+                    exemplum_dmn_auth::backend::html_bearer_gate,
+                ))
+            } else {
+                app.layer(axum::middleware::from_fn_with_state(
+                    backend.clone(),
+                    exemplum_dmn_auth::backend::bearer_gate,
+                ))
+            };
+            let validator = hypgm_authn::jwt::JwtValidator::from_hs256_secret(secret).unwrap();
+            let app = if shared_validator {
+                app.layer(axum::Extension(Arc::new(validator)))
+            } else {
+                app.layer(axum::Extension(validator))
+            };
+            let req = || {
+                Request::builder()
+                    .uri("/me")
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap()
+            };
+            let response = app.clone().oneshot(req()).await.unwrap();
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+            assert_eq!(response.headers()["www-authenticate"], "Bearer");
+            assert!(
+                response.headers()["content-type"]
+                    .to_str()
+                    .unwrap()
+                    .starts_with(if html {
+                        "text/html"
+                    } else {
+                        "application/json"
+                    })
+            );
+            accounts
+                .account
+                .lock()
+                .unwrap()
+                .as_mut()
+                .unwrap()
+                .approval_status = ApprovalStatus::Approved;
+            assert_eq!(app.oneshot(req()).await.unwrap().status(), StatusCode::OK);
+        }
+    }
 }
 
 #[tokio::test]
