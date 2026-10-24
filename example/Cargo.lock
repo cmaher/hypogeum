@@ -1515,6 +1515,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "exemplum-tasks-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "exemplum-dmn-users",
+ "hypgm-envconfig",
+ "hypgm-logging",
+ "hypgmx-rdbms",
+ "hypgmx-tasks",
+ "serde",
+ "sqlx",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "fastrand"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

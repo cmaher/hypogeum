@@ -61,3 +61,8 @@ args = ["run", "--locked", "-p", "exemplum-db-cli", "--bin", "exemplum-db", "--"
 description = "Run the public HTTP application against provisioned PostgreSQL"
 command = "cargo"
 args = ["run", "--locked", "-p", "exemplum-app-cli", "--bin", "app"]
+
+[tasks.tasks]
+description = "Run the separate durable welcome job consumer"
+command = "cargo"
+args = ["run", "--locked", "-p", "exemplum-tasks-cli", "--bin", "exemplum-tasks"]
