@@ -100,6 +100,30 @@ pub trait AccountRepo: Send + Sync {
     async fn get(&self, id: Uuid) -> Result<Account, AccountError>;
     /// List accounts by `created_at` descending, breaking ties by id.
     async fn list(&self, query: AccountQuery) -> Result<AccountPage, AccountError>;
+    /// Create a new approved administrator. A username that already belongs to
+    /// an account fails with `DuplicateUsername`; existing accounts change only
+    /// through [`Self::promote_admin`].
+    async fn create_admin(
+        &self,
+        display_name: &str,
+        username: &str,
+        password_hash: &str,
+    ) -> Result<Account, AccountError>;
+    /// Explicitly make the account behind an active password identity an
+    /// approved administrator. Credentials and profile data are never replaced.
+    async fn promote_admin(&self, username: &str) -> Result<Account, AccountError>;
+}
+/// Explicit administrator bootstrap, kept apart from request-serving account
+/// behavior so web composition never receives it.
+#[async_trait]
+pub trait AdminBootstrapService: Send + Sync {
+    async fn create_admin(
+        &self,
+        display_name: &str,
+        username: &str,
+        password_hash: &str,
+    ) -> Result<Account, AccountError>;
+    async fn promote_admin(&self, username: &str) -> Result<Account, AccountError>;
 }
 #[async_trait]
 pub trait AccountService: Send + Sync {
@@ -148,6 +172,20 @@ pub fn normalize_username(username: &str) -> Result<&str, AccountError> {
     }
     Ok(username)
 }
+/// Normalize and validate a new password account's profile and stored hash.
+fn validate_new_account<'a>(
+    display_name: &'a str,
+    username: &'a str,
+    password_hash: &str,
+) -> Result<(&'a str, &'a str), AccountError> {
+    let display_name = display_name.trim();
+    validate_name(display_name).map_err(|_| AccountError::Validation)?;
+    let username = normalize_username(username)?;
+    if password_hash.is_empty() || password_hash.contains('\0') {
+        return Err(AccountError::Validation);
+    }
+    Ok((display_name, username))
+}
 
 #[async_trait]
 impl AccountService for DefaultAccountService {
@@ -157,12 +195,7 @@ impl AccountService for DefaultAccountService {
         username: &str,
         password_hash: &str,
     ) -> Result<Account, AccountError> {
-        let display_name = display_name.trim();
-        validate_name(display_name).map_err(|_| AccountError::Validation)?;
-        let username = normalize_username(username)?;
-        if password_hash.is_empty() || password_hash.contains('\0') {
-            return Err(AccountError::Validation);
-        }
+        let (display_name, username) = validate_new_account(display_name, username, password_hash)?;
         self.repo
             .register(display_name, username, password_hash)
             .await
@@ -175,6 +208,23 @@ impl AccountService for DefaultAccountService {
     }
     async fn list(&self, query: AccountQuery) -> Result<AccountPage, AccountError> {
         self.repo.list(query).await
+    }
+}
+#[async_trait]
+impl AdminBootstrapService for DefaultAccountService {
+    async fn create_admin(
+        &self,
+        display_name: &str,
+        username: &str,
+        password_hash: &str,
+    ) -> Result<Account, AccountError> {
+        let (display_name, username) = validate_new_account(display_name, username, password_hash)?;
+        self.repo
+            .create_admin(display_name, username, password_hash)
+            .await
+    }
+    async fn promote_admin(&self, username: &str) -> Result<Account, AccountError> {
+        self.repo.promote_admin(normalize_username(username)?).await
     }
 }
 
@@ -198,6 +248,81 @@ mod tests {
         assert_eq!(
             AccountError::DuplicateUsername.public_error(),
             PublicErrorInfo::validation_error("Username unavailable")
+        );
+    }
+
+    /// Records the normalized inputs that reach persistence.
+    #[derive(Default)]
+    struct RecordingRepo {
+        calls: std::sync::Mutex<Vec<String>>,
+    }
+    impl RecordingRepo {
+        fn account(&self, call: String) -> Result<Account, AccountError> {
+            self.calls.lock().unwrap().push(call);
+            Ok(Account {
+                id: Uuid::nil(),
+                display_name: "Admin".into(),
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+                approval_status: ApprovalStatus::Approved,
+                is_admin: true,
+                approved_at: Some(Utc::now()),
+            })
+        }
+    }
+    #[async_trait]
+    impl AccountRepo for RecordingRepo {
+        async fn register(&self, _: &str, _: &str, _: &str) -> Result<Account, AccountError> {
+            unreachable!("bootstrap never registers")
+        }
+        async fn approve(&self, _: Uuid) -> Result<ManagedAccount, AccountError> {
+            unreachable!("bootstrap never approves")
+        }
+        async fn get(&self, _: Uuid) -> Result<Account, AccountError> {
+            unreachable!("bootstrap never reads")
+        }
+        async fn list(&self, _: AccountQuery) -> Result<AccountPage, AccountError> {
+            unreachable!("bootstrap never lists")
+        }
+        async fn create_admin(
+            &self,
+            display_name: &str,
+            username: &str,
+            password_hash: &str,
+        ) -> Result<Account, AccountError> {
+            self.account(format!("create {display_name}|{username}|{password_hash}"))
+        }
+        async fn promote_admin(&self, username: &str) -> Result<Account, AccountError> {
+            self.account(format!("promote {username}"))
+        }
+    }
+
+    #[tokio::test]
+    async fn admin_bootstrap_validates_and_normalizes_before_persistence() {
+        let repo = Arc::new(RecordingRepo::default());
+        let service = DefaultAccountService::new(repo.clone());
+        service
+            .create_admin(" Admin ", " admin ", "hash")
+            .await
+            .unwrap();
+        service.promote_admin(" alice ").await.unwrap();
+        for (name, username, hash) in [
+            (" ", "admin", "hash"),
+            ("Admin", " ", "hash"),
+            ("Admin", "admin", ""),
+        ] {
+            assert!(matches!(
+                service.create_admin(name, username, hash).await,
+                Err(AccountError::Validation)
+            ));
+        }
+        assert!(matches!(
+            service.promote_admin(" ").await,
+            Err(AccountError::Validation)
+        ));
+        assert_eq!(
+            *repo.calls.lock().unwrap(),
+            ["create Admin|admin|hash", "promote alice"]
         );
     }
 }

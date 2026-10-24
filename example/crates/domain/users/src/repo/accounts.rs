@@ -57,56 +57,6 @@ impl PgAccountRepo {
             db: SqlxPostgresConnector::from_sqlx_postgres_pool(pool),
         }
     }
-    /// Create a new approved administrator. A username that already belongs to
-    /// an account fails with `DuplicateUsername`; existing accounts change only
-    /// through [`Self::promote_admin`].
-    pub async fn create_admin(
-        &self,
-        display_name: &str,
-        username: &str,
-        password_hash: &str,
-    ) -> Result<Account, AccountError> {
-        let username = normalize_username(username)?;
-        self.insert_account(display_name.trim(), username, password_hash, true)
-            .await
-    }
-    /// Explicitly make the account behind an active password identity an
-    /// approved administrator. Credentials and profile data are never replaced.
-    pub async fn promote_admin(&self, username: &str) -> Result<Account, AccountError> {
-        let username = normalize_username(username)?;
-        let tx = self.db.begin().await.map_err(database)?;
-        let lookup = Query::select()
-            .column(Alias::new("user_id"))
-            .from((Alias::new("exemplum"), Alias::new("auth_identities")))
-            .and_where(Expr::col(Alias::new("identity_type")).eq("password"))
-            .and_where(Expr::col(Alias::new("identifier")).eq(username))
-            .and_where(Expr::col(Alias::new("revoked_at")).is_null())
-            .to_owned();
-        let identity = tx
-            .query_one(&lookup)
-            .await
-            .map_err(database)?
-            .ok_or(RepoError::NotFound)?;
-        let id: Uuid = identity.try_get("", "user_id").map_err(database)?;
-        let account = entity::Entity::find_by_id(id)
-            .lock_exclusive()
-            .one(&tx)
-            .await
-            .map_err(database)?
-            .ok_or(RepoError::NotFound)?;
-        let account = if account.is_admin && account.approval_status == ApprovalStatus::Approved {
-            account
-        } else {
-            let approved_at = account.approved_at.or_else(|| Some(chrono::Utc::now()));
-            let mut account: entity::ActiveModel = account.into();
-            account.is_admin = Set(true);
-            account.approval_status = Set(ApprovalStatus::Approved);
-            account.approved_at = Set(approved_at);
-            account.update(&tx).await.map_err(database)?
-        };
-        tx.commit().await.map_err(database)?;
-        Ok(account.into())
-    }
     /// Atomically insert an account and its password identity. Administrators
     /// start approved; registrations start pending.
     async fn insert_account(
@@ -221,6 +171,51 @@ impl AccountRepo for PgAccountRepo {
     ) -> Result<Account, AccountError> {
         self.insert_account(display_name, username, password_hash, false)
             .await
+    }
+    async fn create_admin(
+        &self,
+        display_name: &str,
+        username: &str,
+        password_hash: &str,
+    ) -> Result<Account, AccountError> {
+        let username = normalize_username(username)?;
+        self.insert_account(display_name.trim(), username, password_hash, true)
+            .await
+    }
+    async fn promote_admin(&self, username: &str) -> Result<Account, AccountError> {
+        let username = normalize_username(username)?;
+        let tx = self.db.begin().await.map_err(database)?;
+        let lookup = Query::select()
+            .column(Alias::new("user_id"))
+            .from((Alias::new("exemplum"), Alias::new("auth_identities")))
+            .and_where(Expr::col(Alias::new("identity_type")).eq("password"))
+            .and_where(Expr::col(Alias::new("identifier")).eq(username))
+            .and_where(Expr::col(Alias::new("revoked_at")).is_null())
+            .to_owned();
+        let identity = tx
+            .query_one(&lookup)
+            .await
+            .map_err(database)?
+            .ok_or(RepoError::NotFound)?;
+        let id: Uuid = identity.try_get("", "user_id").map_err(database)?;
+        let account = entity::Entity::find_by_id(id)
+            .lock_exclusive()
+            .one(&tx)
+            .await
+            .map_err(database)?
+            .ok_or(RepoError::NotFound)?;
+        let account = if account.is_admin && account.approval_status == ApprovalStatus::Approved {
+            account
+        } else {
+            let approved_at = account.approved_at.or_else(|| Some(chrono::Utc::now()));
+            let mut account: entity::ActiveModel = account.into();
+            account.is_admin = Set(true);
+            account.approval_status = Set(ApprovalStatus::Approved);
+            account.approved_at = Set(approved_at);
+            account.update(&tx).await.map_err(database)?
+        };
+        tx.commit().await.map_err(database)?;
+        Ok(account.into())
     }
     async fn approve(&self, id: Uuid) -> Result<ManagedAccount, AccountError> {
         let tx = self.db.begin().await.map_err(database)?;

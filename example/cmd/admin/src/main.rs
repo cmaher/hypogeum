@@ -1,6 +1,6 @@
 use clap::{ArgGroup, Args, Parser, Subcommand, error::ErrorKind};
 use exemplum_dmn_users::{
-    accounts::{AccountError, PASSWORD_MAX_BYTES},
+    accounts::{AccountError, AdminBootstrapService, DefaultAccountService, PASSWORD_MAX_BYTES},
     repo::PgAccountRepo,
 };
 use hypgm_envconfig::{EnvSource, Secret};
@@ -9,6 +9,7 @@ use serde::Deserialize;
 use std::{
     io::{self, BufRead, Read},
     process::ExitCode,
+    sync::Arc,
 };
 
 #[derive(Deserialize)]
@@ -163,9 +164,9 @@ async fn run(command: Command) -> Result<(String, &'static str), String> {
     exemplum_dmn_users::repo::check_ready(&pool)
         .await
         .map_err(|_| "Database readiness check failed")?;
-    let repo = PgAccountRepo::new(pool);
+    let service = DefaultAccountService::new(Arc::new(PgAccountRepo::new(pool)));
     match command {
-        Command::Promote { username } => repo
+        Command::Promote { username } => service
             .promote_admin(&username)
             .await
             .map(|account| (account.id.to_string(), "promoted"))
@@ -194,7 +195,8 @@ async fn run(command: Command) -> Result<(String, &'static str), String> {
             .await
             .map_err(|_| "Password hashing failed")?
             .map_err(|_| "Password hashing failed")?;
-            repo.create_admin(&display_name, &username, &hash)
+            service
+                .create_admin(&display_name, &username, &hash)
                 .await
                 .map(|account| (account.id.to_string(), "created"))
                 .map_err(|error| match error {
