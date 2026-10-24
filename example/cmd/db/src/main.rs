@@ -54,21 +54,21 @@ async fn run() -> Result<Value, String> {
             .with_service_contract(hypgmx_rdbms::ServiceContract::new(
                 "exemplum",
                 "exemplum_users",
-                1,
-                Some("m20260101_000001_create_users"),
+                2,
+                Some("m20261024_000003_account_lifecycle"),
                 "users",
             ))
             .with_service_contract(hypgmx_rdbms::ServiceContract::new(
                 "exemplum",
                 "exemplum_users",
-                1,
+                2,
                 Some("m20260101_000002_create_auth_identities"),
                 "auth_identities",
             ))
             .with_service_contract(hypgmx_rdbms::ServiceContract::new(
                 "exemplum",
                 "exemplum_users",
-                1,
+                2,
                 Some("m20260101_000002_create_auth_identities"),
                 "sessions",
             ));

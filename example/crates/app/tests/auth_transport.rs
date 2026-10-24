@@ -101,6 +101,7 @@ impl TestHarness {
             Arc::new(DefaultHelloWorldService),
             user_service.clone(),
             auth_repo.clone(),
+            Arc::new(exemplum_dmn_auth::fixtures::ApprovedAccounts),
             authorizer,
             session_store,
             token_config,
@@ -408,14 +409,37 @@ async fn test_token_exchange_and_jwt_bearer_auth() {
     let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(json["message"], "Hello, API Developer!");
 
+    harness.auth_repo.revoke(auth_id).await.unwrap();
+    for (path, content_type) in [
+        ("/admin/users", hypgm_view::HTML_CONTENT_TYPE),
+        ("/api/admin/users", "application/json"),
+    ] {
+        let response = client
+            .get(format!("{}{path}", harness.endpoint))
+            .bearer_auth(&token_res.access_token)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(response.headers()[CONTENT_TYPE], content_type);
+        assert_eq!(response.headers()["www-authenticate"], "Bearer");
+        let body = response.text().await.unwrap();
+        if content_type == hypgm_view::HTML_CONTENT_TYPE {
+            assert!(body.contains("data-view-error"));
+        } else {
+            let error: serde_json::Value = serde_json::from_str(&body).unwrap();
+            assert_eq!(error["code"], "unauthenticated");
+        }
+    }
+
     harness.shutdown().await;
 }
 
 #[tokio::test]
-async fn test_overriding_policy_with_forbid_returns_403() {
+async fn test_greeting_authentication_is_independent_of_admin_policy() {
     let forbid_policy = r#"
 permit(principal, action, resource);
-forbid(principal, action == Action::"greet", resource);
+forbid(principal, action, resource);
 "#;
     let harness = TestHarness::start_with_policy(forbid_policy).await;
     let client = reqwest::Client::new();
@@ -457,7 +481,7 @@ forbid(principal, action == Action::"greet", resource);
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    assert_eq!(resp.status(), StatusCode::OK);
 
     harness.shutdown().await;
 }
@@ -616,12 +640,29 @@ async fn postgres_e2e_auth_transport(
         .await
         .unwrap();
 
-    // 3. Login with password and get session cookie
+    // 3. Accounts created without an explicit status start pending and cannot log in
     let client = reqwest::Client::new();
     let login_req = LoginRequest {
         username: "pguser".to_string(),
         password: "secret-password".to_string(),
     };
+    let pending_resp = client
+        .post(format!("{endpoint}/api/auth/login"))
+        .header(CONTENT_TYPE, "application/json")
+        .body(serde_json::to_string(&login_req).unwrap())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(pending_resp.status(), StatusCode::UNAUTHORIZED);
+    {
+        use exemplum_dmn_users::accounts::AccountRepo;
+        exemplum_dmn_users::repo::PgAccountRepo::new(pool.clone())
+            .approve(user.id)
+            .await
+            .unwrap();
+    }
+
+    // 4. Login with password once approved and get session cookie
     let login_resp = client
         .post(format!("{endpoint}/api/auth/login"))
         .header(CONTENT_TYPE, "application/json")
@@ -639,7 +680,7 @@ async fn postgres_e2e_auth_transport(
         .unwrap()
         .to_string();
 
-    // 4. Verify session is persisted in exemplum.sessions table in PostgreSQL
+    // 5. Verify session is persisted in exemplum.sessions table in PostgreSQL
     let session_count: i64 = sqlx::query_scalar("SELECT count(*) FROM exemplum.sessions")
         .fetch_one(&pool)
         .await
@@ -649,7 +690,7 @@ async fn postgres_e2e_auth_transport(
         "Session must be persisted in PostgreSQL sessions table"
     );
 
-    // 5. Access /api/hello/me with session cookie
+    // 6. Access /api/hello/me with session cookie
     let me_resp = client
         .get(format!("{endpoint}/api/hello/me"))
         .header(COOKIE, &cookie_header)
@@ -661,7 +702,7 @@ async fn postgres_e2e_auth_transport(
     let me_body: serde_json::Value = serde_json::from_slice(&me_bytes).unwrap();
     assert_eq!(me_body["message"], "Hello, Postgres User!");
 
-    // 6. Create API key in PostgreSQL database
+    // 7. Create API key in PostgreSQL database
     let api_key_auth_id = Uuid::new_v4();
     let GeneratedApiKey {
         raw_key,
@@ -679,7 +720,7 @@ async fn postgres_e2e_auth_transport(
         .await
         .unwrap();
 
-    // 7. Exchange API key for JWT token via POST /api/auth/token
+    // 8. Exchange API key for JWT token via POST /api/auth/token
     let token_req = serde_json::json!({
         "grant_type": "api_key",
         "api_key": raw_key,
@@ -695,7 +736,7 @@ async fn postgres_e2e_auth_transport(
     let token_bytes = token_resp.bytes().await.unwrap();
     let token_body: TokenResponse = serde_json::from_slice(&token_bytes).unwrap();
 
-    // 8. Access /api/hello/me with Bearer token
+    // 9. Access /api/hello/me with Bearer token
     let bearer_resp = client
         .get(format!("{endpoint}/api/hello/me"))
         .header(AUTHORIZATION, format!("Bearer {}", token_body.access_token))
@@ -707,7 +748,7 @@ async fn postgres_e2e_auth_transport(
     let bearer_body: serde_json::Value = serde_json::from_slice(&bearer_bytes).unwrap();
     assert_eq!(bearer_body["message"], "Hello, Postgres User!");
 
-    // 9. Logout session
+    // 10. Logout session
     let logout_resp = client
         .post(format!("{endpoint}/api/auth/logout"))
         .header(COOKIE, &cookie_header)

@@ -247,7 +247,7 @@ async fn cross_site_form_posts_are_rejected() {
         assert_html_error(response, 403, CROSS_SITE_FORM.message).await;
     }
 
-    // Safe methods and the JSON API are not affected.
+    // Safe methods remain accessible.
     let response = reqwest::Client::new()
         .get(server.url("/"))
         .header("sec-fetch-site", "cross-site")
@@ -349,5 +349,107 @@ async fn api_and_health_keep_json_semantics() {
     assert_eq!(response.status(), 200);
     assert_eq!(response.text().await.unwrap(), "ok");
 
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn json_writes_share_page_origin_protection() {
+    let server = Server::start().await;
+    let client = reqwest::Client::new();
+    for path in [
+        "/api/auth/register",
+        "/api/auth/login",
+        "/api/auth/logout",
+        "/api/admin/users/00000000-0000-0000-0000-000000000000/approve",
+    ] {
+        for (header, value) in [
+            ("sec-fetch-site", "cross-site"),
+            ("sec-fetch-site", "same-site"),
+            ("origin", "https://other.example"),
+        ] {
+            let response = client
+                .post(server.url(path))
+                .header(header, value)
+                .header("cookie", "id=browser-session")
+                .header("content-type", "application/json")
+                .body("{}")
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), 403, "{path}: {header}={value}");
+            assert!(
+                response.headers()["content-type"]
+                    .to_str()
+                    .unwrap()
+                    .starts_with("application/json")
+            );
+        }
+    }
+    let response = client
+        .get(server.url("/api/admin/users"))
+        .header("sec-fetch-site", "cross-site")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 401);
+    let response = client
+        .post(server.url("/api/auth/login"))
+        .header("origin", server.endpoint.as_str())
+        .header("content-type", "application/json")
+        .body("{}")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 400);
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn admin_root_redirects_to_users() {
+    let server = Server::start().await;
+    let response = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap()
+        .get(server.url("/admin"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 303);
+    assert_eq!(header(&response, "location"), "/admin/users");
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn failed_auth_forms_retain_safe_inputs() {
+    let server = Server::start().await;
+    for (path, body, status) in [
+        (
+            "/register",
+            "display_name=Alice%3Cscript%3E&username=alice%26bob&password=short",
+            400,
+        ),
+        (
+            "/login",
+            "username=alice%26bob&password=private-password",
+            401,
+        ),
+    ] {
+        let response = reqwest::Client::new()
+            .post(server.url(path))
+            .header("content-type", FORM)
+            .body(body)
+            .send()
+            .await
+            .unwrap();
+        assert_html(&response, status);
+        let html = response.text().await.unwrap();
+        assert!(html.contains("<form"));
+        assert!(html.contains("value=\"alice&#38;bob\""));
+        assert!(!html.contains("private-password") && !html.contains("value=\"short\""));
+        if path == "/register" {
+            assert!(html.contains("value=\"Alice&#60;script&#62;\""));
+        }
+    }
     server.shutdown().await;
 }

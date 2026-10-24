@@ -27,6 +27,11 @@ description = "Playwright smoke checks for HTML views with JavaScript on and off
 script_runner = "@shell"
 script = ['cd tests/browser && npm ci && npx playwright install chromium && npm test']
 
+[tasks.test-browser-registration]
+description = "Real PostgreSQL/app registration flow in Chromium, JavaScript on and off"
+script_runner = "@shell"
+script = ['(cd tests/browser && npm ci && npx playwright install chromium) && EXEMPLUM_TEST_BROWSER=1 cargo test --locked -p exemplum-app-cli --test runtime']
+
 [tasks.ci]
 dependencies = ["fmt", "clippy", "build", "test"]
 

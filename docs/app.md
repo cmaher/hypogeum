@@ -65,26 +65,41 @@ pub fn router<S>(components: AppComponents<S>) -> Router<()>
 where
     S: tower_sessions::SessionStore + Clone + Send + Sync + 'static,
 {
+    let admin_components = AdminComponents::new(Arc::new(DefaultAdminService::new(
+        components.account_service.clone(),
+        components.authorizer,
+    )));
     let hello_components = HelloComponents::new(
         components.hello_service,
-        components.authorizer,
         components.user_service,
     );
     let hello = hello_world::controller::router(hello_components.clone());
     let hello_pages = hello_world::view::router(hello_components);
-    // ... auth routes ...
+    // ... auth JSON routes and auth pages from AuthComponents ...
+    let backend = ExemplumAuthBackend::from_arc(components.auth_repo, components.account_service);
 
-    // `/api` owns JSON errors for every path beneath it.
+    // `/api` owns JSON errors for every path beneath it. Unsafe cross-site
+    // writes are rejected, and bearer tokens are revalidated against current
+    // account approval before handlers run.
     let api = Router::new()
         .nest("/hello", hello)
         .nest("/auth", auth_routes)
-        .fallback(not_found_handler);
+        .nest("/admin", admin::api::router(admin_components.clone()))
+        .fallback(not_found_handler)
+        .layer(axum::middleware::from_fn(api_same_origin))
+        .layer(axum::middleware::from_fn_with_state(backend.clone(), bearer_gate));
 
-    // Page routes own HTML errors.
+    // Page routes own HTML errors and the same origin and bearer policies.
     let pages = Router::new()
         .merge(hello_pages)
+        .merge(auth_pages)
+        .route("/registration-pending", get(auth::view::pending))
+        .route("/admin", get(|| async { Redirect::to("/admin/users") }))
+        .nest("/admin", admin::view::router(admin_components))
         .nest(hypgm_view::assets::ASSETS_MOUNT, hypgm_view::assets::router())
-        .layer(axum::middleware::from_fn(html_error_middleware));
+        .layer(axum::middleware::from_fn(html_error_middleware))
+        .layer(axum::middleware::from_fn(cross_site_middleware))
+        .layer(axum::middleware::from_fn_with_state(backend.clone(), html_bearer_gate));
 
     Router::new()
         .route("/healthz", get(healthz))
@@ -106,6 +121,10 @@ where
   - `POST /api/hello` - Composed endpoint from `/api` -> `/hello` -> controller `POST /`.
   - `GET /` - Greeting page from `hello_world::view::router`.
   - `POST /hello` - Greeting form submission (`application/x-www-form-urlencoded`).
+  - `GET|POST /register`, `GET|POST /login`, `GET /registration-pending` - Browser registration and login forms.
+  - `POST /api/auth/register` - JSON registration; accounts start pending until approved.
+  - `GET /admin/users`, `POST /admin/users/{id}/approve` - Administrator user-management page; `?status=pending|approved` filters, `?after=<id>` pages.
+  - `GET /api/admin/users`, `POST /api/admin/users/{id}/approve` - Administrator JSON API; `GET` accepts `status`, `after`, and `limit` (1-100, default 50).
   - `GET /assets/htmx-<version>.min.js`, `GET /assets/view.js` - Shared view assets.
 
 ### Concrete Request / Response Example

@@ -17,8 +17,8 @@ fn exemplum_config() -> hypgmx_rdbms::DatabaseConfig {
         .with_service_contract(hypgmx_rdbms::ServiceContract::new(
             "exemplum",
             "exemplum_users",
-            1,
-            Some("m20260101_000001_create_users"),
+            2,
+            Some("m20261024_000003_account_lifecycle"),
             "users",
         ))
 }
@@ -48,6 +48,23 @@ async fn existing_user_survives_migration_upgrade(
     let before = repo.create(Uuid::new_v4(), "Existing User").await.unwrap();
     db.migrate_with(&exemplum_config()).await;
     assert_eq!(repo.get(before.id).await.unwrap(), before);
+    let state: (String, bool, Option<chrono::DateTime<chrono::Utc>>) = sqlx::query_as(
+        "SELECT approval_status, is_admin, approved_at FROM exemplum.users WHERE id = $1",
+    )
+    .bind(before.id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(state, ("approved".into(), false, None));
+    // Only the backfill is approved; later inserts that omit the status start pending.
+    let after = repo.create(Uuid::new_v4(), "New User").await.unwrap();
+    let status: String =
+        sqlx::query_scalar("SELECT approval_status FROM exemplum.users WHERE id = $1")
+            .bind(after.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(status, "pending");
     exemplum_dmn_users::repo::check_ready(&pool).await.unwrap();
     hypgmx_rdbms::verify(&db.exemplum_migration_url, &exemplum_config())
         .await
@@ -157,6 +174,12 @@ async fn user_repository_connects_and_persists_under_runtime_privileges(
         "SELECT * FROM infra._sqlx_migrations",
         "SELECT * FROM apalis._sqlx_migrations",
         "SELECT * FROM apalis.jobs",
+        "UPDATE apalis.jobs SET status = 'Done'",
+        "DELETE FROM apalis.jobs",
+        "INSERT INTO apalis.jobs (id) VALUES ('forbidden')",
+        "SELECT * FROM apalis.workers",
+        "INSERT INTO apalis.workers (id) VALUES ('forbidden')",
+        "CREATE TABLE apalis.forbidden(id integer)",
         "SET ROLE exemplum_owner",
         "CREATE TEMP TABLE forbidden(id integer)",
     ] {
@@ -165,7 +188,7 @@ async fn user_repository_connects_and_persists_under_runtime_privileges(
             "allowed {forbidden}"
         );
     }
-    let tasks = sqlx::PgPool::connect(&db.tasks_url).await.unwrap();
+    let tasks = sqlx::PgPool::connect(&db.exemplum_tasks_url).await.unwrap();
     for forbidden in [
         "SELECT * FROM exemplum.users",
         "SELECT * FROM exemplum.auth_identities",
@@ -195,6 +218,7 @@ async fn user_repository_connects_and_persists_under_runtime_privileges(
     // Readiness must reject the wrong role and an altered schema contract.
     assert!(exemplum_dmn_users::repo::check_ready(&tasks).await.is_err());
     let mut admin = PgConnection::connect(&db.admin_url).await.unwrap();
+    exemplum_dmn_users::repo::check_ready(&pool).await.unwrap();
     sqlx::raw_sql("CREATE OR REPLACE FUNCTION exemplum.schema_version() RETURNS bigint LANGUAGE sql AS 'SELECT 0::bigint'").execute(&mut admin).await.unwrap();
     assert!(exemplum_dmn_users::repo::check_ready(&pool).await.is_err());
     // Applied migrations do not silently rewrite objects after manual tampering.
@@ -294,4 +318,241 @@ async fn auth_identities_and_sessions_schema_and_constraints_enforced(
     .unwrap();
 
     pool.close().await;
+}
+
+#[sqlx::test(migrations = false)]
+#[ignore = "run by integration_suite"]
+async fn account_registration_is_atomic_and_paginated(
+    _pool_options: sqlx::postgres::PgPoolOptions,
+    options: PgConnectOptions,
+) {
+    use exemplum_dmn_users::accounts::{
+        AccountError, AccountQuery, AccountRepo, AccountService, ApprovalStatus,
+        DefaultAccountService,
+    };
+    use exemplum_dmn_users::repo::PgAccountRepo;
+    use std::sync::Arc;
+    let db = TestDatabase::provision(options).await;
+    db.migrate_with(&exemplum_config()).await;
+    let pool = sqlx::PgPool::connect(&db.users_url).await.unwrap();
+    let repo = Arc::new(PgAccountRepo::new(pool.clone()));
+    let service = DefaultAccountService::new(repo.clone());
+    let first = service
+        .register(" Alice ", " Alice ", "validated-hash")
+        .await
+        .unwrap();
+    assert_eq!(first.display_name, "Alice");
+    assert_eq!(first.approval_status, ApprovalStatus::Pending);
+    assert!(!first.is_admin);
+    assert!(first.approved_at.is_none());
+    assert_eq!(repo.get(first.id).await.unwrap(), first);
+    assert!(matches!(
+        service.register("Duplicate", "Alice", "hash").await,
+        Err(AccountError::DuplicateUsername)
+    ));
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM exemplum.users")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 1, "failed identity insert must roll back user");
+    // An unrelated database failure must also roll back the user row.
+    let admin = sqlx::PgPool::connect(&db.admin_url).await.unwrap();
+    sqlx::query("ALTER TABLE exemplum.auth_identities ADD CONSTRAINT reject_test_identity CHECK (identifier <> 'blocked')").execute(&admin).await.unwrap();
+    assert!(matches!(
+        service.register("Rejected", "blocked", "hash").await,
+        Err(AccountError::Repo(_))
+    ));
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM exemplum.users")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 1);
+    let second = service.register("Other", "alice", "hash").await.unwrap();
+    let third = service.register("Third", "third", "hash").await.unwrap();
+    // Pin registration times: `first` is newest; `second` and `third` tie, so
+    // the id breaks the tie.
+    for (id, at) in [
+        (first.id, "2026-03-01T00:00:00Z"),
+        (second.id, "2026-01-01T00:00:00Z"),
+        (third.id, "2026-01-01T00:00:00Z"),
+    ] {
+        sqlx::query("UPDATE exemplum.users SET created_at = $2::timestamptz WHERE id = $1")
+            .bind(id)
+            .bind(at)
+            .execute(&admin)
+            .await
+            .unwrap();
+    }
+    repo.approve(third.id).await.unwrap();
+    let (tie_high, tie_low) = if second.id > third.id {
+        (second.id, third.id)
+    } else {
+        (third.id, second.id)
+    };
+    let list_all = |status| {
+        let service = &service;
+        async move {
+            let mut seen = Vec::new();
+            let mut cursor = None;
+            loop {
+                let page = service
+                    .list(AccountQuery {
+                        page: PageRequest::new(cursor, 1).unwrap(),
+                        status,
+                    })
+                    .await
+                    .unwrap();
+                assert!(page.accounts.len() <= 1);
+                for managed in page.accounts {
+                    let json = serde_json::to_string(&managed).unwrap();
+                    assert!(!json.contains("hash"));
+                    seen.push((managed.account.id, managed.username));
+                }
+                match page.next_after {
+                    Some(next) => cursor = Some(next),
+                    None => break,
+                }
+            }
+            seen
+        }
+    };
+    let ids = |seen: Vec<(Uuid, Option<String>)>| -> Vec<Uuid> {
+        seen.into_iter().map(|(id, _)| id).collect()
+    };
+    let all = list_all(None).await;
+    assert!(all.contains(&(first.id, Some("Alice".into()))));
+    assert!(all.contains(&(second.id, Some("alice".into()))));
+    assert_eq!(ids(all), [first.id, tie_high, tie_low]);
+    assert_eq!(
+        ids(list_all(Some(ApprovalStatus::Pending)).await),
+        [first.id, second.id]
+    );
+    assert_eq!(
+        ids(list_all(Some(ApprovalStatus::Approved)).await),
+        [third.id]
+    );
+    assert!(matches!(
+        service
+            .list(AccountQuery {
+                page: PageRequest::new(Some(Uuid::new_v4()), 1).unwrap(),
+                status: None,
+            })
+            .await,
+        Err(AccountError::Repo(RepoError::InvalidInput(_)))
+    ));
+    for (name, username, hash) in [
+        ("", "valid", "hash"),
+        ("Valid", "bad\0name", "hash"),
+        ("Valid", "valid", ""),
+    ] {
+        assert!(matches!(
+            service.register(name, username, hash).await,
+            Err(AccountError::Validation)
+        ));
+    }
+    pool.close().await;
+    admin.close().await;
+}
+
+#[sqlx::test(migrations = false)]
+#[ignore = "run by integration_suite"]
+async fn approval_is_atomic_and_repeat_safe(
+    _pool_options: sqlx::postgres::PgPoolOptions,
+    options: PgConnectOptions,
+) {
+    use exemplum_dmn_users::{
+        accounts::{AccountError, AccountRepo, ApprovalStatus},
+        repo::PgAccountRepo,
+    };
+    let db = TestDatabase::provision(options).await;
+    db.migrate_with(&exemplum_config()).await;
+    let pool = sqlx::PgPool::connect(&db.users_url).await.unwrap();
+    let repo = PgAccountRepo::new(pool.clone());
+    let account = repo.register("Approve", "approve", "hash").await.unwrap();
+    let (a, b) = tokio::join!(repo.approve(account.id), repo.approve(account.id));
+    let approved = a.unwrap();
+    // The row lock serializes approvals, so both see the same first approval.
+    assert_eq!(approved, b.unwrap());
+    assert_eq!(approved.username.as_deref(), Some("approve"));
+    let approved = approved.account;
+    assert_eq!(approved.approval_status, ApprovalStatus::Approved);
+    assert!(approved.approved_at.is_some());
+    assert!(!approved.is_admin);
+    assert_eq!(repo.approve(account.id).await.unwrap().account, approved);
+    assert_eq!(repo.get(account.id).await.unwrap(), approved);
+    assert!(matches!(
+        repo.approve(Uuid::new_v4()).await,
+        Err(AccountError::Repo(RepoError::NotFound))
+    ));
+    pool.close().await;
+}
+
+#[sqlx::test(migrations = false)]
+#[ignore = "run by integration_suite"]
+async fn administrator_creation_rejects_existing_usernames_unless_promoted(
+    _pool_options: sqlx::postgres::PgPoolOptions,
+    options: PgConnectOptions,
+) {
+    use exemplum_dmn_users::{
+        accounts::{AccountError, AccountRepo, ApprovalStatus},
+        repo::PgAccountRepo,
+    };
+    let db = TestDatabase::provision(options).await;
+    db.migrate_with(&exemplum_config()).await;
+    let pool = sqlx::PgPool::connect(&db.users_url).await.unwrap();
+    let repo = PgAccountRepo::new(pool.clone());
+    let fresh = repo
+        .create_admin("Administrator", "admin", "original-hash")
+        .await
+        .unwrap();
+    assert!(fresh.is_admin);
+    assert_eq!(fresh.approval_status, ApprovalStatus::Approved);
+    assert!(fresh.approved_at.is_some());
+    assert!(matches!(
+        repo.create_admin("Changed", "admin", "replacement").await,
+        Err(AccountError::DuplicateUsername)
+    ));
+    assert_eq!(repo.promote_admin("admin").await.unwrap(), fresh);
+
+    // An existing registration is never silently promoted by creation.
+    let pending = repo
+        .register("Pending", "pending-admin", "pending-hash")
+        .await
+        .unwrap();
+    assert!(matches!(
+        repo.create_admin("Ignored", "pending-admin", "replacement")
+            .await,
+        Err(AccountError::DuplicateUsername)
+    ));
+    let unchanged = repo.get(pending.id).await.unwrap();
+    assert!(!unchanged.is_admin);
+    assert_eq!(unchanged.approval_status, ApprovalStatus::Pending);
+
+    let promoted = repo.promote_admin(" pending-admin ").await.unwrap();
+    assert_eq!(promoted.id, pending.id);
+    assert_eq!(promoted.display_name, pending.display_name);
+    assert!(promoted.is_admin);
+    assert_eq!(promoted.approval_status, ApprovalStatus::Approved);
+    assert!(matches!(
+        repo.promote_admin("missing").await,
+        Err(AccountError::Repo(hypgm_errors::RepoError::NotFound))
+    ));
+    let hashes: Vec<String> =
+        sqlx::query_scalar("SELECT secret_hash FROM exemplum.auth_identities ORDER BY identifier")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(hashes, ["original-hash", "pending-hash"]);
+    let admin = sqlx::PgPool::connect(&db.admin_url).await.unwrap();
+    sqlx::query("ALTER TABLE exemplum.auth_identities ADD CONSTRAINT reject_bootstrap CHECK (identifier <> 'blocked')").execute(&admin).await.unwrap();
+    assert!(
+        repo.create_admin("Rejected", "blocked", "hash")
+            .await
+            .is_err()
+    );
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM exemplum.users")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 2);
 }

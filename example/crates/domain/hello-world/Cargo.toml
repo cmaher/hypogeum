@@ -7,7 +7,6 @@ rust-version.workspace = true
 [dependencies]
 hypgm-errors = { path = "../../../../crates/core/errors" }
 hypgm-authn = { path = "../../../../crates/core/authn" }
-hypgm-authz = { path = "../../../../crates/core/authz" }
 exemplum-dmn-users = { path = "../users" }
 uuid.workspace = true
 async-trait.workspace = true

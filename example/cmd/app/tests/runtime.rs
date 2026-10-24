@@ -98,6 +98,14 @@ async fn executable_uses_persisted_credentials_sessions_and_configured_signing_k
         )
         .await
         .unwrap();
+    // Accounts start pending; this scenario exercises an approved login.
+    {
+        use exemplum_dmn_users::accounts::AccountRepo;
+        exemplum_dmn_users::repo::PgAccountRepo::new(pool.clone())
+            .approve(user_id)
+            .await
+            .unwrap();
+    }
     let RunningApp {
         mut process,
         endpoint,
@@ -211,5 +219,102 @@ async fn executable_uses_persisted_credentials_sessions_and_configured_signing_k
         .unwrap();
     assert!(!status.success());
     admin.close().await;
+    pool.close().await;
+}
+
+#[sqlx::test(migrations = false)]
+#[ignore = "run by integration_suite"]
+async fn executable_registers_pending_accounts_until_administrator_approval(
+    _pool: sqlx::postgres::PgPoolOptions,
+    options: sqlx::postgres::PgConnectOptions,
+) {
+    use exemplum_dmn_users::{accounts::AccountRepo, repo::PgAccountRepo};
+    let db = TestDatabase::provision(options).await;
+    let config =
+        hypgmx_rdbms::DatabaseConfig::new("exemplum_migrator", "exemplum_owner", "exemplum_tasks")
+            .with_app_schema("exemplum")
+            .with_domain_migrator(<dyn hypgmx_rdbms::DomainMigrator>::from_sea_orm::<
+                exemplum_dmn_users::pg::migrations::Migrator,
+            >());
+    db.migrate_with(&config).await;
+    let pool = sqlx::PgPool::connect(&db.users_url).await.unwrap();
+    let repo = PgAccountRepo::new(pool.clone());
+    repo.create_admin(
+        "Administrator",
+        "admin",
+        &hypgm_authn::password::hash_password("admin-password-123").unwrap(),
+    )
+    .await
+    .unwrap();
+    let RunningApp {
+        mut process,
+        endpoint,
+    } = start_app(&db.users_url).await;
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(2))
+        .build()
+        .unwrap();
+    let post = |path: &str, body: serde_json::Value| {
+        client
+            .post(format!("{endpoint}{path}"))
+            .header("content-type", "application/json")
+            .body(body.to_string())
+    };
+    let user_login =
+        serde_json::json!({"username":"process-user","password":"process-password-123"});
+    let registered = post(
+        "/api/auth/register",
+        serde_json::json!({"display_name":"Process User","username":"process-user","password":"process-password-123"}),
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(registered.status(), reqwest::StatusCode::CREATED);
+    let registered: serde_json::Value =
+        serde_json::from_slice(&registered.bytes().await.unwrap()).unwrap();
+    assert_eq!(registered["approval_status"], "pending");
+    let id: Uuid = registered["id"].as_str().unwrap().parse().unwrap();
+    // Pending accounts cannot authenticate.
+    let pending = post("/api/auth/login", user_login.clone())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(pending.status(), reqwest::StatusCode::UNAUTHORIZED);
+    let login = post(
+        "/api/auth/login",
+        serde_json::json!({"username":"admin","password":"admin-password-123"}),
+    )
+    .send()
+    .await
+    .unwrap();
+    assert!(login.status().is_success());
+    let cookie = login.headers()["set-cookie"]
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_owned();
+    let approval = format!("{endpoint}/api/admin/users/{id}/approve");
+    let approve = || client.post(&approval).header("cookie", &cookie).send();
+    let (a, b) = tokio::join!(approve(), approve());
+    assert!(a.unwrap().status().is_success());
+    assert!(b.unwrap().status().is_success());
+    let approved = repo.get(id).await.unwrap();
+    assert!(approved.approved_at.is_some());
+    let login = post("/api/auth/login", user_login).send().await.unwrap();
+    assert!(login.status().is_success());
+    // Optional real-browser run against this same isolated database and app.
+    if std::env::var_os("EXEMPLUM_TEST_BROWSER").is_some() {
+        let status = Command::new("npx")
+            .args(["playwright", "test", "--config", "registration.config.mjs"])
+            .current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/browser"))
+            .env("REGISTRATION_BASE_URL", &endpoint)
+            .status()
+            .await
+            .unwrap();
+        assert!(status.success(), "registration browser checks failed");
+    }
+    process.kill().await.unwrap();
     pool.close().await;
 }

@@ -136,3 +136,81 @@ cargo make ci           # Run full CI suite (fmt, clippy, build, test)
 ## Template Customization
 
 Exemplum serves as the target template for new project generation. The repository-level script `scripts/rename-project.py` is scoped to inspect and customize files within `example/`, replacing `exemplum` / `Exemplum` identities with your project's chosen identity.
+
+## Registration and account administration
+
+The composed app provides browser forms at `/register` and `/login`, with JSON
+registration at `POST /api/auth/register`. A username that is already taken fails
+validation with “Username unavailable”. Registrations remain pending until an
+administrator approves them through `/admin/users` or
+`POST /api/admin/users/{id}/approve`; `GET /api/admin/users` lists account state
+with each account's login username, newest registrations first. Both listings
+accept `status=pending` or `status=approved` to filter, and page with the `after`
+cursor returned as `next_after`. Passwords must contain 8 to 128 characters.
+Administrator authorization reloads account flags on every request.
+
+Approval locks the account row, so concurrent approvals apply once and approving
+an approved account changes nothing. Accounts that existed before the approval
+migration are approved; any account inserted without an explicit status starts
+pending. The app never applies migrations: startup checks the users schema,
+authentication storage, and session storage before listening.
+Both HTML and JSON writes reject cross-site fetch metadata or a foreign Origin.
+
+`AppComponentsFactory::default()` keeps transport tests database-free using focused
+user, authentication and approved-account fakes. Override `account_service` when a
+test needs registration, pending accounts, or administrator behavior. The
+`view_smoke_server` uses these defaults for greeting-page checks; use the real app
+for account lifecycle scenarios.
+
+### Run the registration demo
+
+From `example/`, with Docker running, create the local configuration and set a
+private `EXEMPLUM_APP_JWT_SECRET` (for example, `openssl rand -hex 32`):
+
+```sh
+cp env/local.env.example env/local.env
+cargo make db-up
+cargo make db-provision
+cargo make db-migrate
+cargo make db-verify
+EXEMPLUM_ADMIN_DATABASE_URL=postgres://exemplum_users:password@127.0.0.1:5432/exemplum \
+  cargo run --locked -p exemplum-admin-cli --bin exemplum-admin -- \
+  create --username admin --display-name Administrator
+```
+
+No account is an administrator by default and none is seeded; this command
+requires database access. It prompts for a password without echoing it; use
+`--password-stdin` to read one line from a secret provider for automation. If the
+username already belongs to an account, creation fails and changes nothing. To make
+an existing account an administrator, pass `--promote` instead of
+`--display-name`; promotion approves it and keeps its credentials and profile.
+The output reports `"action": "created"` or `"promoted"`. The command uses the
+restricted users role, never the migration account.
+
+Run `cargo make app`, visit `http://127.0.0.1:8080/register`, and register an
+account. Logging in as that account fails until it is approved. Log in as
+`admin`, visit `/admin/users`, and click **Approve**; the account can then log in.
+
+### Verify the complete flow
+
+The process integration suite provisions its own PostgreSQL container and starts
+the real app executable; no local database or configuration is used:
+
+```sh
+cargo test --locked -p exemplum-app-cli --test runtime
+```
+
+For real Chromium registration/approval checks with JavaScript both enabled and
+disabled, install the browser dependencies once, then run the same isolated suite
+(or `cargo make test-browser-registration`):
+
+```sh
+(cd tests/browser && npm ci && npx playwright install chromium)
+EXEMPLUM_TEST_BROWSER=1 cargo test --locked -p exemplum-app-cli --test runtime
+```
+
+The suite checks that registrations start pending, cannot log in before approval,
+and can after simultaneous administrator approvals. `cargo make test-browser`
+also runs the database-free greeting smoke checks. Root `cargo make ci` includes
+process/database suites and rename checks; the Chromium checks are an explicit
+additional command.

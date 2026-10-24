@@ -45,7 +45,7 @@ pub struct UserPage {
     pub next_after: Option<Uuid>,
 }
 
-pub(crate) fn validate_name(name: &str) -> Result<(), RepoError> {
+pub fn validate_name(name: &str) -> Result<(), RepoError> {
     if name.is_empty() || name.trim() != name || name.chars().count() > 200 || name.contains('\0') {
         return Err(RepoError::InvalidInput(
             "Display name must be trimmed and contain 1..200 characters without NUL".into(),

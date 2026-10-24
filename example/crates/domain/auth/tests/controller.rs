@@ -18,6 +18,7 @@ use uuid::Uuid;
 fn build_test_app(repo: Arc<InMemoryAuthRepo>) -> axum::Router {
     let components = AuthComponentsFactory {
         repo: repo.clone(),
+        accounts: Arc::new(exemplum_dmn_auth::fixtures::ApprovedAccounts),
         password_config: Default::default(),
         token_config: TokenConfig {
             jwt_secret: b"test-secret-key-at-least-32-bytes-for-jwt!".to_vec(),
@@ -29,7 +30,10 @@ fn build_test_app(repo: Arc<InMemoryAuthRepo>) -> axum::Router {
     .build();
     let routes = router(components);
 
-    let backend = ExemplumAuthBackend::from_arc(repo);
+    let backend = ExemplumAuthBackend::from_arc(
+        repo,
+        Arc::new(exemplum_dmn_auth::fixtures::ApprovedAccounts),
+    );
     let login_backend = PrincipalAuthBackend::new(backend);
     let session_store = tower_sessions::MemoryStore::default();
     let session_layer = SessionManagerLayer::new(session_store);

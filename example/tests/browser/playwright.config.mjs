@@ -4,7 +4,7 @@ const port = process.env.SMOKE_PORT || "18080";
 
 export default defineConfig({
   testDir: ".",
-  testMatch: "*.spec.mjs",
+  testMatch: "views.spec.mjs",
   workers: 1,
   use: { baseURL: `http://127.0.0.1:${port}` },
   projects: [
