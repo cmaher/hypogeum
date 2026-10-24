@@ -16,6 +16,9 @@ test("register, approve and observe durable welcome completion", async ({ page, 
   await page.getByRole("button", { name: "Log in", exact: true }).click();
   await expect(page).toHaveURL(/\/$/);
   await page.goto("/admin/users");
+  const administrator = page.getByRole("row").filter({ hasText: "Administrator" });
+  await expect(administrator).toContainText("Not scheduled");
+  await expect(administrator).not.toHaveAttribute("hx-trigger");
   const row = page.getByRole("row").filter({ hasText: name });
   await expect(row).toContainText("Pending");
   await row.getByRole("button", { name: "Approve", exact: true }).click();

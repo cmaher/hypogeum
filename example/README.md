@@ -144,6 +144,8 @@ registration at `POST /api/auth/register`. Registrations remain pending until an
 administrator approves them through `/admin/users` or
 `POST /api/admin/users/{id}/approve`; `GET /api/admin/users` lists account state.
 Administrator authorization reloads account flags on every request.
+Only accounts with a persisted `welcome_scheduled_at` poll for completion;
+bootstrap and migrated accounts without welcome work show “Not scheduled”.
 
 Approval commits the account transition and welcome job together using the
 application pool. Run the separate task binary to process welcome jobs; the app
@@ -184,6 +186,9 @@ Log in as `admin`, visit `/admin/users`, and click **Approve**. Approval appears
 immediately; the worker persists a welcome timestamp. With JavaScript enabled the
 row polls until completion; without JavaScript refresh to see the timestamp.
 The default worker cadence can take about 30 seconds to pick up new work.
+`EXEMPLUM_TASKS_MAX_ATTEMPTS` controls the welcome retry budget (five by default),
+including values above five. Newly submitted jobs defer their operational limit
+to the worker; exhausted jobs remain terminal when this setting changes.
 Stopping the worker before approval leaves durable queued work, which completes
 when `cargo make tasks` starts again. The timestamp is a demo effect, not email.
 

@@ -10,6 +10,14 @@ pub struct WelcomeJob {
     pub user_id: Uuid,
 }
 
+/// Leave the operational retry budget to the consumer. PostgreSQL requires a
+/// persisted integer limit, so use its storage bound rather than a second policy.
+pub fn welcome_task(user_id: Uuid) -> hypgmx_tasks::Task<WelcomeJob> {
+    hypgmx_tasks::apalis::prelude::TaskBuilder::new(WelcomeJob { user_id })
+        .max_attempts(i32::MAX as usize)
+        .build()
+}
+
 pub fn welcome_queue(
     pool: sqlx::PgPool,
     config: WorkerConfig,

@@ -41,6 +41,7 @@ impl From<Account> for UserRow {
             name: account.display_name,
             pending: account.approval_status == ApprovalStatus::Pending,
             processing: account.approval_status == ApprovalStatus::Approved
+                && account.welcome_scheduled_at.is_some()
                 && account.welcome_processed_at.is_none(),
             completed: account
                 .welcome_processed_at

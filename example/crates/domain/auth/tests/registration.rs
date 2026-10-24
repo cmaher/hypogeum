@@ -38,6 +38,7 @@ impl AccountService for Accounts {
             approval_status: ApprovalStatus::Pending,
             is_admin: false,
             approved_at: None,
+            welcome_scheduled_at: None,
             welcome_processed_at: None,
         };
         self.repo
@@ -199,7 +200,12 @@ async fn invalid_registration_and_role_injection_are_rejected() {
             .unwrap_err();
         assert_eq!(error.classification().status, StatusCode::BAD_REQUEST);
     }
-    for field in ["is_admin", "approval_status", "welcome_processed_at"] {
+    for field in [
+        "is_admin",
+        "approval_status",
+        "welcome_scheduled_at",
+        "welcome_processed_at",
+    ] {
         let mut body = serde_json::json!({"display_name":"Alice","username":"alice","password":"long password!"});
         body[field] = serde_json::json!(true);
         assert!(serde_json::from_value::<RegistrationRequest>(body).is_err());

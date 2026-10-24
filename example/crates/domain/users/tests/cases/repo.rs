@@ -19,8 +19,8 @@ fn exemplum_config() -> hypgmx_rdbms::DatabaseConfig {
             ..hypgmx_rdbms::ServiceContract::new(
                 "exemplum",
                 "exemplum_users",
-                2,
-                Some("m20261024_000003_account_lifecycle"),
+                3,
+                Some("m20261024_000004_welcome_scheduling"),
                 "users",
             )
         })
@@ -51,6 +51,15 @@ async fn existing_user_survives_migration_upgrade(
     let before = repo.create(Uuid::new_v4(), "Existing User").await.unwrap();
     db.migrate_with(&exemplum_config()).await;
     assert_eq!(repo.get(before.id).await.unwrap(), before);
+    use exemplum_dmn_users::accounts::AccountRepo;
+    assert!(
+        exemplum_dmn_users::repo::PgAccountRepo::new(pool.clone())
+            .get(before.id)
+            .await
+            .unwrap()
+            .welcome_scheduled_at
+            .is_none()
+    );
     let state: (String, bool, Option<chrono::DateTime<chrono::Utc>>, Option<chrono::DateTime<chrono::Utc>>) = sqlx::query_as(
         "SELECT approval_status, is_admin, approved_at, welcome_processed_at FROM exemplum.users WHERE id = $1"
     ).bind(before.id).fetch_one(&pool).await.unwrap();
@@ -433,6 +442,7 @@ async fn account_registration_is_atomic_and_paginated(
     assert_eq!(first.approval_status, ApprovalStatus::Pending);
     assert!(!first.is_admin);
     assert!(first.approved_at.is_none() && first.welcome_processed_at.is_none());
+    assert!(first.welcome_scheduled_at.is_none());
     assert_eq!(repo.get(first.id).await.unwrap(), first);
     assert!(matches!(
         service.register("Duplicate", "Alice", "hash").await,
@@ -535,6 +545,7 @@ async fn approval_and_welcome_are_atomic_and_repeat_safe(
     let unchanged = repo.get(account.id).await.unwrap();
     assert_eq!(unchanged.approval_status, ApprovalStatus::Pending);
     assert!(unchanged.approved_at.is_none());
+    assert!(unchanged.welcome_scheduled_at.is_none());
     sqlx::query("GRANT INSERT ON apalis.jobs TO exemplum_users")
         .execute(&admin)
         .await
@@ -544,6 +555,7 @@ async fn approval_and_welcome_are_atomic_and_repeat_safe(
     assert_eq!(approved, b.unwrap());
     assert_eq!(approved.approval_status, ApprovalStatus::Approved);
     assert!(approved.approved_at.is_some());
+    assert_eq!(approved.welcome_scheduled_at, approved.approved_at);
     assert_eq!(repo.approve(account.id).await.unwrap(), approved);
     assert!(repo.approve(Uuid::new_v4()).await.is_err());
     let count: i64 = sqlx::query_scalar(
@@ -630,6 +642,7 @@ async fn administrator_bootstrap_is_atomic_repeatable_and_preserves_credentials(
     assert_eq!(fresh.approval_status, ApprovalStatus::Approved);
     assert!(fresh.approved_at.is_some());
     assert!(fresh.welcome_processed_at.is_none());
+    assert!(fresh.welcome_scheduled_at.is_none());
     assert_eq!(
         repo.bootstrap_admin("Changed", "admin", Some("replacement"))
             .await
@@ -654,6 +667,7 @@ async fn administrator_bootstrap_is_atomic_repeatable_and_preserves_credentials(
     assert_eq!(promoted.display_name, pending.display_name);
     assert!(promoted.is_admin);
     assert_eq!(promoted.approval_status, ApprovalStatus::Approved);
+    assert!(promoted.welcome_scheduled_at.is_none());
     let hashes: Vec<String> =
         sqlx::query_scalar("SELECT secret_hash FROM exemplum.auth_identities ORDER BY identifier")
             .fetch_all(&pool)
@@ -677,4 +691,108 @@ async fn administrator_bootstrap_is_atomic_repeatable_and_preserves_credentials(
         .await
         .unwrap();
     assert_eq!(count, 2);
+}
+
+#[sqlx::test(migrations = false)]
+#[ignore = "run by integration_suite"]
+async fn welcome_upgrade_backfills_only_scheduled_accounts(
+    _pool_options: sqlx::postgres::PgPoolOptions,
+    options: PgConnectOptions,
+) {
+    use exemplum_dmn_users::{accounts::AccountRepo, repo::PgAccountRepo};
+    use std::str::FromStr;
+    let db = TestDatabase::provision(options).await;
+    db.migrate_with(&exemplum_config()).await;
+    let owner = PgConnectOptions::from_str(&db.exemplum_migration_url)
+        .unwrap()
+        .options([
+            ("role", "exemplum_owner"),
+            ("search_path", "exemplum,pg_catalog"),
+        ]);
+    let migration_pool = sqlx::PgPool::connect_with(owner).await.unwrap();
+    let sea_db = sea_orm::SqlxPostgresConnector::from_sqlx_postgres_pool(migration_pool.clone());
+    exemplum_dmn_users::pg::migrations::Migrator::down(&sea_db, Some(1))
+        .await
+        .unwrap();
+    let pool = sqlx::PgPool::connect(&db.users_url).await.unwrap();
+    let repo = PgUserRepo::new(pool.clone());
+    let queued = repo.create(Uuid::new_v4(), "Queued").await.unwrap();
+    let bootstrap = repo.create(Uuid::new_v4(), "Bootstrap").await.unwrap();
+    let legacy = repo.create(Uuid::new_v4(), "Legacy").await.unwrap();
+    let completed = repo.create(Uuid::new_v4(), "Completed").await.unwrap();
+    sqlx::query("UPDATE exemplum.users SET approved_at = now(), is_admin = true WHERE id = $1")
+        .bind(bootstrap.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE exemplum.users SET approved_at = now() WHERE id = $1")
+        .bind(queued.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE exemplum.users SET welcome_processed_at = now() WHERE id = $1")
+        .bind(completed.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let mut tx = pool.begin().await.unwrap();
+    sqlx::query("SET LOCAL search_path = pg_catalog, apalis")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    let queue = exemplum_dmn_users::jobs::welcome_queue(
+        pool.clone(),
+        hypgmx_tasks::WorkerConfig::default(),
+    )
+    .unwrap();
+    // Old producers persisted five attempts, including jobs that already exhausted them.
+    let tasks = [queued.id, legacy.id].map(|user_id| {
+        queue
+            .task(exemplum_dmn_users::jobs::WelcomeJob { user_id })
+            .try_map_args(|args| serde_json::to_vec(&args))
+            .unwrap()
+    });
+    hypgmx_tasks::apalis_postgres::queries::push_tasks(
+        &mut *tx,
+        exemplum_dmn_users::jobs::WELCOME_QUEUE,
+        tasks.into(),
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    let admin = sqlx::PgPool::connect(&db.admin_url).await.unwrap();
+    sqlx::query("UPDATE apalis.jobs SET attempts = 5, status = 'Failed' WHERE convert_from(job, 'UTF8')::jsonb ->> 'user_id' = $1")
+        .bind(legacy.id.to_string()).execute(&admin).await.unwrap();
+    db.migrate_with(&exemplum_config()).await;
+    let accounts = PgAccountRepo::new(pool.clone());
+    let queued_state = accounts.get(queued.id).await.unwrap();
+    assert_eq!(queued_state.welcome_scheduled_at, queued_state.approved_at);
+    assert!(queued_state.welcome_scheduled_at.is_some());
+    assert!(
+        accounts
+            .get(bootstrap.id)
+            .await
+            .unwrap()
+            .welcome_scheduled_at
+            .is_none()
+    );
+    let completed_state = accounts.get(completed.id).await.unwrap();
+    assert_eq!(
+        completed_state.welcome_scheduled_at,
+        completed_state.welcome_processed_at
+    );
+    let limits: Vec<(String, i32)> = sqlx::query_as(
+        "SELECT convert_from(job, 'UTF8')::jsonb ->> 'user_id', max_attempts FROM apalis.jobs",
+    )
+    .fetch_all(&admin)
+    .await
+    .unwrap();
+    assert!(limits.contains(&(queued.id.to_string(), i32::MAX)));
+    assert!(
+        limits.contains(&(legacy.id.to_string(), 5)),
+        "exhausted jobs must remain terminal"
+    );
+    migration_pool.close().await;
+    admin.close().await;
+    pool.close().await;
 }

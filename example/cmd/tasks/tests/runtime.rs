@@ -45,6 +45,9 @@ fn worker(db: &TestDatabase) -> Child {
     command(Path::new(env!("CARGO_BIN_EXE_exemplum-tasks")))
         .env("EXEMPLUM_TASKS_DATABASE_URL", &db.exemplum_tasks_url)
         .env("EXEMPLUM_TASKS_HEARTBEAT_SECONDS", "1")
+        .env("EXEMPLUM_TASKS_MAX_ATTEMPTS", "7")
+        .env("EXEMPLUM_TASKS_BACKOFF_INITIAL_SECONDS", "1")
+        .env("EXEMPLUM_TASKS_BACKOFF_MAX_SECONDS", "1")
         .env("EXEMPLUM_TASKS_HANDLER_DATABASE_URL", &db.users_url)
         .spawn()
         .unwrap()
@@ -182,8 +185,37 @@ async fn registration_approval_and_durable_worker(
     assert!(repo.get(id).await.unwrap().welcome_processed_at.is_none());
     // Queue survives app shutdown and a stopped worker; no UI requests drive completion.
     stop(&mut app).await;
+    // Sequence increments survive failed transactions: force five handler failures
+    // and prove the worker's configured seventh attempt budget reaches success.
+    sqlx::raw_sql(
+        "CREATE SEQUENCE exemplum.welcome_test_attempts;
+        GRANT USAGE ON SEQUENCE exemplum.welcome_test_attempts TO exemplum_users;
+        CREATE FUNCTION exemplum.fail_first_five_welcomes() RETURNS trigger
+        LANGUAGE plpgsql AS $$ BEGIN
+            IF NEW.welcome_processed_at IS NOT NULL AND OLD.welcome_processed_at IS NULL
+               AND nextval('exemplum.welcome_test_attempts') <= 5 THEN
+                RAISE EXCEPTION 'simulated transient welcome failure';
+            END IF;
+            RETURN NEW;
+        END $$;
+        CREATE TRIGGER fail_first_five_welcomes BEFORE UPDATE ON exemplum.users
+        FOR EACH ROW EXECUTE FUNCTION exemplum.fail_first_five_welcomes();",
+    )
+    .execute(&admin)
+    .await
+    .unwrap();
     let mut consumer = worker(&db);
     let first = completed(&repo, id, &mut consumer).await;
+    let attempts: i64 = sqlx::query_scalar("SELECT last_value FROM exemplum.welcome_test_attempts")
+        .fetch_one(&admin)
+        .await
+        .unwrap();
+    assert_eq!(attempts, 6);
+    assert!(first.welcome_scheduled_at.is_some());
+    sqlx::query("DROP TRIGGER fail_first_five_welcomes ON exemplum.users")
+        .execute(&admin)
+        .await
+        .unwrap();
     // The handler persists before Apalis acknowledges; wait for acknowledgement
     // before stopping so the restart assertion is independent of that race.
     tokio::time::timeout(Duration::from_secs(30), async {

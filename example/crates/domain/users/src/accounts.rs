@@ -38,6 +38,8 @@ pub struct Account {
     pub approval_status: ApprovalStatus,
     pub is_admin: bool,
     pub approved_at: Option<DateTime<Utc>>,
+    /// Set atomically with enqueue; absent for accounts without welcome work.
+    pub welcome_scheduled_at: Option<DateTime<Utc>>,
     pub welcome_processed_at: Option<DateTime<Utc>>,
 }
 

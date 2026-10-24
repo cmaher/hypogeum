@@ -28,6 +28,7 @@ pub(crate) mod entity {
         pub approval_status: ApprovalStatus,
         pub is_admin: bool,
         pub approved_at: Option<DateTimeUtc>,
+        pub welcome_scheduled_at: Option<DateTimeUtc>,
         pub welcome_processed_at: Option<DateTimeUtc>,
     }
     #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
@@ -44,6 +45,7 @@ impl From<entity::Model> for Account {
             approval_status: value.approval_status,
             is_admin: value.is_admin,
             approved_at: value.approved_at,
+            welcome_scheduled_at: value.welcome_scheduled_at,
             welcome_processed_at: value.welcome_processed_at,
         }
     }
@@ -108,6 +110,7 @@ impl PgAccountRepo {
                 approval_status: Set(ApprovalStatus::Approved),
                 is_admin: Set(true),
                 approved_at: Set(Some(chrono::Utc::now())),
+                welcome_scheduled_at: Set(None),
                 welcome_processed_at: Set(None),
                 ..Default::default()
             }
@@ -188,6 +191,7 @@ impl AccountRepo for PgAccountRepo {
             approval_status: Set(ApprovalStatus::Pending),
             is_admin: Set(false),
             approved_at: Set(None),
+            welcome_scheduled_at: Set(None),
             welcome_processed_at: Set(None),
             ..Default::default()
         }
@@ -261,19 +265,17 @@ impl AccountRepo for PgAccountRepo {
                     Expr::value(ApprovalStatus::Approved),
                 )
                 .col_expr(entity::Column::ApprovedAt, Expr::current_timestamp())
+                .col_expr(
+                    entity::Column::WelcomeScheduledAt,
+                    Expr::current_timestamp(),
+                )
                 .filter(entity::Column::Id.eq(id));
             let (sql, args) = QueryTrait::query(&mut update).build_sqlx(PostgresQueryBuilder);
             sqlx::query_with(sqlx::AssertSqlSafe(sql), args)
                 .execute(&mut *tx)
                 .await
                 .map_err(RepoError::database)?;
-            let queue = crate::jobs::welcome_queue(
-                self.pool.clone(),
-                hypgmx_tasks::WorkerConfig::default(),
-            )
-            .map_err(RepoError::database)?;
-            let task = queue
-                .task(crate::jobs::WelcomeJob { user_id: id })
+            let task = crate::jobs::welcome_task(id)
                 .try_map_args(|args| serde_json::to_vec(&args))
                 .map_err(RepoError::database)?;
             hypgmx_tasks::apalis_postgres::queries::push_tasks(

@@ -44,6 +44,7 @@ fn setup() -> (AdminService, Arc<Accounts>, Principal) {
         approval_status: ApprovalStatus::Approved,
         is_admin: true,
         approved_at: Some(now),
+        welcome_scheduled_at: None,
         welcome_processed_at: None,
     })));
     let (schema, policies) = hypgm_authz::load_schema_and_policies(
@@ -218,6 +219,7 @@ fn missing_attributes_and_unknown_actions_deny() {
 #[tokio::test]
 async fn browser_rows_escape_poll_stop_and_enforce_current_authority() {
     let (service, accounts, principal) = setup();
+    accounts.0.lock().unwrap().welcome_scheduled_at = Some(chrono::Utc::now());
     accounts.0.lock().unwrap().display_name = "<script>alert(1)</script>".into();
     let app = exemplum_dmn_admin::view::router(service)
         .layer(axum::middleware::from_fn(hypgm_view::cross_site_middleware));
@@ -331,5 +333,38 @@ async fn browser_rows_escape_poll_stop_and_enforce_current_authority() {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+}
+
+#[tokio::test]
+async fn unscheduled_accounts_do_not_poll_or_claim_processing() {
+    for approved_at in [None, Some(chrono::Utc::now())] {
+        let (service, accounts, principal) = setup();
+        accounts.0.lock().unwrap().approved_at = approved_at;
+        let app = exemplum_dmn_admin::view::router(service);
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/users")
+                    .extension(principal)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let html = String::from_utf8(
+            to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        assert!(
+            !html.contains("hx-trigger"),
+            "unscheduled account must not poll"
+        );
+        assert!(!html.contains("Awaiting processing"));
+        assert!(html.contains("Not scheduled"));
     }
 }

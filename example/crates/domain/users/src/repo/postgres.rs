@@ -123,7 +123,7 @@ pub async fn check_ready(pool: &PgPool) -> Result<(), RepoError> {
         .fetch_one(pool)
         .await
         .map_err(RepoError::database)?;
-    if version != 2 {
+    if version != 3 {
         return Err(RepoError::InvalidInput(
             "Users schema is not ready; run explicit migrations".into(),
         ));
