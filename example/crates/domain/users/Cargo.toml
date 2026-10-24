@@ -5,6 +5,9 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+hypgmx-tasks = { path = "../../../../crates/ext/tasks" }
+serde_json.workspace = true
+sea-query-sqlx.workspace = true
 hypgm-errors = { path = "../../../../crates/core/errors" }
 hypgmx-rdbms = { path = "../../../../crates/ext/rdbms", features = ["postgres"] }
 sqlx = { workspace = true, features = ["macros"] }
@@ -24,8 +27,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 thiserror.workspace = true
 
 [dev-dependencies]
-hypgmx-tasks = { path = "../../../../crates/ext/tasks" }
-serde_json.workspace = true
 hypgm-test-support = { path = "../../../../crates/core/test-support" }
 tokio-stream = { version = "0.1", features = ["net"] }
 

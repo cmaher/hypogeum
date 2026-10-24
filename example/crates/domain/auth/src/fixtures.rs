@@ -6,6 +6,9 @@ impl AccountService for ApprovedAccounts {
     async fn register(&self, _: &str, _: &str, _: &str) -> Result<Account, AccountError> {
         Err(AccountError::Validation)
     }
+    async fn approve(&self, _: uuid::Uuid) -> Result<Account, AccountError> {
+        Err(AccountError::Validation)
+    }
     async fn get(&self, id: uuid::Uuid) -> Result<Account, AccountError> {
         Ok(Account {
             id,

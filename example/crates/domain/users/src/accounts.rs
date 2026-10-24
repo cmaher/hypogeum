@@ -75,6 +75,7 @@ pub trait AccountRepo: Send + Sync {
         username: &str,
         password_hash: &str,
     ) -> Result<Account, AccountError>;
+    async fn approve(&self, id: Uuid) -> Result<Account, AccountError>;
     async fn get(&self, id: Uuid) -> Result<Account, AccountError>;
     async fn list(&self, page: PageRequest) -> Result<AccountPage, AccountError>;
 }
@@ -86,6 +87,7 @@ pub trait AccountService: Send + Sync {
         username: &str,
         password_hash: &str,
     ) -> Result<Account, AccountError>;
+    async fn approve(&self, id: Uuid) -> Result<Account, AccountError>;
     async fn get(&self, id: Uuid) -> Result<Account, AccountError>;
     async fn list(&self, page: PageRequest) -> Result<AccountPage, AccountError>;
 }
@@ -123,6 +125,9 @@ impl AccountService for DefaultAccountService {
         self.repo
             .register(display_name, username, password_hash)
             .await
+    }
+    async fn approve(&self, id: Uuid) -> Result<Account, AccountError> {
+        self.repo.approve(id).await
     }
     async fn get(&self, id: Uuid) -> Result<Account, AccountError> {
         self.repo.get(id).await

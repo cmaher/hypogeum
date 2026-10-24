@@ -54,6 +54,9 @@ impl AccountService for Accounts {
         *self.account.lock().unwrap() = Some(account.clone());
         Ok(account)
     }
+    async fn approve(&self, _: uuid::Uuid) -> Result<Account, AccountError> {
+        Err(AccountError::Validation)
+    }
     async fn get(&self, _: uuid::Uuid) -> Result<Account, AccountError> {
         self.account
             .lock()

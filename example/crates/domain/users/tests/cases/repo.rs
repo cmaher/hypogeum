@@ -480,3 +480,120 @@ async fn account_registration_is_atomic_and_paginated(
     pool.close().await;
     admin.close().await;
 }
+
+#[sqlx::test(migrations = false)]
+#[ignore = "run by integration_suite"]
+async fn approval_and_welcome_are_atomic_and_repeat_safe(
+    _pool_options: sqlx::postgres::PgPoolOptions,
+    options: PgConnectOptions,
+) {
+    use exemplum_dmn_users::{
+        accounts::{AccountRepo, ApprovalStatus},
+        jobs::{WelcomeJob, handle_welcome},
+        repo::PgAccountRepo,
+    };
+    use std::sync::Arc;
+    let db = TestDatabase::provision(options).await;
+    db.migrate_with(&exemplum_config()).await;
+    let pool = sqlx::PgPool::connect(&db.users_url).await.unwrap();
+    let admin = sqlx::PgPool::connect(&db.admin_url).await.unwrap();
+    let tasks = sqlx::PgPool::connect(&db.exemplum_tasks_url).await.unwrap();
+    let repo = Arc::new(PgAccountRepo::new(pool.clone()));
+    let account = repo.register("Welcome", "welcome", "hash").await.unwrap();
+    assert!(
+        handle_welcome(
+            WelcomeJob {
+                user_id: account.id
+            },
+            repo.clone()
+        )
+        .await
+        .is_err()
+    );
+    assert!(
+        repo.get(account.id)
+            .await
+            .unwrap()
+            .welcome_processed_at
+            .is_none()
+    );
+    sqlx::query("REVOKE INSERT ON apalis.jobs FROM exemplum_users")
+        .execute(&admin)
+        .await
+        .unwrap();
+    assert!(repo.approve(account.id).await.is_err());
+    let unchanged = repo.get(account.id).await.unwrap();
+    assert_eq!(unchanged.approval_status, ApprovalStatus::Pending);
+    assert!(unchanged.approved_at.is_none());
+    sqlx::query("GRANT INSERT ON apalis.jobs TO exemplum_users")
+        .execute(&admin)
+        .await
+        .unwrap();
+    let (a, b) = tokio::join!(repo.approve(account.id), repo.approve(account.id));
+    let approved = a.unwrap();
+    assert_eq!(approved, b.unwrap());
+    assert_eq!(approved.approval_status, ApprovalStatus::Approved);
+    assert!(approved.approved_at.is_some());
+    assert_eq!(repo.approve(account.id).await.unwrap(), approved);
+    assert!(repo.approve(Uuid::new_v4()).await.is_err());
+    let count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM apalis.jobs WHERE job_type = 'exemplum.welcome.v1'",
+    )
+    .fetch_one(&tasks)
+    .await
+    .unwrap();
+    assert_eq!(count, 1);
+    handle_welcome(
+        WelcomeJob {
+            user_id: account.id,
+        },
+        repo.clone(),
+    )
+    .await
+    .unwrap();
+    let completed = repo.get(account.id).await.unwrap();
+    assert!(completed.welcome_processed_at.is_some());
+    let (a, b) = tokio::join!(
+        handle_welcome(
+            WelcomeJob {
+                user_id: account.id
+            },
+            repo.clone()
+        ),
+        handle_welcome(
+            WelcomeJob {
+                user_id: account.id
+            },
+            repo.clone()
+        )
+    );
+    a.unwrap();
+    b.unwrap();
+    assert_eq!(repo.get(account.id).await.unwrap(), completed);
+    PgUserRepo::new(pool.clone())
+        .delete(account.id)
+        .await
+        .unwrap();
+    handle_welcome(
+        WelcomeJob {
+            user_id: account.id,
+        },
+        repo.clone(),
+    )
+    .await
+    .unwrap();
+    // Persistence failures remain errors so the framework retry policy can retry them.
+    pool.close().await;
+    assert!(
+        handle_welcome(
+            WelcomeJob {
+                user_id: account.id
+            },
+            repo
+        )
+        .await
+        .is_err()
+    );
+    tasks.close().await;
+    admin.close().await;
+}

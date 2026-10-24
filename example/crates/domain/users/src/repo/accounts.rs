@@ -50,12 +50,35 @@ impl From<entity::Model> for Account {
 }
 pub struct PgAccountRepo {
     db: DatabaseConnection,
+    pool: PgPool,
 }
 impl PgAccountRepo {
     pub fn new(pool: PgPool) -> Self {
         Self {
-            db: SqlxPostgresConnector::from_sqlx_postgres_pool(pool),
+            db: SqlxPostgresConnector::from_sqlx_postgres_pool(pool.clone()),
+            pool,
         }
+    }
+    /// Persist the welcome effect once; missing targets are successful no-ops.
+    pub async fn process_welcome(&self, id: Uuid) -> Result<(), AccountError> {
+        let tx = self.db.begin().await.map_err(database)?;
+        if let Some(account) = entity::Entity::find_by_id(id)
+            .lock_exclusive()
+            .one(&tx)
+            .await
+            .map_err(database)?
+        {
+            if account.approval_status != ApprovalStatus::Approved {
+                return Err(AccountError::Validation);
+            }
+            if account.welcome_processed_at.is_none() {
+                let mut account: entity::ActiveModel = account.into();
+                account.welcome_processed_at = Set(Some(chrono::Utc::now()));
+                account.update(&tx).await.map_err(database)?;
+            }
+        }
+        tx.commit().await.map_err(database)?;
+        Ok(())
     }
 }
 fn database(error: sea_orm::DbErr) -> AccountError {
@@ -126,6 +149,62 @@ impl AccountRepo for PgAccountRepo {
         }
         tx.commit().await.map_err(database)?;
         Ok(account.into())
+    }
+    async fn approve(&self, id: Uuid) -> Result<Account, AccountError> {
+        use sea_orm::{
+            QueryTrait,
+            sea_query::{Expr, PostgresQueryBuilder},
+        };
+        use sea_query_sqlx::SqlxBinder;
+        let mut tx = self.pool.begin().await.map_err(RepoError::database)?;
+        // Upstream transactional enqueue refers to the hstore type without a schema.
+        sqlx::query("SET LOCAL search_path = pg_catalog, apalis")
+            .execute(&mut *tx)
+            .await
+            .map_err(RepoError::database)?;
+        let mut select = entity::Entity::find_by_id(id)
+            .select_only()
+            .column(entity::Column::ApprovalStatus)
+            .lock_exclusive();
+        let (sql, args) = QueryTrait::query(&mut select).build_sqlx(PostgresQueryBuilder);
+        // SeaQuery generates identifiers and placeholders; all input stays bound.
+        let status: Option<(String,)> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql), args)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(RepoError::database)?;
+        let status = status.ok_or(RepoError::NotFound)?.0;
+        if status == "pending" {
+            let mut update = entity::Entity::update_many()
+                .col_expr(
+                    entity::Column::ApprovalStatus,
+                    Expr::value(ApprovalStatus::Approved),
+                )
+                .col_expr(entity::Column::ApprovedAt, Expr::current_timestamp())
+                .filter(entity::Column::Id.eq(id));
+            let (sql, args) = QueryTrait::query(&mut update).build_sqlx(PostgresQueryBuilder);
+            sqlx::query_with(sqlx::AssertSqlSafe(sql), args)
+                .execute(&mut *tx)
+                .await
+                .map_err(RepoError::database)?;
+            let queue = crate::jobs::welcome_queue(
+                self.pool.clone(),
+                hypgmx_tasks::WorkerConfig::default(),
+            )
+            .map_err(RepoError::database)?;
+            let task = queue
+                .task(crate::jobs::WelcomeJob { user_id: id })
+                .try_map_args(|args| serde_json::to_vec(&args))
+                .map_err(RepoError::database)?;
+            hypgmx_tasks::apalis_postgres::queries::push_tasks(
+                &mut *tx,
+                crate::jobs::WELCOME_QUEUE,
+                vec![task],
+            )
+            .await
+            .map_err(RepoError::database)?;
+        }
+        tx.commit().await.map_err(RepoError::database)?;
+        self.get(id).await
     }
     async fn get(&self, id: Uuid) -> Result<Account, AccountError> {
         entity::Entity::find_by_id(id)
