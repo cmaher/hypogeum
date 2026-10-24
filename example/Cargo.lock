@@ -1920,7 +1920,7 @@ dependencies = [
 
 [[package]]
 name = "hypgm-authn"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "argon2",
  "async-trait",
@@ -1942,7 +1942,7 @@ dependencies = [
 
 [[package]]
 name = "hypgm-authz"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "axum",
  "cedar-policy",
@@ -1957,7 +1957,7 @@ dependencies = [
 
 [[package]]
 name = "hypgm-envconfig"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "dotenvy",
  "envy",
@@ -1967,7 +1967,7 @@ dependencies = [
 
 [[package]]
 name = "hypgm-errors"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "http",
  "thiserror",
@@ -1976,7 +1976,7 @@ dependencies = [
 
 [[package]]
 name = "hypgm-http"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "axum",
  "bytes",
@@ -1993,7 +1993,7 @@ dependencies = [
 
 [[package]]
 name = "hypgm-logging"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "serde",
  "thiserror",
@@ -2004,7 +2004,7 @@ dependencies = [
 
 [[package]]
 name = "hypgm-rpc"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "prost",
  "prost-types",
@@ -2016,7 +2016,7 @@ dependencies = [
 
 [[package]]
 name = "hypgm-test-support"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "hypgmx-rdbms",
  "sqlx",
@@ -2026,7 +2026,7 @@ dependencies = [
 
 [[package]]
 name = "hypgm-view"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "askama",
  "axum",
@@ -2039,7 +2039,7 @@ dependencies = [
 
 [[package]]
 name = "hypgmx-rdbms"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "apalis-postgres",
  "async-trait",
