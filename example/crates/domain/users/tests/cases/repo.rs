@@ -398,3 +398,85 @@ async fn restricted_producer_enqueues_atomically_and_verifies_grants(
     tasks.close().await;
     admin.close().await;
 }
+
+#[sqlx::test(migrations = false)]
+#[ignore = "run by integration_suite"]
+async fn account_registration_is_atomic_and_paginated(
+    _pool_options: sqlx::postgres::PgPoolOptions,
+    options: PgConnectOptions,
+) {
+    use exemplum_dmn_users::accounts::{
+        AccountError, AccountRepo, AccountService, ApprovalStatus, DefaultAccountService,
+    };
+    use exemplum_dmn_users::repo::PgAccountRepo;
+    use std::sync::Arc;
+    let db = TestDatabase::provision(options).await;
+    db.migrate_with(&exemplum_config()).await;
+    let pool = sqlx::PgPool::connect(&db.users_url).await.unwrap();
+    let repo = Arc::new(PgAccountRepo::new(pool.clone()));
+    let service = DefaultAccountService::new(repo.clone());
+    let first = service
+        .register(" Alice ", " Alice ", "validated-hash")
+        .await
+        .unwrap();
+    assert_eq!(first.display_name, "Alice");
+    assert_eq!(first.approval_status, ApprovalStatus::Pending);
+    assert!(!first.is_admin);
+    assert!(first.approved_at.is_none() && first.welcome_processed_at.is_none());
+    assert_eq!(repo.get(first.id).await.unwrap(), first);
+    assert!(matches!(
+        service.register("Duplicate", "Alice", "hash").await,
+        Err(AccountError::DuplicateUsername)
+    ));
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM exemplum.users")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 1, "failed identity insert must roll back user");
+    // An unrelated database failure must also roll back the user row.
+    let admin = sqlx::PgPool::connect(&db.admin_url).await.unwrap();
+    sqlx::query("ALTER TABLE exemplum.auth_identities ADD CONSTRAINT reject_test_identity CHECK (identifier <> 'blocked')").execute(&admin).await.unwrap();
+    assert!(matches!(
+        service.register("Rejected", "blocked", "hash").await,
+        Err(AccountError::Repo(_))
+    ));
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM exemplum.users")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 1);
+    let second = service.register("Other", "alice", "hash").await.unwrap();
+    let mut seen = Vec::new();
+    let mut cursor = None;
+    loop {
+        let page = service
+            .list(PageRequest::new(cursor, 1).unwrap())
+            .await
+            .unwrap();
+        assert!(page.accounts.len() <= 1);
+        for account in &page.accounts {
+            let json = serde_json::to_string(account).unwrap();
+            assert!(!json.contains("hash") && !json.contains("username"));
+            seen.push(account.id);
+        }
+        match page.next_after {
+            Some(next) => cursor = Some(next),
+            None => break,
+        }
+    }
+    assert_eq!(seen.len(), 2);
+    assert!(seen.windows(2).all(|pair| pair[0] < pair[1]));
+    assert!(seen.contains(&first.id) && seen.contains(&second.id));
+    for (name, username, hash) in [
+        ("", "valid", "hash"),
+        ("Valid", "bad\0name", "hash"),
+        ("Valid", "valid", ""),
+    ] {
+        assert!(matches!(
+            service.register(name, username, hash).await,
+            Err(AccountError::Validation)
+        ));
+    }
+    pool.close().await;
+    admin.close().await;
+}

@@ -1,3 +1,5 @@
+pub mod accounts;
+pub use accounts::PgAccountRepo;
 pub mod entity;
 mod postgres;
 use crate::models::{PageRequest, User, UserPage};
