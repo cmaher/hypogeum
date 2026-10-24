@@ -48,12 +48,30 @@ pub(crate) async fn connection(
         };
         let seaql_migrations = format!("{}.seaql_migrations", contract.schema);
 
+        let forbidden_job_privileges = if contract.task_producer {
+            "SELECT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER"
+        } else {
+            "SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER"
+        };
+        if contract.task_producer {
+            let producer_ready: bool = sqlx::query_scalar(
+                "SELECT has_schema_privilege($1, 'apalis', 'USAGE')
+                 AND has_type_privilege($1, 'apalis.hstore', 'USAGE')
+                 AND has_table_privilege($1, 'apalis.jobs', 'INSERT')",
+            )
+            .bind(&contract.service_role)
+            .fetch_one(&mut *connection)
+            .await
+            .map_err(MigrationError::database)?;
+            require(producer_ready, "Task producer privilege drift")?;
+        }
         let service_query = format!(
             "SELECT \
-             has_schema_privilege($1, $2, 'CREATE') OR has_schema_privilege($1, 'public', 'CREATE') \
+             has_schema_privilege($1, $2, 'CREATE') OR has_schema_privilege($1, 'apalis', 'CREATE') OR has_schema_privilege($1, 'public', 'CREATE') \
              OR has_schema_privilege($1, 'infra', 'CREATE') \
              OR has_database_privilege($1, current_database(), 'CREATE,TEMPORARY') \
-             OR has_table_privilege($1, 'apalis.jobs', 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') \
+             OR has_table_privilege($1, 'apalis.jobs', '{forbidden_job_privileges}') \
+             OR has_table_privilege($1, 'apalis.workers', 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') \
              OR has_table_privilege($1, 'apalis._sqlx_migrations', 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') \
              OR has_table_privilege($1, '{seaql_migrations}', 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') \
              OR EXISTS(SELECT FROM pg_catalog.pg_auth_members m JOIN pg_catalog.pg_roles r ON r.oid=m.member WHERE r.rolname=$1)"

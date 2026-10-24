@@ -14,13 +14,16 @@ fn exemplum_config() -> hypgmx_rdbms::DatabaseConfig {
         .with_domain_migrator(<dyn hypgmx_rdbms::DomainMigrator>::from_sea_orm::<
             exemplum_dmn_users::pg::migrations::Migrator,
         >())
-        .with_service_contract(hypgmx_rdbms::ServiceContract::new(
-            "exemplum",
-            "exemplum_users",
-            1,
-            Some("m20260101_000001_create_users"),
-            "users",
-        ))
+        .with_service_contract(hypgmx_rdbms::ServiceContract {
+            task_producer: true,
+            ..hypgmx_rdbms::ServiceContract::new(
+                "exemplum",
+                "exemplum_users",
+                2,
+                Some("m20261024_000003_account_lifecycle"),
+                "users",
+            )
+        })
 }
 
 #[sqlx::test(migrations = false)]
@@ -48,6 +51,10 @@ async fn existing_user_survives_migration_upgrade(
     let before = repo.create(Uuid::new_v4(), "Existing User").await.unwrap();
     db.migrate_with(&exemplum_config()).await;
     assert_eq!(repo.get(before.id).await.unwrap(), before);
+    let state: (String, bool, Option<chrono::DateTime<chrono::Utc>>, Option<chrono::DateTime<chrono::Utc>>) = sqlx::query_as(
+        "SELECT approval_status, is_admin, approved_at, welcome_processed_at FROM exemplum.users WHERE id = $1"
+    ).bind(before.id).fetch_one(&pool).await.unwrap();
+    assert_eq!(state, ("approved".into(), false, None, None));
     exemplum_dmn_users::repo::check_ready(&pool).await.unwrap();
     hypgmx_rdbms::verify(&db.exemplum_migration_url, &exemplum_config())
         .await
@@ -157,6 +164,11 @@ async fn user_repository_connects_and_persists_under_runtime_privileges(
         "SELECT * FROM infra._sqlx_migrations",
         "SELECT * FROM apalis._sqlx_migrations",
         "SELECT * FROM apalis.jobs",
+        "UPDATE apalis.jobs SET status = 'Done'",
+        "DELETE FROM apalis.jobs",
+        "SELECT * FROM apalis.workers",
+        "INSERT INTO apalis.workers (id) VALUES ('forbidden')",
+        "CREATE TABLE apalis.forbidden(id integer)",
         "SET ROLE exemplum_owner",
         "CREATE TEMP TABLE forbidden(id integer)",
     ] {
@@ -165,7 +177,7 @@ async fn user_repository_connects_and_persists_under_runtime_privileges(
             "allowed {forbidden}"
         );
     }
-    let tasks = sqlx::PgPool::connect(&db.tasks_url).await.unwrap();
+    let tasks = sqlx::PgPool::connect(&db.exemplum_tasks_url).await.unwrap();
     for forbidden in [
         "SELECT * FROM exemplum.users",
         "SELECT * FROM exemplum.auth_identities",
@@ -294,4 +306,95 @@ async fn auth_identities_and_sessions_schema_and_constraints_enforced(
     .unwrap();
 
     pool.close().await;
+}
+
+#[sqlx::test(migrations = false)]
+#[ignore = "run by integration_suite"]
+async fn restricted_producer_enqueues_atomically_and_verifies_grants(
+    _pool_options: sqlx::postgres::PgPoolOptions,
+    options: PgConnectOptions,
+) {
+    let db = TestDatabase::provision(options).await;
+    let config = exemplum_config();
+    db.migrate_with(&config).await;
+    let pool = sqlx::PgPool::connect(&db.users_url).await.unwrap();
+    let tasks = sqlx::PgPool::connect(&db.exemplum_tasks_url).await.unwrap();
+    let admin = sqlx::PgPool::connect(&db.admin_url).await.unwrap();
+    let queue = hypgmx_tasks::Queue::<Uuid>::new(
+        pool.clone(),
+        "exemplum.welcome.v1",
+        hypgmx_tasks::WorkerConfig::default().with_tasks_role("exemplum_tasks"),
+    )
+    .unwrap();
+    for commit in [false, true] {
+        let id = Uuid::new_v4();
+        let mut tx = pool.begin().await.unwrap();
+        // Upstream push_tasks uses the unqualified hstore type.
+        sqlx::query("SET LOCAL search_path = pg_catalog, apalis")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO exemplum.users (id, display_name, approval_status) VALUES ($1, 'Pending', 'pending')")
+            .bind(id).execute(&mut *tx).await.unwrap();
+        let task = queue
+            .task(id)
+            .try_map_args(|args| serde_json::to_vec(&args))
+            .unwrap();
+        hypgmx_tasks::apalis_postgres::queries::push_tasks(
+            &mut *tx,
+            "exemplum.welcome.v1",
+            vec![task],
+        )
+        .await
+        .unwrap();
+        if commit {
+            tx.commit().await.unwrap();
+        } else {
+            tx.rollback().await.unwrap();
+        }
+        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM exemplum.users WHERE id = $1")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, i64::from(commit));
+        let count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM apalis.jobs WHERE job_type = 'exemplum.welcome.v1'",
+        )
+        .fetch_one(&tasks)
+        .await
+        .unwrap();
+        assert_eq!(count, i64::from(commit));
+    }
+    assert!(
+        sqlx::query("UPDATE exemplum.users SET approval_status = 'invalid'")
+            .execute(&pool)
+            .await
+            .is_err()
+    );
+    hypgmx_rdbms::verify(&db.exemplum_migration_url, &config)
+        .await
+        .unwrap();
+    let mut non_producer = exemplum_config();
+    non_producer.service_contracts[0].task_producer = false;
+    assert!(
+        hypgmx_rdbms::verify(&db.exemplum_migration_url, &non_producer)
+            .await
+            .is_err()
+    );
+    for ddl in [
+        "REVOKE INSERT ON apalis.jobs FROM exemplum_users",
+        "GRANT SELECT ON apalis.jobs TO exemplum_users",
+    ] {
+        sqlx::raw_sql(ddl).execute(&admin).await.unwrap();
+        assert!(
+            hypgmx_rdbms::verify(&db.exemplum_migration_url, &config)
+                .await
+                .is_err()
+        );
+        sqlx::raw_sql("REVOKE SELECT ON apalis.jobs FROM exemplum_users; GRANT INSERT ON apalis.jobs TO exemplum_users").execute(&admin).await.unwrap();
+    }
+    pool.close().await;
+    tasks.close().await;
+    admin.close().await;
 }

@@ -3,7 +3,7 @@ DO $$ DECLARE db text := current_database(); BEGIN
   EXECUTE format('ALTER DATABASE %I OWNER TO exemplum_owner',db);
   EXECUTE format('REVOKE ALL ON DATABASE %I FROM PUBLIC',db);
   EXECUTE format('GRANT CONNECT ON DATABASE %I TO exemplum_migrator,exemplum_users,exemplum_tasks',db);
-  EXECUTE format('ALTER ROLE exemplum_users IN DATABASE %I SET search_path=pg_catalog',db);
+  EXECUTE format('ALTER ROLE exemplum_users IN DATABASE %I SET search_path=pg_catalog,apalis',db);
   EXECUTE format('ALTER ROLE exemplum_migrator IN DATABASE %I SET search_path=pg_catalog',db);
   EXECUTE format('ALTER ROLE exemplum_tasks IN DATABASE %I SET search_path=pg_catalog,apalis',db);
 END $$;

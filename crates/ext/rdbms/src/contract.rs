@@ -58,6 +58,8 @@ pub struct ServiceContract {
     pub version: i64,
     pub migration_version: Option<String>,
     pub table: String,
+    /// Allow and require INSERT-only access to the upstream task table.
+    pub task_producer: bool,
 }
 
 impl ServiceContract {
@@ -74,6 +76,7 @@ impl ServiceContract {
             version,
             migration_version: migration_version.map(|v| v.into()),
             table: table.into(),
+            task_producer: false,
         }
     }
 }
