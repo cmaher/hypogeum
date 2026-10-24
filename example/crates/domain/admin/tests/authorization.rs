@@ -71,8 +71,6 @@ fn setup() -> (AdminComponents, Arc<Accounts>, Principal) {
         approval_status: ApprovalStatus::Approved,
         is_admin: true,
         approved_at: Some(now),
-        welcome_scheduled_at: None,
-        welcome_processed_at: None,
     })));
     let service = DefaultAdminService::new(accounts.clone(), checked_in_authorizer());
     (
@@ -246,51 +244,53 @@ fn missing_attributes_and_unknown_actions_deny() {
 }
 
 #[tokio::test]
-async fn browser_rows_escape_poll_stop_and_enforce_current_authority() {
+async fn browser_rows_escape_and_enforce_current_authority() {
     let (components, accounts, principal) = setup();
-    accounts.0.lock().unwrap().welcome_scheduled_at = Some(chrono::Utc::now());
     accounts.0.lock().unwrap().display_name = "<script>alert(1)</script>".into();
     let app = exemplum_dmn_admin::view::router(components)
         .layer(axum::middleware::from_fn(hypgm_view::cross_site_middleware));
-    for path in ["/users".to_owned(), format!("/users/{}", principal.user_id)] {
-        let response = app
-            .clone()
-            .oneshot(Request::builder().uri(&path).body(Body::empty()).unwrap())
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-        assert!(
-            response.headers()["content-type"]
-                .to_str()
-                .unwrap()
-                .contains("text/html")
-        );
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri(&path)
-                    .extension(principal.clone())
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let html = String::from_utf8(
-            to_bytes(response.into_body(), usize::MAX)
-                .await
-                .unwrap()
-                .to_vec(),
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/users")
+                .body(Body::empty())
+                .unwrap(),
         )
+        .await
         .unwrap();
-        assert!(html.contains("hx-trigger=\"every 2s\""));
-        assert!(html.contains("Awaiting processing"));
-        assert!(!html.contains("<script>alert"));
-        assert!(
-            html.contains("&lt;script&gt;") || html.contains("&#60;script&#62;"),
-            "{html}"
-        );
-    }
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert!(
+        response.headers()["content-type"]
+            .to_str()
+            .unwrap()
+            .contains("text/html")
+    );
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/users")
+                .extension(principal.clone())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let html = String::from_utf8(
+        to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap();
+    assert!(html.contains("Approved"));
+    assert!(!html.contains("<button"));
+    assert!(!html.contains("<script>alert"));
+    assert!(
+        html.contains("&lt;script&gt;") || html.contains("&#60;script&#62;"),
+        "{html}"
+    );
     let approve = format!("/users/{}/approve", principal.user_id);
     let response = app
         .clone()
@@ -305,7 +305,6 @@ async fn browser_rows_escape_poll_stop_and_enforce_current_authority() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
-    accounts.0.lock().unwrap().welcome_processed_at = Some(chrono::Utc::now());
     let response = app
         .clone()
         .oneshot(
@@ -327,8 +326,8 @@ async fn browser_rows_escape_poll_stop_and_enforce_current_authority() {
     )
     .unwrap();
     assert!(html.starts_with("<tr"));
-    assert!(!html.contains("hx-trigger"));
-    assert!(html.contains("<time>"));
+    assert!(html.contains("Approved"));
+    assert!(!html.contains("<button"));
     let response = app
         .clone()
         .oneshot(
@@ -344,11 +343,7 @@ async fn browser_rows_escape_poll_stop_and_enforce_current_authority() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
     accounts.0.lock().unwrap().is_admin = false;
-    for (method, path) in [
-        ("GET", "/users".to_owned()),
-        ("GET", format!("/users/{}", principal.user_id)),
-        ("POST", approve),
-    ] {
+    for (method, path) in [("GET", "/users".to_owned()), ("POST", approve)] {
         let response = app
             .clone()
             .oneshot(
@@ -363,65 +358,4 @@ async fn browser_rows_escape_poll_stop_and_enforce_current_authority() {
             .unwrap();
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
-}
-
-#[tokio::test]
-async fn unscheduled_accounts_do_not_poll_or_claim_processing() {
-    for approved_at in [None, Some(chrono::Utc::now())] {
-        let (components, accounts, principal) = setup();
-        accounts.0.lock().unwrap().approved_at = approved_at;
-        let app = exemplum_dmn_admin::view::router(components);
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .uri("/users")
-                    .extension(principal)
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
-        let html = String::from_utf8(
-            to_bytes(response.into_body(), usize::MAX)
-                .await
-                .unwrap()
-                .to_vec(),
-        )
-        .unwrap();
-        assert!(
-            !html.contains("hx-trigger"),
-            "unscheduled account must not poll"
-        );
-        assert!(!html.contains("Awaiting processing"));
-        assert!(html.contains("Not scheduled"));
-    }
-}
-
-#[tokio::test]
-async fn stale_welcome_work_stops_polling_without_claiming_completion() {
-    let (components, accounts, principal) = setup();
-    accounts.0.lock().unwrap().welcome_scheduled_at =
-        Some(chrono::Utc::now() - chrono::TimeDelta::hours(1));
-    let response = exemplum_dmn_admin::view::router(components)
-        .oneshot(
-            Request::builder()
-                .uri(format!("/users/{}", principal.user_id))
-                .extension(principal)
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-    let html = String::from_utf8(
-        to_bytes(response.into_body(), usize::MAX)
-            .await
-            .unwrap()
-            .to_vec(),
-    )
-    .unwrap();
-    assert!(!html.contains("hx-trigger"), "{html}");
-    assert!(html.contains("Not yet processed; refresh to check"));
-    assert!(!html.contains("<time>"));
 }

@@ -38,9 +38,6 @@ pub struct Account {
     pub approval_status: ApprovalStatus,
     pub is_admin: bool,
     pub approved_at: Option<DateTime<Utc>>,
-    /// Set atomically with enqueue; absent for accounts without welcome work.
-    pub welcome_scheduled_at: Option<DateTime<Utc>>,
-    pub welcome_processed_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -49,11 +46,15 @@ pub struct AccountPage {
     pub next_after: Option<Uuid>,
 }
 
+/// A taken username is an ordinary form validation failure, not a resource conflict.
+pub const USERNAME_UNAVAILABLE: PublicErrorInfo =
+    PublicErrorInfo::validation_error("Username unavailable");
+
 #[derive(Debug, thiserror::Error)]
 pub enum AccountError {
     #[error("Invalid account input")]
     Validation,
-    #[error("Username already registered")]
+    #[error("Username unavailable")]
     DuplicateUsername,
     #[error(transparent)]
     Repo(#[from] RepoError),
@@ -62,7 +63,7 @@ impl PublicError for AccountError {
     fn public_error(&self) -> PublicErrorInfo {
         match self {
             Self::Validation => PublicErrorInfo::VALIDATION_ERROR,
-            Self::DuplicateUsername => PublicErrorInfo::CONFLICT,
+            Self::DuplicateUsername => USERNAME_UNAVAILABLE,
             Self::Repo(error) => error.public_error(),
         }
     }
@@ -77,16 +78,10 @@ pub trait AccountRepo: Send + Sync {
         username: &str,
         password_hash: &str,
     ) -> Result<Account, AccountError>;
+    /// Approve a pending account; approving an approved account changes nothing.
     async fn approve(&self, id: Uuid) -> Result<Account, AccountError>;
     async fn get(&self, id: Uuid) -> Result<Account, AccountError>;
     async fn list(&self, page: PageRequest) -> Result<AccountPage, AccountError>;
-}
-/// Persists the durable welcome effect. Delivery is at least once, so
-/// implementations must preserve the first completion and treat missing
-/// accounts as successful no-ops.
-#[async_trait]
-pub trait WelcomeRepo: Send + Sync {
-    async fn process_welcome(&self, id: Uuid) -> Result<(), AccountError>;
 }
 #[async_trait]
 pub trait AccountService: Send + Sync {
@@ -177,7 +172,7 @@ mod tests {
         assert!(PageRequest::new(None, 101).is_err());
         assert_eq!(
             AccountError::DuplicateUsername.public_error(),
-            PublicErrorInfo::CONFLICT
+            PublicErrorInfo::validation_error("Username unavailable")
         );
     }
 }

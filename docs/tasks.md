@@ -62,15 +62,3 @@ capped per queue. The bundled Board interface and empty API need no queue setup.
 Run `cargo make test-db` for integration tests covering typed handlers, retries,
 submissions, transactional enqueue and recovery after killing a worker process.
 Tests use synthetic effects and SQLx-isolated databases in a suite-owned container.
-
-## Exemplum welcome worker
-
-The reference application's `exemplum-tasks` executable consumes
-`exemplum.welcome.v1`. `EXEMPLUM_TASKS_DATABASE_URL` uses the restricted
-`exemplum_tasks` queue role; `EXEMPLUM_TASKS_HANDLER_DATABASE_URL` uses
-`exemplum_users` for the domain effect. Approval enqueues in its account
-transaction; a stopped worker does not block approval. Delivery is at least once,
-and the handler preserves the first `welcome_processed_at` value on redelivery.
-Neither app nor worker applies migrations. See [the runnable registration
-demo](../example/README.md#run-the-registration-demo) for provisioning, administrator
-creation, separate process commands, and real PostgreSQL/browser verification.

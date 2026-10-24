@@ -1,7 +1,6 @@
 use crate::{
     accounts::{
-        Account, AccountError, AccountPage, AccountRepo, ApprovalStatus, WelcomeRepo,
-        normalize_username,
+        Account, AccountError, AccountPage, AccountRepo, ApprovalStatus, normalize_username,
     },
     models::{PageRequest, validate_name},
 };
@@ -29,8 +28,6 @@ pub(crate) mod entity {
         pub approval_status: ApprovalStatus,
         pub is_admin: bool,
         pub approved_at: Option<DateTimeUtc>,
-        pub welcome_scheduled_at: Option<DateTimeUtc>,
-        pub welcome_processed_at: Option<DateTimeUtc>,
     }
     #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
     pub enum Relation {}
@@ -46,20 +43,16 @@ impl From<entity::Model> for Account {
             approval_status: value.approval_status,
             is_admin: value.is_admin,
             approved_at: value.approved_at,
-            welcome_scheduled_at: value.welcome_scheduled_at,
-            welcome_processed_at: value.welcome_processed_at,
         }
     }
 }
 pub struct PgAccountRepo {
     db: DatabaseConnection,
-    pool: PgPool,
 }
 impl PgAccountRepo {
     pub fn new(pool: PgPool) -> Self {
         Self {
-            db: SqlxPostgresConnector::from_sqlx_postgres_pool(pool.clone()),
-            pool,
+            db: SqlxPostgresConnector::from_sqlx_postgres_pool(pool),
         }
     }
     /// Create a new approved administrator. A username that already belongs to
@@ -139,8 +132,6 @@ impl PgAccountRepo {
             }),
             is_admin: Set(is_admin),
             approved_at: Set(is_admin.then(chrono::Utc::now)),
-            welcome_scheduled_at: Set(None),
-            welcome_processed_at: Set(None),
             ..Default::default()
         }
         .insert(&tx)
@@ -184,29 +175,6 @@ impl PgAccountRepo {
         Ok(account.into())
     }
 }
-#[async_trait]
-impl WelcomeRepo for PgAccountRepo {
-    async fn process_welcome(&self, id: Uuid) -> Result<(), AccountError> {
-        let tx = self.db.begin().await.map_err(database)?;
-        if let Some(account) = entity::Entity::find_by_id(id)
-            .lock_exclusive()
-            .one(&tx)
-            .await
-            .map_err(database)?
-        {
-            if account.approval_status != ApprovalStatus::Approved {
-                return Err(AccountError::Validation);
-            }
-            if account.welcome_processed_at.is_none() {
-                let mut account: entity::ActiveModel = account.into();
-                account.welcome_processed_at = Set(Some(chrono::Utc::now()));
-                account.update(&tx).await.map_err(database)?;
-            }
-        }
-        tx.commit().await.map_err(database)?;
-        Ok(())
-    }
-}
 fn database(error: sea_orm::DbErr) -> AccountError {
     RepoError::database(error).into()
 }
@@ -223,61 +191,23 @@ impl AccountRepo for PgAccountRepo {
             .await
     }
     async fn approve(&self, id: Uuid) -> Result<Account, AccountError> {
-        use sea_orm::{
-            QueryTrait,
-            sea_query::{Expr, PostgresQueryBuilder},
+        let tx = self.db.begin().await.map_err(database)?;
+        let account = entity::Entity::find_by_id(id)
+            .lock_exclusive()
+            .one(&tx)
+            .await
+            .map_err(database)?
+            .ok_or(RepoError::NotFound)?;
+        let account = if account.approval_status == ApprovalStatus::Pending {
+            let mut account: entity::ActiveModel = account.into();
+            account.approval_status = Set(ApprovalStatus::Approved);
+            account.approved_at = Set(Some(chrono::Utc::now()));
+            account.update(&tx).await.map_err(database)?
+        } else {
+            account
         };
-        use sea_query_sqlx::SqlxBinder;
-        let mut tx = self.pool.begin().await.map_err(RepoError::database)?;
-        // Upstream transactional enqueue refers to the hstore type without a schema.
-        sqlx::query("SET LOCAL search_path = pg_catalog, apalis")
-            .execute(&mut *tx)
-            .await
-            .map_err(RepoError::database)?;
-        let mut select = entity::Entity::find_by_id(id)
-            .select_only()
-            .column(entity::Column::ApprovalStatus)
-            .lock_exclusive();
-        let (sql, args) = QueryTrait::query(&mut select).build_sqlx(PostgresQueryBuilder);
-        // SeaQuery generates identifiers and placeholders; all input stays bound.
-        let status: Option<(String,)> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql), args)
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(RepoError::database)?;
-        let status = <ApprovalStatus as sea_orm::ActiveEnum>::try_from_value(
-            &status.ok_or(RepoError::NotFound)?.0,
-        )
-        .map_err(database)?;
-        if status == ApprovalStatus::Pending {
-            let mut update = entity::Entity::update_many()
-                .col_expr(
-                    entity::Column::ApprovalStatus,
-                    Expr::value(ApprovalStatus::Approved),
-                )
-                .col_expr(entity::Column::ApprovedAt, Expr::current_timestamp())
-                .col_expr(
-                    entity::Column::WelcomeScheduledAt,
-                    Expr::current_timestamp(),
-                )
-                .filter(entity::Column::Id.eq(id));
-            let (sql, args) = QueryTrait::query(&mut update).build_sqlx(PostgresQueryBuilder);
-            sqlx::query_with(sqlx::AssertSqlSafe(sql), args)
-                .execute(&mut *tx)
-                .await
-                .map_err(RepoError::database)?;
-            let task = crate::jobs::welcome_task(id)
-                .try_map_args(|args| serde_json::to_vec(&args))
-                .map_err(RepoError::database)?;
-            hypgmx_tasks::apalis_postgres::queries::push_tasks(
-                &mut *tx,
-                crate::jobs::WELCOME_QUEUE,
-                vec![task],
-            )
-            .await
-            .map_err(RepoError::database)?;
-        }
-        tx.commit().await.map_err(RepoError::database)?;
-        self.get(id).await
+        tx.commit().await.map_err(database)?;
+        Ok(account.into())
     }
     async fn get(&self, id: Uuid) -> Result<Account, AccountError> {
         entity::Entity::find_by_id(id)

@@ -14,16 +14,13 @@ fn exemplum_config() -> hypgmx_rdbms::DatabaseConfig {
         .with_domain_migrator(<dyn hypgmx_rdbms::DomainMigrator>::from_sea_orm::<
             exemplum_dmn_users::pg::migrations::Migrator,
         >())
-        .with_service_contract(hypgmx_rdbms::ServiceContract {
-            task_producer: true,
-            ..hypgmx_rdbms::ServiceContract::new(
-                "exemplum",
-                "exemplum_users",
-                2,
-                Some("m20261024_000003_account_lifecycle"),
-                "users",
-            )
-        })
+        .with_service_contract(hypgmx_rdbms::ServiceContract::new(
+            "exemplum",
+            "exemplum_users",
+            2,
+            Some("m20261024_000003_account_lifecycle"),
+            "users",
+        ))
 }
 
 #[sqlx::test(migrations = false)]
@@ -51,19 +48,23 @@ async fn existing_user_survives_migration_upgrade(
     let before = repo.create(Uuid::new_v4(), "Existing User").await.unwrap();
     db.migrate_with(&exemplum_config()).await;
     assert_eq!(repo.get(before.id).await.unwrap(), before);
-    use exemplum_dmn_users::accounts::AccountRepo;
-    assert!(
-        exemplum_dmn_users::repo::PgAccountRepo::new(pool.clone())
-            .get(before.id)
+    let state: (String, bool, Option<chrono::DateTime<chrono::Utc>>) = sqlx::query_as(
+        "SELECT approval_status, is_admin, approved_at FROM exemplum.users WHERE id = $1",
+    )
+    .bind(before.id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(state, ("approved".into(), false, None));
+    // Only the backfill is approved; later inserts that omit the status start pending.
+    let after = repo.create(Uuid::new_v4(), "New User").await.unwrap();
+    let status: String =
+        sqlx::query_scalar("SELECT approval_status FROM exemplum.users WHERE id = $1")
+            .bind(after.id)
+            .fetch_one(&pool)
             .await
-            .unwrap()
-            .welcome_scheduled_at
-            .is_none()
-    );
-    let state: (String, bool, Option<chrono::DateTime<chrono::Utc>>, Option<chrono::DateTime<chrono::Utc>>) = sqlx::query_as(
-        "SELECT approval_status, is_admin, approved_at, welcome_processed_at FROM exemplum.users WHERE id = $1"
-    ).bind(before.id).fetch_one(&pool).await.unwrap();
-    assert_eq!(state, ("approved".into(), false, None, None));
+            .unwrap();
+    assert_eq!(status, "pending");
     exemplum_dmn_users::repo::check_ready(&pool).await.unwrap();
     hypgmx_rdbms::verify(&db.exemplum_migration_url, &exemplum_config())
         .await
@@ -175,6 +176,7 @@ async fn user_repository_connects_and_persists_under_runtime_privileges(
         "SELECT * FROM apalis.jobs",
         "UPDATE apalis.jobs SET status = 'Done'",
         "DELETE FROM apalis.jobs",
+        "INSERT INTO apalis.jobs (id) VALUES ('forbidden')",
         "SELECT * FROM apalis.workers",
         "INSERT INTO apalis.workers (id) VALUES ('forbidden')",
         "CREATE TABLE apalis.forbidden(id integer)",
@@ -216,15 +218,6 @@ async fn user_repository_connects_and_persists_under_runtime_privileges(
     // Readiness must reject the wrong role and an altered schema contract.
     assert!(exemplum_dmn_users::repo::check_ready(&tasks).await.is_err());
     let mut admin = PgConnection::connect(&db.admin_url).await.unwrap();
-    sqlx::raw_sql("REVOKE INSERT ON apalis.jobs FROM exemplum_users")
-        .execute(&mut admin)
-        .await
-        .unwrap();
-    assert!(exemplum_dmn_users::repo::check_ready(&pool).await.is_err());
-    sqlx::raw_sql("GRANT INSERT ON apalis.jobs TO exemplum_users")
-        .execute(&mut admin)
-        .await
-        .unwrap();
     exemplum_dmn_users::repo::check_ready(&pool).await.unwrap();
     sqlx::raw_sql("CREATE OR REPLACE FUNCTION exemplum.schema_version() RETURNS bigint LANGUAGE sql AS 'SELECT 0::bigint'").execute(&mut admin).await.unwrap();
     assert!(exemplum_dmn_users::repo::check_ready(&pool).await.is_err());
@@ -329,97 +322,6 @@ async fn auth_identities_and_sessions_schema_and_constraints_enforced(
 
 #[sqlx::test(migrations = false)]
 #[ignore = "run by integration_suite"]
-async fn restricted_producer_enqueues_atomically_and_verifies_grants(
-    _pool_options: sqlx::postgres::PgPoolOptions,
-    options: PgConnectOptions,
-) {
-    let db = TestDatabase::provision(options).await;
-    let config = exemplum_config();
-    db.migrate_with(&config).await;
-    let pool = sqlx::PgPool::connect(&db.users_url).await.unwrap();
-    let tasks = sqlx::PgPool::connect(&db.exemplum_tasks_url).await.unwrap();
-    let admin = sqlx::PgPool::connect(&db.admin_url).await.unwrap();
-    let queue = hypgmx_tasks::Queue::<Uuid>::new(
-        pool.clone(),
-        "exemplum.welcome.v1",
-        hypgmx_tasks::WorkerConfig::default().with_tasks_role("exemplum_tasks"),
-    )
-    .unwrap();
-    for commit in [false, true] {
-        let id = Uuid::new_v4();
-        let mut tx = pool.begin().await.unwrap();
-        // Upstream push_tasks uses the unqualified hstore type.
-        sqlx::query("SET LOCAL search_path = pg_catalog, apalis")
-            .execute(&mut *tx)
-            .await
-            .unwrap();
-        sqlx::query("INSERT INTO exemplum.users (id, display_name, approval_status) VALUES ($1, 'Pending', 'pending')")
-            .bind(id).execute(&mut *tx).await.unwrap();
-        let task = queue
-            .task(id)
-            .try_map_args(|args| serde_json::to_vec(&args))
-            .unwrap();
-        hypgmx_tasks::apalis_postgres::queries::push_tasks(
-            &mut *tx,
-            "exemplum.welcome.v1",
-            vec![task],
-        )
-        .await
-        .unwrap();
-        if commit {
-            tx.commit().await.unwrap();
-        } else {
-            tx.rollback().await.unwrap();
-        }
-        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM exemplum.users WHERE id = $1")
-            .bind(id)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(count, i64::from(commit));
-        let count: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM apalis.jobs WHERE job_type = 'exemplum.welcome.v1'",
-        )
-        .fetch_one(&tasks)
-        .await
-        .unwrap();
-        assert_eq!(count, i64::from(commit));
-    }
-    assert!(
-        sqlx::query("UPDATE exemplum.users SET approval_status = 'invalid'")
-            .execute(&pool)
-            .await
-            .is_err()
-    );
-    hypgmx_rdbms::verify(&db.exemplum_migration_url, &config)
-        .await
-        .unwrap();
-    let mut non_producer = exemplum_config();
-    non_producer.service_contracts[0].task_producer = false;
-    assert!(
-        hypgmx_rdbms::verify(&db.exemplum_migration_url, &non_producer)
-            .await
-            .is_err()
-    );
-    for ddl in [
-        "REVOKE INSERT ON apalis.jobs FROM exemplum_users",
-        "GRANT SELECT ON apalis.jobs TO exemplum_users",
-    ] {
-        sqlx::raw_sql(ddl).execute(&admin).await.unwrap();
-        assert!(
-            hypgmx_rdbms::verify(&db.exemplum_migration_url, &config)
-                .await
-                .is_err()
-        );
-        sqlx::raw_sql("REVOKE SELECT ON apalis.jobs FROM exemplum_users; GRANT INSERT ON apalis.jobs TO exemplum_users").execute(&admin).await.unwrap();
-    }
-    pool.close().await;
-    tasks.close().await;
-    admin.close().await;
-}
-
-#[sqlx::test(migrations = false)]
-#[ignore = "run by integration_suite"]
 async fn account_registration_is_atomic_and_paginated(
     _pool_options: sqlx::postgres::PgPoolOptions,
     options: PgConnectOptions,
@@ -441,8 +343,7 @@ async fn account_registration_is_atomic_and_paginated(
     assert_eq!(first.display_name, "Alice");
     assert_eq!(first.approval_status, ApprovalStatus::Pending);
     assert!(!first.is_admin);
-    assert!(first.approved_at.is_none() && first.welcome_processed_at.is_none());
-    assert!(first.welcome_scheduled_at.is_none());
+    assert!(first.approved_at.is_none());
     assert_eq!(repo.get(first.id).await.unwrap(), first);
     assert!(matches!(
         service.register("Duplicate", "Alice", "hash").await,
@@ -503,121 +404,33 @@ async fn account_registration_is_atomic_and_paginated(
 
 #[sqlx::test(migrations = false)]
 #[ignore = "run by integration_suite"]
-async fn approval_and_welcome_are_atomic_and_repeat_safe(
+async fn approval_is_atomic_and_repeat_safe(
     _pool_options: sqlx::postgres::PgPoolOptions,
     options: PgConnectOptions,
 ) {
     use exemplum_dmn_users::{
-        accounts::{AccountRepo, ApprovalStatus},
-        jobs::{WelcomeJob, handle_welcome},
+        accounts::{AccountError, AccountRepo, ApprovalStatus},
         repo::PgAccountRepo,
     };
-    use std::sync::Arc;
     let db = TestDatabase::provision(options).await;
     db.migrate_with(&exemplum_config()).await;
     let pool = sqlx::PgPool::connect(&db.users_url).await.unwrap();
-    let admin = sqlx::PgPool::connect(&db.admin_url).await.unwrap();
-    let tasks = sqlx::PgPool::connect(&db.exemplum_tasks_url).await.unwrap();
-    let repo = Arc::new(PgAccountRepo::new(pool.clone()));
-    let account = repo.register("Welcome", "welcome", "hash").await.unwrap();
-    assert!(
-        handle_welcome(
-            WelcomeJob {
-                user_id: account.id
-            },
-            repo.clone()
-        )
-        .await
-        .is_err()
-    );
-    assert!(
-        repo.get(account.id)
-            .await
-            .unwrap()
-            .welcome_processed_at
-            .is_none()
-    );
-    sqlx::query("REVOKE INSERT ON apalis.jobs FROM exemplum_users")
-        .execute(&admin)
-        .await
-        .unwrap();
-    assert!(repo.approve(account.id).await.is_err());
-    let unchanged = repo.get(account.id).await.unwrap();
-    assert_eq!(unchanged.approval_status, ApprovalStatus::Pending);
-    assert!(unchanged.approved_at.is_none());
-    assert!(unchanged.welcome_scheduled_at.is_none());
-    sqlx::query("GRANT INSERT ON apalis.jobs TO exemplum_users")
-        .execute(&admin)
-        .await
-        .unwrap();
+    let repo = PgAccountRepo::new(pool.clone());
+    let account = repo.register("Approve", "approve", "hash").await.unwrap();
     let (a, b) = tokio::join!(repo.approve(account.id), repo.approve(account.id));
     let approved = a.unwrap();
+    // The row lock serializes approvals, so both see the same first approval.
     assert_eq!(approved, b.unwrap());
     assert_eq!(approved.approval_status, ApprovalStatus::Approved);
     assert!(approved.approved_at.is_some());
-    assert_eq!(approved.welcome_scheduled_at, approved.approved_at);
+    assert!(!approved.is_admin);
     assert_eq!(repo.approve(account.id).await.unwrap(), approved);
-    assert!(repo.approve(Uuid::new_v4()).await.is_err());
-    let count: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM apalis.jobs WHERE job_type = 'exemplum.welcome.v1'",
-    )
-    .fetch_one(&tasks)
-    .await
-    .unwrap();
-    assert_eq!(count, 1);
-    handle_welcome(
-        WelcomeJob {
-            user_id: account.id,
-        },
-        repo.clone(),
-    )
-    .await
-    .unwrap();
-    let completed = repo.get(account.id).await.unwrap();
-    assert!(completed.welcome_processed_at.is_some());
-    let (a, b) = tokio::join!(
-        handle_welcome(
-            WelcomeJob {
-                user_id: account.id
-            },
-            repo.clone()
-        ),
-        handle_welcome(
-            WelcomeJob {
-                user_id: account.id
-            },
-            repo.clone()
-        )
-    );
-    a.unwrap();
-    b.unwrap();
-    assert_eq!(repo.get(account.id).await.unwrap(), completed);
-    PgUserRepo::new(pool.clone())
-        .delete(account.id)
-        .await
-        .unwrap();
-    handle_welcome(
-        WelcomeJob {
-            user_id: account.id,
-        },
-        repo.clone(),
-    )
-    .await
-    .unwrap();
-    // Persistence failures remain errors so the framework retry policy can retry them.
+    assert_eq!(repo.get(account.id).await.unwrap(), approved);
+    assert!(matches!(
+        repo.approve(Uuid::new_v4()).await,
+        Err(AccountError::Repo(RepoError::NotFound))
+    ));
     pool.close().await;
-    assert!(
-        handle_welcome(
-            WelcomeJob {
-                user_id: account.id
-            },
-            repo
-        )
-        .await
-        .is_err()
-    );
-    tasks.close().await;
-    admin.close().await;
 }
 
 #[sqlx::test(migrations = false)]
@@ -641,8 +454,6 @@ async fn administrator_creation_rejects_existing_usernames_unless_promoted(
     assert!(fresh.is_admin);
     assert_eq!(fresh.approval_status, ApprovalStatus::Approved);
     assert!(fresh.approved_at.is_some());
-    assert!(fresh.welcome_processed_at.is_none());
-    assert!(fresh.welcome_scheduled_at.is_none());
     assert!(matches!(
         repo.create_admin("Changed", "admin", "replacement").await,
         Err(AccountError::DuplicateUsername)
@@ -668,7 +479,6 @@ async fn administrator_creation_rejects_existing_usernames_unless_promoted(
     assert_eq!(promoted.display_name, pending.display_name);
     assert!(promoted.is_admin);
     assert_eq!(promoted.approval_status, ApprovalStatus::Approved);
-    assert!(promoted.welcome_scheduled_at.is_none());
     assert!(matches!(
         repo.promote_admin("missing").await,
         Err(AccountError::Repo(hypgm_errors::RepoError::NotFound))
@@ -680,11 +490,6 @@ async fn administrator_creation_rejects_existing_usernames_unless_promoted(
             .unwrap();
     assert_eq!(hashes, ["original-hash", "pending-hash"]);
     let admin = sqlx::PgPool::connect(&db.admin_url).await.unwrap();
-    let jobs: i64 = sqlx::query_scalar("SELECT count(*) FROM apalis.jobs")
-        .fetch_one(&admin)
-        .await
-        .unwrap();
-    assert_eq!(jobs, 0);
     sqlx::query("ALTER TABLE exemplum.auth_identities ADD CONSTRAINT reject_bootstrap CHECK (identifier <> 'blocked')").execute(&admin).await.unwrap();
     assert!(
         repo.create_admin("Rejected", "blocked", "hash")

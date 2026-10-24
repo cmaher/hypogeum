@@ -65,10 +65,13 @@ pub fn router<S>(components: AppComponents<S>) -> Router<()>
 where
     S: tower_sessions::SessionStore + Clone + Send + Sync + 'static,
 {
-    let admin_components = AdminComponents::new(Arc::new(DefaultAdminService::new(
-        components.account_service.clone(),
-        components.authorizer,
-    )));
+    let admin_components = AdminComponents::new(
+        Arc::new(DefaultAdminService::new(
+            components.account_service.clone(),
+            components.authorizer,
+        )),
+        components.admin_config,
+    );
     let hello_components = HelloComponents::new(
         components.hello_service,
         components.user_service,

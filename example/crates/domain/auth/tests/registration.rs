@@ -38,8 +38,6 @@ impl AccountService for Accounts {
             approval_status: ApprovalStatus::Pending,
             is_admin: false,
             approved_at: None,
-            welcome_scheduled_at: None,
-            welcome_processed_at: None,
         };
         self.repo
             .create(
@@ -107,14 +105,19 @@ async fn registration_is_pending_and_gates_password_backend_and_tokens() {
             .status(),
         StatusCode::CREATED
     );
-    assert_eq!(
-        app.clone()
-            .oneshot(request("/register", registration))
+    let duplicate = app
+        .clone()
+        .oneshot(request("/register", registration))
+        .await
+        .unwrap();
+    assert_eq!(duplicate.status(), StatusCode::BAD_REQUEST);
+    let error: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(duplicate.into_body(), usize::MAX)
             .await
-            .unwrap()
-            .status(),
-        StatusCode::CONFLICT
-    );
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(error["message"], "Username unavailable");
     let identity = repo
         .find_active_by_type_and_identifier("password", "Alice")
         .await
@@ -200,12 +203,7 @@ async fn invalid_registration_and_role_injection_are_rejected() {
             .unwrap_err();
         assert_eq!(error.classification().status, StatusCode::BAD_REQUEST);
     }
-    for field in [
-        "is_admin",
-        "approval_status",
-        "welcome_scheduled_at",
-        "welcome_processed_at",
-    ] {
+    for field in ["is_admin", "approval_status", "approved_at"] {
         let mut body = serde_json::json!({"display_name":"Alice","username":"alice","password":"long password!"});
         body[field] = serde_json::json!(true);
         assert!(serde_json::from_value::<RegistrationRequest>(body).is_err());
@@ -349,7 +347,7 @@ async fn duplicate_browser_registration_retains_profile_but_not_password() {
         )
         .await
         .unwrap();
-    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     let html = String::from_utf8(
         axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
@@ -358,6 +356,7 @@ async fn duplicate_browser_registration_retains_profile_but_not_password() {
     )
     .unwrap();
     assert!(html.contains("<form"));
+    assert!(html.contains("Username unavailable"));
     assert!(html.contains("value=\"Alice\""));
     assert!(html.contains("value=\"alice\""));
     assert!(!html.contains("long password!"));

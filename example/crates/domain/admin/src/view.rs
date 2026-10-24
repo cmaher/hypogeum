@@ -8,7 +8,6 @@ use axum::{
     response::{IntoResponse, Redirect, Response},
     routing::get,
 };
-use chrono::{DateTime, TimeDelta, Utc};
 use exemplum_dmn_users::{
     accounts::{Account, ApprovalStatus},
     models::PageRequest,
@@ -17,10 +16,6 @@ use hypgm_authn::RequireAuth;
 use hypgm_view::{HtmlError, HtmxRequest, render_template};
 use serde::Deserialize;
 use uuid::Uuid;
-
-/// Rows stop polling once welcome work has been outstanding this long, so a
-/// stopped worker or a job that exhausted its retries never polls indefinitely.
-const POLL_WINDOW: TimeDelta = TimeDelta::minutes(10);
 
 #[derive(Template)]
 #[template(path = "users.html")]
@@ -36,28 +31,13 @@ struct UserRow {
     id: Uuid,
     name: String,
     pending: bool,
-    processing: bool,
-    polling: bool,
-    completed: String,
 }
-impl UserRow {
-    fn new(account: Account, now: DateTime<Utc>) -> Self {
-        let outstanding = match account.welcome_scheduled_at {
-            Some(scheduled) if account.welcome_processed_at.is_none() => Some(scheduled),
-            _ => None,
-        };
-        let processing =
-            account.approval_status == ApprovalStatus::Approved && outstanding.is_some();
+impl From<Account> for UserRow {
+    fn from(account: Account) -> Self {
         Self {
             id: account.id,
             name: account.display_name,
             pending: account.approval_status == ApprovalStatus::Pending,
-            processing,
-            polling: processing && outstanding.is_some_and(|at| now - at < POLL_WINDOW),
-            completed: account
-                .welcome_processed_at
-                .map(|t| t.to_rfc3339())
-                .unwrap_or_default(),
         }
     }
 }
@@ -68,7 +48,6 @@ struct Pagination {
 pub fn router(components: AdminComponents) -> Router<()> {
     Router::new()
         .route("/users", get(list))
-        .route("/users/{id}", get(row))
         .route("/users/{id}/approve", axum::routing::post(approve))
         .with_state(components)
 }
@@ -87,33 +66,14 @@ async fn list(
             PageRequest::new(query.after, 50).map_err(HtmlError::from)?,
         )
         .await?;
-    let now = Utc::now();
     Ok(render_template(
         StatusCode::OK,
         &UsersPage {
-            rows: page
-                .accounts
-                .into_iter()
-                .map(|account| UserRow::new(account, now))
-                .collect(),
+            rows: page.accounts.into_iter().map(UserRow::from).collect(),
             next: page.next_after,
             htmx: hypgm_view::HTMX_SCRIPT_URL,
             script: hypgm_view::VIEW_SCRIPT_URL,
         },
-    ))
-}
-async fn row(
-    State(components): State<AdminComponents>,
-    auth: Result<RequireAuth, hypgm_authn::extractor::AuthRejection>,
-    id: Result<Path<Uuid>, axum::extract::rejection::PathRejection>,
-) -> Result<Response, HtmlError> {
-    let RequireAuth(principal) = auth.map_err(|e| HtmlError::from(e.0))?;
-    let Path(id) =
-        id.map_err(|_| HtmlError::from_http(hypgm_http::HttpError::invalid_request()))?;
-    let account = components.service.get(&principal, id).await?;
-    Ok(render_template(
-        StatusCode::OK,
-        &UserRow::new(account, Utc::now()),
     ))
 }
 async fn approve(
@@ -127,10 +87,7 @@ async fn approve(
         id.map_err(|_| HtmlError::from_http(hypgm_http::HttpError::invalid_request()))?;
     let account = components.service.approve(&principal, id).await?;
     if htmx.is_fragment() {
-        Ok(render_template(
-            StatusCode::OK,
-            &UserRow::new(account, Utc::now()),
-        ))
+        Ok(render_template(StatusCode::OK, &UserRow::from(account)))
     } else {
         Ok(Redirect::to("/admin/users").into_response())
     }

@@ -140,24 +140,24 @@ Exemplum serves as the target template for new project generation. The repositor
 ## Registration and account administration
 
 The composed app provides browser forms at `/register` and `/login`, with JSON
-registration at `POST /api/auth/register`. Registrations remain pending until an
+registration at `POST /api/auth/register`. A username that is already taken fails
+validation with “Username unavailable”. Registrations remain pending until an
 administrator approves them through `/admin/users` or
 `POST /api/admin/users/{id}/approve`; `GET /api/admin/users` lists account state.
 Administrator authorization reloads account flags on every request.
-Only accounts with a persisted `welcome_scheduled_at` poll for completion;
-CLI-created administrators and migrated accounts without welcome work show “Not scheduled”.
 
-Approval commits the account transition and welcome job together using the
-application pool. Run the separate task binary to process welcome jobs; the app
-never starts a worker or applies migrations. Startup checks the users schema,
-producer privileges, authentication storage, and session storage before listening.
+Approval locks the account row, so concurrent approvals apply once and approving
+an approved account changes nothing. Accounts that existed before the approval
+migration are approved; any account inserted without an explicit status starts
+pending. The app never applies migrations: startup checks the users schema,
+authentication storage, and session storage before listening.
 Both HTML and JSON writes reject cross-site fetch metadata or a foreign Origin.
 
 `AppComponentsFactory::default()` keeps transport tests database-free using focused
 user, authentication and approved-account fakes. Override `account_service` when a
 test needs registration, pending accounts, or administrator behavior. The
 `view_smoke_server` uses these defaults for greeting-page checks; use the real app
-and task binary for durable account lifecycle scenarios.
+for account lifecycle scenarios.
 
 ### Run the registration demo
 
@@ -184,37 +184,30 @@ an existing account an administrator, pass `--promote` instead of
 The output reports `"action": "created"` or `"promoted"`. The command uses the
 restricted users role, never the migration account.
 
-In separate terminals, from `example/`, run `cargo make app` and
-`cargo make tasks`. Visit `http://127.0.0.1:8080/register` and register an account.
-Log in as `admin`, visit `/admin/users`, and click **Approve**. Approval appears
-immediately; the worker persists a welcome timestamp. With JavaScript enabled the
-row polls until completion; without JavaScript refresh to see the timestamp.
-The default worker cadence can take about 30 seconds to pick up new work.
-`EXEMPLUM_TASKS_MAX_ATTEMPTS` controls the welcome retry budget (five by default),
-including values above five. Newly submitted jobs defer their operational limit
-to the worker; exhausted jobs remain terminal when this setting changes.
-Stopping the worker before approval leaves durable queued work, which completes
-when `cargo make tasks` starts again. The timestamp is a demo effect, not email.
+Run `cargo make app`, visit `http://127.0.0.1:8080/register`, and register an
+account. Logging in as that account fails until it is approved. Log in as
+`admin`, visit `/admin/users`, and click **Approve**; the account can then log in.
 
 ### Verify the complete flow
 
 The process integration suite provisions its own PostgreSQL container and starts
-real app/worker executables; no local database or configuration is used:
+the real app executable; no local database or configuration is used:
 
 ```sh
-cargo test --locked -p exemplum-tasks-cli --test runtime
+cargo test --locked -p exemplum-app-cli --test runtime
 ```
 
 For real Chromium registration/approval checks with JavaScript both enabled and
-disabled, install the browser dependencies once, then run the same isolated suite:
+disabled, install the browser dependencies once, then run the same isolated suite
+(or `cargo make test-browser-registration`):
 
 ```sh
 (cd tests/browser && npm ci && npx playwright install chromium)
-EXEMPLUM_TEST_BROWSER=1 cargo test --locked -p exemplum-tasks-cli --test runtime
+EXEMPLUM_TEST_BROWSER=1 cargo test --locked -p exemplum-app-cli --test runtime
 ```
 
-The suite checks rollback when enqueue fails, simultaneous approval, completion
-without UI polling, stopped-worker queue durability, and duplicate delivery after
-worker restart. `cargo make test-browser` also runs the database-free greeting
-smoke checks. Root `cargo make ci` includes process/database suites and rename
-checks; the Chromium checks are an explicit additional command.
+The suite checks that registrations start pending, cannot log in before approval,
+and can after simultaneous administrator approvals. `cargo make test-browser`
+also runs the database-free greeting smoke checks. Root `cargo make ci` includes
+process/database suites and rename checks; the Chromium checks are an explicit
+additional command.

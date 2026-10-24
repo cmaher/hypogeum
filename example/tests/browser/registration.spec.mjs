@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("register, approve and observe durable welcome completion", async ({ page, javaScriptEnabled }, testInfo) => {
+test("register and approve a pending account", async ({ page }, testInfo) => {
   const name = `Browser ${testInfo.project.name}`;
   await expect.poll(async () => (await page.request.get("/healthz")).status()).toBe(200);
   await page.goto("/register");
@@ -16,19 +16,9 @@ test("register, approve and observe durable welcome completion", async ({ page, 
   await page.getByRole("button", { name: "Log in", exact: true }).click();
   await expect(page).toHaveURL(/\/$/);
   await page.goto("/admin/users");
-  const administrator = page.getByRole("row").filter({ hasText: "Administrator" });
-  await expect(administrator).toContainText("Not scheduled");
-  await expect(administrator).not.toHaveAttribute("hx-trigger");
   const row = page.getByRole("row").filter({ hasText: name });
   await expect(row).toContainText("Pending");
   await row.getByRole("button", { name: "Approve", exact: true }).click();
   await expect(row).toContainText("Approved");
-  if (!javaScriptEnabled) {
-    await expect.poll(async () => {
-      await page.reload();
-      return await row.locator("time").count();
-    }, { timeout: 30_000 }).toBe(1);
-  }
-  await expect(row.locator("time")).toHaveText(/\d{4}-\d\d-\d\d/, { timeout: 30_000 });
   await expect(row.getByRole("button", { name: "Approve", exact: true })).toHaveCount(0);
 });

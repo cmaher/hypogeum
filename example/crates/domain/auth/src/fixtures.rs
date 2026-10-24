@@ -18,8 +18,6 @@ impl AccountService for ApprovedAccounts {
             approval_status: ApprovalStatus::Approved,
             is_admin: false,
             approved_at: None,
-            welcome_scheduled_at: None,
-            welcome_processed_at: None,
         })
     }
     async fn list(&self, _: PageRequest) -> Result<AccountPage, AccountError> {

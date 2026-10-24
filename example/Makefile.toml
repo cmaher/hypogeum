@@ -28,9 +28,9 @@ script_runner = "@shell"
 script = ['cd tests/browser && npm ci && npx playwright install chromium && npm test']
 
 [tasks.test-browser-registration]
-description = "Real PostgreSQL/app/worker registration flow in Chromium, JavaScript on and off"
+description = "Real PostgreSQL/app registration flow in Chromium, JavaScript on and off"
 script_runner = "@shell"
-script = ['(cd tests/browser && npm ci && npx playwright install chromium) && EXEMPLUM_TEST_BROWSER=1 cargo test --locked -p exemplum-tasks-cli --test runtime']
+script = ['(cd tests/browser && npm ci && npx playwright install chromium) && EXEMPLUM_TEST_BROWSER=1 cargo test --locked -p exemplum-app-cli --test runtime']
 
 [tasks.ci]
 dependencies = ["fmt", "clippy", "build", "test"]
@@ -66,8 +66,3 @@ args = ["run", "--locked", "-p", "exemplum-db-cli", "--bin", "exemplum-db", "--"
 description = "Run the public HTTP application against provisioned PostgreSQL"
 command = "cargo"
 args = ["run", "--locked", "-p", "exemplum-app-cli", "--bin", "app"]
-
-[tasks.tasks]
-description = "Run the separate durable welcome job consumer"
-command = "cargo"
-args = ["run", "--locked", "-p", "exemplum-tasks-cli", "--bin", "exemplum-tasks"]
