@@ -1,5 +1,5 @@
 use std::io;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use tracing::subscriber::SetGlobalDefaultError;
 use tracing_subscriber::filter::ParseError;
 
@@ -142,10 +142,35 @@ where
     Ok(tracing::Dispatch::new(subscriber))
 }
 
+/// Keeps two inert dispatchers registered for the life of the test process.
+///
+/// While at most one dispatcher is registered, tracing-core computes callsite
+/// interest from the current thread's default without taking its registry
+/// lock. Parallel tests that use scoped subscribers (or none) then race: a
+/// callsite first hit on a thread with no subscriber caches `never` for every
+/// thread, and concurrent rebuilds can overwrite each other. With two extra
+/// dispatchers always registered, every rebuild takes the locked path and
+/// combines interest from all live subscribers. The inert dispatchers enable
+/// nothing, so they never change what a test subscriber records.
+fn pin_callsite_registry() {
+    use tracing_subscriber::layer::SubscriberExt;
+
+    static PINNED: OnceLock<[tracing::Dispatch; 2]> = OnceLock::new();
+    PINNED.get_or_init(|| {
+        let inert = || {
+            tracing::Dispatch::new(
+                tracing_subscriber::registry().with(tracing_subscriber::filter::LevelFilter::OFF),
+            )
+        };
+        [inert(), inert()]
+    });
+}
+
 pub fn create_test_subscriber(
     filter: &str,
     format: LogFormat,
 ) -> Result<(Box<dyn tracing::Subscriber + Send + Sync>, TestWriter), LoggingError> {
+    pin_callsite_registry();
     let writer = TestWriter::new();
     let subscriber = create_subscriber(filter, format, writer.clone())?;
     Ok((subscriber, writer))
