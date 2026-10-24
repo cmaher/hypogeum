@@ -6,7 +6,7 @@ use exemplum_dmn_auth::AuthComponents;
 use exemplum_dmn_auth::backend::ExemplumAuthBackend;
 use hypgm_authn::{jwt::JwtValidator, session::PrincipalAuthBackend};
 use hypgm_http::{HealthCheck, MAX_BODY_BYTES, not_found_handler, trace_layer};
-use hypgm_view::{html_error_middleware, html_not_found_handler};
+use hypgm_view::{cross_site_middleware, html_error_middleware, html_not_found_handler};
 use tower_sessions::SessionManagerLayer;
 
 use crate::components::AppComponents;
@@ -52,7 +52,8 @@ where
             hypgm_view::assets::ASSETS_MOUNT,
             hypgm_view::assets::router(),
         )
-        .layer(axum::middleware::from_fn(html_error_middleware));
+        .layer(axum::middleware::from_fn(html_error_middleware))
+        .layer(axum::middleware::from_fn(cross_site_middleware));
 
     let backend = ExemplumAuthBackend::from_arc(components.auth_repo);
     let login_backend = PrincipalAuthBackend::new(backend);

@@ -1,12 +1,11 @@
 use exemplum_app::router;
 use exemplum_dmn_hello_world::service::NAME_VALIDATION_MESSAGE;
-use hypgm_view::{HTMX_SCRIPT_URL, VIEW_SCRIPT_URL};
+use hypgm_view::{CROSS_SITE_FORM, HTML_CONTENT_TYPE, HTMX_SCRIPT_URL, VIEW_SCRIPT_URL};
 use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
-const HTML: &str = "text/html; charset=utf-8";
 const FORM: &str = "application/x-www-form-urlencoded";
 
 struct Server {
@@ -71,7 +70,7 @@ fn header<'a>(response: &'a reqwest::Response, name: &str) -> &'a str {
 
 fn assert_html(response: &reqwest::Response, status: u16) {
     assert_eq!(response.status(), status);
-    assert_eq!(header(response, "content-type"), HTML);
+    assert_eq!(header(response, "content-type"), HTML_CONTENT_TYPE);
     assert!(!header(response, "x-request-id").is_empty());
 }
 
@@ -232,7 +231,30 @@ async fn cross_site_form_posts_are_rejected() {
         .send()
         .await
         .unwrap();
-    assert_html_error(response, 403, "Cross-site form submissions are not allowed").await;
+    assert_html_error(response, 403, CROSS_SITE_FORM.message).await;
+
+    // The page-router middleware rejects before any extractor or method
+    // routing runs, so bodies without a form media type are covered too.
+    for (path, content_type) in [("/hello", "text/plain"), ("/", FORM)] {
+        let response = reqwest::Client::new()
+            .post(server.url(path))
+            .header("content-type", content_type)
+            .header("sec-fetch-site", "cross-site")
+            .body("name=Ada")
+            .send()
+            .await
+            .unwrap();
+        assert_html_error(response, 403, CROSS_SITE_FORM.message).await;
+    }
+
+    // Safe methods and the JSON API are not affected.
+    let response = reqwest::Client::new()
+        .get(server.url("/"))
+        .header("sec-fetch-site", "cross-site")
+        .send()
+        .await
+        .unwrap();
+    assert_html(&response, 200);
 
     let response = reqwest::Client::new()
         .post(server.url("/hello"))

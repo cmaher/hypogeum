@@ -8,7 +8,9 @@ pub mod assets;
 pub mod form;
 
 pub use assets::{HTMX_SCRIPT_URL, HTMX_VERSION, VIEW_SCRIPT_URL};
-pub use form::{AppForm, CROSS_SITE_FORM, is_cross_site_request, is_form_content_type};
+pub use form::{
+    AppForm, CROSS_SITE_FORM, cross_site_middleware, is_cross_site_request, is_form_content_type,
+};
 
 use askama::Template;
 use axum::extract::{FromRequestParts, Request};

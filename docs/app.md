@@ -383,7 +383,10 @@ parsing only; there is no content-type dispatch between HTML and JSON adapters.
   rejects browser submissions from other sites with an HTML `403` before
   reading the body: `Sec-Fetch-Site` must be `same-origin` or `none`, or,
   without it, `Origin` must match the request's `Host`. Requests without
-  either header (non-browser clients) are accepted. Session cookies also
+  either header (non-browser clients) are accepted. Page routers also install
+  `cross_site_middleware`, which applies the same check to every unsafe
+  method (anything but `GET`, `HEAD`, `OPTIONS` and `TRACE`) before routing,
+  so handlers without a form body are covered. Session cookies also
   default to `SameSite=Strict` (`tower-sessions`); keep that default for
   form-authenticated pages. Deployments behind a proxy that rewrites `Host`
   must forward the original host.

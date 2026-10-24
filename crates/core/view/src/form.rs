@@ -2,6 +2,8 @@ use crate::HtmlError;
 use axum::extract::{FromRequest, Request};
 use axum::http::request::Parts;
 use axum::http::{HeaderName, StatusCode, header};
+use axum::middleware::Next;
+use axum::response::{IntoResponse, Response};
 use hypgm_errors::PublicErrorInfo;
 use hypgm_http::{HttpError, MAX_BODY_BYTES, is_length_limit_error};
 use serde::de::DeserializeOwned;
@@ -23,8 +25,10 @@ pub const CROSS_SITE_FORM: PublicErrorInfo = PublicErrorInfo::new(
 /// rejected with an HTML 403 when `Sec-Fetch-Site` is anything other than
 /// `same-origin` or `none`, or, without `Sec-Fetch-Site`, when `Origin` does not
 /// match the request authority. Requests carrying neither header (non-browser
-/// clients) are accepted. This complements the `SameSite=Strict` session cookie
-/// default; it is not a substitute for authorization.
+/// clients) are accepted. Page routers should also install
+/// [`cross_site_middleware`] so handlers without a form body get the same
+/// check. This complements the `SameSite=Strict` session cookie default; it is
+/// not a substitute for authorization.
 ///
 /// Bodies are limited to [`MAX_BODY_BYTES`] for both declared and streamed
 /// lengths. Other rejections are safe HTML errors: 415 for other media types,
@@ -79,6 +83,18 @@ pub fn is_cross_site_request(parts: &Parts) -> bool {
         (Some(origin), Some(authority)) => !origin.eq_ignore_ascii_case(authority),
         _ => true,
     }
+}
+
+/// Rejects cross-site requests with unsafe methods before any handler runs,
+/// so page routes are protected whether or not they extract [`AppForm`].
+/// Safe methods (`GET`, `HEAD`, `OPTIONS`, `TRACE`) pass through. Install on
+/// page routers with `axum::middleware::from_fn(cross_site_middleware)`.
+pub async fn cross_site_middleware(req: Request, next: Next) -> Response {
+    let (parts, body) = req.into_parts();
+    if !parts.method.is_safe() && is_cross_site_request(&parts) {
+        return HtmlError::Public(CROSS_SITE_FORM).into_response();
+    }
+    next.run(Request::from_parts(parts, body)).await
 }
 
 fn reject(err: HttpError) -> HtmlError {

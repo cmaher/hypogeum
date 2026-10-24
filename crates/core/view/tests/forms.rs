@@ -2,10 +2,10 @@ use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode, header};
 use axum::response::Response;
-use axum::routing::post;
+use axum::routing::{get, post};
 use hypgm_errors::PublicErrorInfo;
 use hypgm_http::{ErrorClassification, MAX_BODY_BYTES};
-use hypgm_view::{AppForm, CROSS_SITE_FORM, HTML_CONTENT_TYPE};
+use hypgm_view::{AppForm, CROSS_SITE_FORM, HTML_CONTENT_TYPE, cross_site_middleware};
 use tower::ServiceExt;
 
 const FORM: &str = "application/x-www-form-urlencoded";
@@ -165,9 +165,70 @@ async fn cross_site_submissions_are_html_403() {
             ("host", "app.test:8080"),
         ],
         &[("origin", "null"), ("host", "app.test")],
+        // Origin without a Host header or URI authority to compare against.
+        &[("origin", "http://app.test")],
     ] {
         let response = send_with_headers(headers).await;
         assert_html_rejection(response, CROSS_SITE_FORM).await;
+    }
+}
+
+async fn send_absolute(origin: &str) -> Response {
+    // HTTP/2 requests carry `:authority` in the URI instead of a Host header.
+    let request = Request::builder()
+        .method("POST")
+        .uri("http://app.test:8080/form")
+        .header(header::CONTENT_TYPE, FORM)
+        .header(header::ORIGIN, origin)
+        .body(Body::from("name=Ada"))
+        .unwrap();
+    router().oneshot(request).await.unwrap()
+}
+
+#[tokio::test]
+async fn origin_falls_back_to_uri_authority_without_host() {
+    let response = send_absolute("http://app.test:8080").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(body_text(response).await, "Ada");
+
+    let response = send_absolute("http://evil.test").await;
+    assert_html_rejection(response, CROSS_SITE_FORM).await;
+}
+
+fn guarded_router() -> Router {
+    Router::new()
+        .route(
+            "/action",
+            get(|| async { "read" }).post(|| async { "done" }),
+        )
+        .layer(axum::middleware::from_fn(cross_site_middleware))
+}
+
+async fn send_guarded(method: &str, headers: &[(&str, &str)]) -> Response {
+    let mut request = Request::builder().method(method).uri("/action");
+    for (name, value) in headers {
+        request = request.header(*name, *value);
+    }
+    guarded_router()
+        .oneshot(request.body(Body::empty()).unwrap())
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn middleware_rejects_cross_site_unsafe_methods_without_form_bodies() {
+    let cross_site = [("sec-fetch-site", "cross-site")];
+    let response = send_guarded("POST", &cross_site).await;
+    assert_html_rejection(response, CROSS_SITE_FORM).await;
+
+    let response = send_guarded("GET", &cross_site).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(body_text(response).await, "read");
+
+    for headers in [&[][..], &[("sec-fetch-site", "same-origin")]] {
+        let response = send_guarded("POST", headers).await;
+        assert_eq!(response.status(), StatusCode::OK, "{headers:?}");
+        assert_eq!(body_text(response).await, "done");
     }
 }
 
