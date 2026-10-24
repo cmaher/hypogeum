@@ -101,6 +101,7 @@ impl TestHarness {
             Arc::new(DefaultHelloWorldService),
             user_service.clone(),
             auth_repo.clone(),
+            Arc::new(exemplum_dmn_auth::fixtures::ApprovedAccounts),
             authorizer,
             session_store,
             token_config,

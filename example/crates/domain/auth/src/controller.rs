@@ -80,18 +80,21 @@ impl Default for TokenConfig {
 #[derive(Clone)]
 pub struct AuthComponents {
     pub repo: Arc<dyn AuthRepo>,
+    pub accounts: Arc<dyn exemplum_dmn_users::accounts::AccountService>,
     pub token_config: TokenConfig,
-    password_verifications: Arc<tokio::sync::Semaphore>,
+    pub(crate) password_verifications: Arc<tokio::sync::Semaphore>,
 }
 
 impl AuthComponents {
     pub fn new(
         repo: Arc<dyn AuthRepo>,
+        accounts: Arc<dyn exemplum_dmn_users::accounts::AccountService>,
         token_config: TokenConfig,
         password_config: PasswordConfig,
     ) -> Self {
         Self {
             repo,
+            accounts,
             token_config,
             password_verifications: Arc::new(tokio::sync::Semaphore::new(
                 password_config.max_verifications.get(),
@@ -103,6 +106,7 @@ impl AuthComponents {
 pub struct AuthComponentsFactory {
     pub password_config: PasswordConfig,
     pub repo: Arc<dyn AuthRepo>,
+    pub accounts: Arc<dyn exemplum_dmn_users::accounts::AccountService>,
     pub token_config: TokenConfig,
 }
 
@@ -110,6 +114,7 @@ impl Default for AuthComponentsFactory {
     fn default() -> Self {
         Self {
             repo: Arc::new(crate::repo::InMemoryAuthRepo::new()),
+            accounts: Arc::new(crate::fixtures::ApprovedAccounts),
             password_config: PasswordConfig::default(),
             token_config: TokenConfig::default(),
         }
@@ -118,12 +123,18 @@ impl Default for AuthComponentsFactory {
 
 impl AuthComponentsFactory {
     pub fn build(self) -> AuthComponents {
-        AuthComponents::new(self.repo, self.token_config, self.password_config)
+        AuthComponents::new(
+            self.repo,
+            self.accounts,
+            self.token_config,
+            self.password_config,
+        )
     }
 }
 
 pub fn router(components: AuthComponents) -> Router<()> {
     Router::new()
+        .route("/register", post(crate::registration::register))
         .route("/login", post(login))
         .route("/logout", post(logout))
         .route("/token", post(token))
@@ -167,6 +178,11 @@ async fn login(
         .filter(|_| valid)
         .ok_or(AuthError::InvalidCredentials)?;
 
+    if !crate::registration::require_approved(components.accounts.as_ref(), identity.user_id)
+        .await?
+    {
+        return Err(AuthError::InvalidCredentials.into());
+    }
     let principal = Principal::new(identity.id, identity.user_id, AuthMethod::Session);
     auth_session
         .login(&principal)
@@ -366,6 +382,12 @@ async fn issue_token(
         ident
     };
 
+    if !crate::registration::require_approved(components.accounts.as_ref(), identity.user_id)
+        .await?
+    {
+        return Err(AuthError::InvalidCredentials.into());
+    }
+
     let requested_ttl = req
         .expires_in
         .unwrap_or(components.token_config.default_ttl);
@@ -401,6 +423,58 @@ mod tests {
     use axum::http::Request;
     use tower::ServiceExt;
 
+    #[test]
+    fn cancelled_registration_holds_capacity_until_blocking_hash_finishes() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .max_blocking_threads(1)
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let (release, blocked) = std::sync::mpsc::channel();
+            let (started, ready) = tokio::sync::oneshot::channel();
+            let blocker = tokio::task::spawn_blocking(move || {
+                started.send(()).unwrap();
+                blocked.recv().unwrap();
+            });
+            ready.await.unwrap();
+            let components = AuthComponentsFactory {
+                password_config: PasswordConfig {
+                    max_verifications: std::num::NonZeroUsize::new(1).unwrap(),
+                },
+                ..Default::default()
+            }
+            .build();
+            let capacity = components.password_verifications.clone();
+            let registration = tokio::spawn(async move {
+                components
+                    .register(crate::RegistrationRequest {
+                        display_name: "Alice".into(),
+                        username: "alice".into(),
+                        password: "long password!".into(),
+                    })
+                    .await
+            });
+            tokio::time::timeout(std::time::Duration::from_secs(2), async {
+                while capacity.available_permits() != 0 {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap();
+            registration.abort();
+            assert!(registration.await.unwrap_err().is_cancelled());
+            assert_eq!(capacity.available_permits(), 0);
+            release.send(()).unwrap();
+            blocker.await.unwrap();
+            let _permit =
+                tokio::time::timeout(std::time::Duration::from_secs(10), capacity.acquire())
+                    .await
+                    .unwrap()
+                    .unwrap();
+        });
+    }
+
     #[tokio::test]
     async fn configured_password_capacity_blocks_login_until_a_permit_is_released() {
         for capacity in [1, 3] {
@@ -418,6 +492,7 @@ mod tests {
             .unwrap();
             let components = AuthComponents::new(
                 repo.clone(),
+                Arc::new(crate::fixtures::ApprovedAccounts),
                 TokenConfig::default(),
                 PasswordConfig {
                     max_verifications: std::num::NonZeroUsize::new(capacity).unwrap(),
@@ -429,8 +504,10 @@ mod tests {
                 .acquire_many_owned(capacity as u32)
                 .await
                 .unwrap();
-            let backend =
-                PrincipalAuthBackend::new(crate::backend::ExemplumAuthBackend::from_arc(repo));
+            let backend = PrincipalAuthBackend::new(crate::backend::ExemplumAuthBackend::from_arc(
+                repo,
+                Arc::new(crate::fixtures::ApprovedAccounts),
+            ));
             let layer = axum_login::AuthManagerLayerBuilder::new(
                 backend,
                 tower_sessions::SessionManagerLayer::new(tower_sessions::MemoryStore::default()),

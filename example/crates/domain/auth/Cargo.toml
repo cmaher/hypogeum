@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+exemplum-dmn-users = { path = "../users" }
 hypgm-errors = { path = "../../../../crates/core/errors" }
 hypgm-authn = { path = "../../../../crates/core/authn" }
 hypgmx-rdbms = { path = "../../../../crates/ext/rdbms", features = ["postgres"] }

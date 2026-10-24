@@ -35,6 +35,7 @@ where
     let hello_pages = exemplum_dmn_hello_world::view::router(hello_components);
     let auth_components = AuthComponents::new(
         components.auth_repo.clone(),
+        components.account_service.clone(),
         components.token_config.clone(),
         components.password_config,
     );
@@ -55,8 +56,8 @@ where
         .layer(axum::middleware::from_fn(html_error_middleware))
         .layer(axum::middleware::from_fn(cross_site_middleware));
 
-    let backend = ExemplumAuthBackend::from_arc(components.auth_repo);
-    let login_backend = PrincipalAuthBackend::new(backend);
+    let backend = ExemplumAuthBackend::from_arc(components.auth_repo, components.account_service);
+    let login_backend = PrincipalAuthBackend::new(backend.clone());
     let session_layer = SessionManagerLayer::new(components.session_store);
     let auth_layer = axum_login::AuthManagerLayerBuilder::new(login_backend, session_layer).build();
     let jwt_validator = JwtValidator::from_hs256_secret(&components.token_config.jwt_secret)
@@ -69,6 +70,10 @@ where
         .route("/api/", any(not_found_handler))
         .merge(pages)
         .fallback(html_not_found_handler)
+        .layer(axum::middleware::from_fn_with_state(
+            backend,
+            exemplum_dmn_auth::backend::bearer_gate,
+        ))
         .layer(auth_layer)
         .layer(Extension(jwt_validator))
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))

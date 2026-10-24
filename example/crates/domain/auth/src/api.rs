@@ -116,3 +116,25 @@ mod tests {
         assert_redacted(&response, &[&response.access_token]);
     }
 }
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RegistrationRequest {
+    pub display_name: String,
+    pub username: String,
+    pub password: String,
+}
+impl std::fmt::Debug for RegistrationRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RegistrationRequest")
+            .field("display_name", &self.display_name)
+            .field("username", &self.username)
+            .field("password", &"[redacted]")
+            .finish()
+    }
+}
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct RegistrationResponse {
+    pub id: Uuid,
+    pub approval_status: exemplum_dmn_users::accounts::ApprovalStatus,
+}

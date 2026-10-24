@@ -11,3 +11,8 @@ pub use controller::{AuthComponents, AuthComponentsFactory, PasswordConfig, Toke
 pub use models::AuthIdentity;
 pub use repo::{AuthRepo, InMemoryAuthRepo, PgAuthRepo};
 pub use session::PostgresSessionStore;
+
+#[doc(hidden)]
+pub mod fixtures;
+pub mod registration;
+pub use api::{RegistrationRequest, RegistrationResponse};

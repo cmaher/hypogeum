@@ -15,6 +15,7 @@ pub struct AppComponents<S> {
     pub hello_service: Arc<dyn HelloWorldService>,
     pub user_service: Arc<dyn UserService>,
     pub auth_repo: Arc<dyn AuthRepo>,
+    pub account_service: Arc<dyn exemplum_dmn_users::accounts::AccountService>,
     pub authorizer: Arc<Authorizer>,
     pub session_store: S,
     pub token_config: TokenConfig,
@@ -22,10 +23,12 @@ pub struct AppComponents<S> {
 }
 
 impl<S: SessionStore + Clone + Send + Sync + 'static> AppComponents<S> {
+    #[allow(clippy::too_many_arguments)] // Application composition explicitly names its dependencies.
     pub fn new(
         hello_service: Arc<dyn HelloWorldService>,
         user_service: Arc<dyn UserService>,
         auth_repo: Arc<dyn AuthRepo>,
+        account_service: Arc<dyn exemplum_dmn_users::accounts::AccountService>,
         authorizer: Arc<Authorizer>,
         session_store: S,
         token_config: TokenConfig,
@@ -35,6 +38,7 @@ impl<S: SessionStore + Clone + Send + Sync + 'static> AppComponents<S> {
             hello_service,
             user_service,
             auth_repo,
+            account_service,
             authorizer,
             session_store,
             token_config,
@@ -47,6 +51,7 @@ pub struct AppComponentsFactory<S = tower_sessions::MemoryStore> {
     pub hello_service: Arc<dyn HelloWorldService>,
     pub user_service: Arc<dyn UserService>,
     pub auth_repo: Arc<dyn AuthRepo>,
+    pub account_service: Arc<dyn exemplum_dmn_users::accounts::AccountService>,
     pub authorizer: Arc<Authorizer>,
     pub session_store: S,
     pub token_config: TokenConfig,
@@ -59,6 +64,7 @@ impl Default for AppComponentsFactory<tower_sessions::MemoryStore> {
             hello_service: Arc::new(DefaultHelloWorldService),
             user_service: Arc::new(DefaultMockUserService),
             auth_repo: Arc::new(InMemoryAuthRepo::new()),
+            account_service: Arc::new(exemplum_dmn_auth::fixtures::ApprovedAccounts),
             authorizer: default_authorizer(),
             session_store: tower_sessions::MemoryStore::default(),
             token_config: TokenConfig::default(),
@@ -73,6 +79,7 @@ impl<S: SessionStore + Clone + Send + Sync + 'static> AppComponentsFactory<S> {
             self.hello_service,
             self.user_service,
             self.auth_repo,
+            self.account_service,
             self.authorizer,
             self.session_store,
             self.token_config,
@@ -90,12 +97,16 @@ impl AppComponentsFactory<PostgresSessionStore> {
     ) -> AppComponents<PostgresSessionStore> {
         let session_store = PostgresSessionStore::new_with_schema(pool.clone(), "exemplum");
         let auth_repo = Arc::new(PgAuthRepo::new(pool.clone()));
+        let account_service = Arc::new(exemplum_dmn_users::accounts::DefaultAccountService::new(
+            Arc::new(exemplum_dmn_users::repo::PgAccountRepo::new(pool.clone())),
+        ));
         let user_repo = Arc::new(PgUserRepo::new(pool));
         let user_service = Arc::new(DefaultUserService::new(user_repo));
         AppComponents::new(
             Arc::new(DefaultHelloWorldService),
             user_service,
             auth_repo,
+            account_service,
             authorizer,
             session_store,
             token_config,
