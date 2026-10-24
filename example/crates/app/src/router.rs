@@ -26,9 +26,12 @@ pub fn router<S>(components: AppComponents<S>) -> Router<()>
 where
     S: tower_sessions::SessionStore + Clone + Send + Sync + 'static,
 {
+    let admin = exemplum_dmn_admin::api::router(exemplum_dmn_admin::AdminService::new(
+        components.account_service.clone(),
+        components.authorizer,
+    ));
     let hello_components = exemplum_dmn_hello_world::HelloComponents::new(
         components.hello_service,
-        components.authorizer,
         components.user_service,
     );
     let hello = exemplum_dmn_hello_world::controller::router(hello_components.clone());
@@ -45,6 +48,7 @@ where
     let api = Router::new()
         .nest("/hello", hello)
         .nest("/auth", auth_routes)
+        .nest("/admin", admin)
         .fallback(not_found_handler);
 
     let pages = Router::new()

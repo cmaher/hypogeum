@@ -5,26 +5,22 @@ use axum::extract::State;
 use axum::routing::{get, post};
 use exemplum_dmn_users::service::UserService;
 use hypgm_authn::RequireAuth;
-use hypgm_authz::Authorizer;
 use hypgm_http::{AppJson, HttpError};
 use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct HelloComponents {
     pub hello_service: Arc<dyn HelloWorldService>,
-    pub authorizer: Arc<Authorizer>,
     pub user_service: Arc<dyn UserService>,
 }
 
 impl HelloComponents {
     pub fn new(
         hello_service: Arc<dyn HelloWorldService>,
-        authorizer: Arc<Authorizer>,
         user_service: Arc<dyn UserService>,
     ) -> Self {
         Self {
             hello_service,
-            authorizer,
             user_service,
         }
     }
@@ -32,26 +28,13 @@ impl HelloComponents {
 
 pub struct HelloComponentsFactory {
     pub hello_service: Arc<dyn HelloWorldService>,
-    pub authorizer: Arc<Authorizer>,
     pub user_service: Arc<dyn UserService>,
 }
 
 impl Default for HelloComponentsFactory {
     fn default() -> Self {
-        const DEFAULT_SCHEMA: &str = r#"
-            entity User;
-            entity Resource;
-            action "greet" appliesTo { principal: [User], resource: [Resource] };
-        "#;
-        const DEFAULT_POLICY: &str = "permit(principal, action, resource);";
-        let (schema, policies) =
-            hypgm_authz::load_schema_and_policies(DEFAULT_SCHEMA, DEFAULT_POLICY)
-                .expect("valid default Cedar schema and policy");
         Self {
             hello_service: Arc::new(crate::service::DefaultHelloWorldService),
-            authorizer: Arc::new(
-                Authorizer::new(schema, policies).expect("valid authorization entities"),
-            ),
             user_service: Arc::new(DefaultMockUserService),
         }
     }
@@ -59,7 +42,7 @@ impl Default for HelloComponentsFactory {
 
 impl HelloComponentsFactory {
     pub fn build(self) -> HelloComponents {
-        HelloComponents::new(self.hello_service, self.authorizer, self.user_service)
+        HelloComponents::new(self.hello_service, self.user_service)
     }
 }
 
@@ -125,11 +108,6 @@ async fn hello_me(
     State(components): State<HelloComponents>,
     RequireAuth(principal): RequireAuth,
 ) -> Result<AppJson<HelloResponse>, HttpError> {
-    components
-        .authorizer
-        .authorize(&principal, ("Action", "greet"), ("Resource", "hello_world"))
-        .map_err(HttpError::from)?;
-
     let user = components
         .user_service
         .get(principal.user_id)

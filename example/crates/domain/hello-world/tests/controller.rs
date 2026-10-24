@@ -10,11 +10,6 @@ use std::sync::Arc;
 use tower::ServiceExt;
 
 fn test_app(service: Arc<dyn HelloWorldService>) -> axum::Router {
-    let (schema, policies) =
-        hypgm_authz::load_schema_and_policies(CEDAR_SCHEMA, PERMIT_POLICY).unwrap();
-    let authorizer = Arc::new(
-        hypgm_authz::Authorizer::new(schema, policies).expect("valid authorization entities"),
-    );
     let user_service = Arc::new(MockUserService {
         user: exemplum_dmn_users::models::User {
             id: uuid::Uuid::new_v4(),
@@ -25,7 +20,6 @@ fn test_app(service: Arc<dyn HelloWorldService>) -> axum::Router {
     });
     let components = HelloComponentsFactory {
         hello_service: service,
-        authorizer,
         user_service,
     }
     .build();
@@ -221,38 +215,8 @@ impl exemplum_dmn_users::service::UserService for MockUserService {
     }
 }
 
-const CEDAR_SCHEMA: &str = r#"
-entity User;
-entity Resource;
-action "greet" appliesTo {
-    principal: [User],
-    resource: [Resource]
-};
-"#;
-
-const PERMIT_POLICY: &str = r#"
-permit(
-    principal,
-    action == Action::"greet",
-    resource == Resource::"hello_world"
-);
-"#;
-
-const FORBID_POLICY: &str = r#"
-forbid(
-    principal,
-    action == Action::"greet",
-    resource == Resource::"hello_world"
-);
-"#;
-
 #[tokio::test]
 async fn test_hello_me_requires_auth() {
-    let (schema, policies) =
-        hypgm_authz::load_schema_and_policies(CEDAR_SCHEMA, PERMIT_POLICY).unwrap();
-    let authorizer = Arc::new(
-        hypgm_authz::Authorizer::new(schema, policies).expect("valid authorization entities"),
-    );
     let user_id = uuid::Uuid::new_v4();
     let user_service = Arc::new(MockUserService {
         user: exemplum_dmn_users::models::User {
@@ -266,7 +230,6 @@ async fn test_hello_me_requires_auth() {
     let app = exemplum_dmn_hello_world::controller::router(
         exemplum_dmn_hello_world::HelloComponents::new(
             Arc::new(DefaultHelloWorldService),
-            authorizer,
             user_service,
         ),
     );
@@ -282,12 +245,7 @@ async fn test_hello_me_requires_auth() {
 }
 
 #[tokio::test]
-async fn test_hello_me_evaluates_cedar_policy_and_returns_display_name() {
-    let (schema, policies) =
-        hypgm_authz::load_schema_and_policies(CEDAR_SCHEMA, PERMIT_POLICY).unwrap();
-    let permit_authorizer = Arc::new(
-        hypgm_authz::Authorizer::new(schema, policies).expect("valid authorization entities"),
-    );
+async fn test_hello_me_returns_authenticated_display_name() {
     let user_id = uuid::Uuid::new_v4();
     let auth_id = uuid::Uuid::new_v4();
     let user_service = Arc::new(MockUserService {
@@ -302,7 +260,6 @@ async fn test_hello_me_evaluates_cedar_policy_and_returns_display_name() {
     let app = exemplum_dmn_hello_world::controller::router(
         exemplum_dmn_hello_world::HelloComponents::new(
             Arc::new(DefaultHelloWorldService),
-            permit_authorizer,
             user_service.clone(),
         ),
     );
@@ -320,31 +277,6 @@ async fn test_hello_me_evaluates_cedar_policy_and_returns_display_name() {
     let bytes = to_bytes(resp.into_body(), 1024).await.unwrap();
     let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(json["message"], "Hello, Alice Liddell!");
-
-    // Test with forbidden policy -> 403
-    let (forbid_schema, forbid_policies) =
-        hypgm_authz::load_schema_and_policies(CEDAR_SCHEMA, FORBID_POLICY).unwrap();
-    let forbid_authorizer = Arc::new(
-        hypgm_authz::Authorizer::new(forbid_schema, forbid_policies)
-            .expect("valid authorization entities"),
-    );
-    let app_forbidden = exemplum_dmn_hello_world::controller::router(
-        exemplum_dmn_hello_world::HelloComponents::new(
-            Arc::new(DefaultHelloWorldService),
-            forbid_authorizer,
-            user_service,
-        ),
-    );
-
-    let mut req_forbidden = Request::builder()
-        .method("GET")
-        .uri("/me")
-        .body(Body::empty())
-        .unwrap();
-    req_forbidden.extensions_mut().insert(principal);
-
-    let resp_forbidden = app_forbidden.oneshot(req_forbidden).await.unwrap();
-    assert_eq!(resp_forbidden.status(), StatusCode::FORBIDDEN);
 }
 
 #[tokio::test]

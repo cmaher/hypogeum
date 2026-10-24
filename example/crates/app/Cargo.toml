@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+exemplum-dmn-admin = { path = "../domain/admin" }
 exemplum-dmn-hello-world = { path = "../domain/hello-world" }
 exemplum-dmn-users = { path = "../domain/users" }
 exemplum-dmn-auth = { path = "../domain/auth" }

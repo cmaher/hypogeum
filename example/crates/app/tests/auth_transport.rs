@@ -413,10 +413,10 @@ async fn test_token_exchange_and_jwt_bearer_auth() {
 }
 
 #[tokio::test]
-async fn test_overriding_policy_with_forbid_returns_403() {
+async fn test_greeting_authentication_is_independent_of_admin_policy() {
     let forbid_policy = r#"
 permit(principal, action, resource);
-forbid(principal, action == Action::"greet", resource);
+forbid(principal, action, resource);
 "#;
     let harness = TestHarness::start_with_policy(forbid_policy).await;
     let client = reqwest::Client::new();
@@ -458,7 +458,7 @@ forbid(principal, action == Action::"greet", resource);
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    assert_eq!(resp.status(), StatusCode::OK);
 
     harness.shutdown().await;
 }

@@ -1,7 +1,6 @@
-entity User;
+entity User { is_admin: Bool, approved: Bool };
 entity Resource;
-
-action "greet" appliesTo {
+action "view_admin_users", "approve_user" appliesTo {
     principal: [User],
     resource: [Resource]
 };

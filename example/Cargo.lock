@@ -1329,6 +1329,7 @@ dependencies = [
  "axum",
  "axum-login",
  "chrono",
+ "exemplum-dmn-admin",
  "exemplum-dmn-auth",
  "exemplum-dmn-hello-world",
  "exemplum-dmn-users",
@@ -1395,6 +1396,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "exemplum-dmn-admin"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "cedar-policy",
+ "chrono",
+ "exemplum-dmn-users",
+ "hypgm-authn",
+ "hypgm-authz",
+ "hypgm-errors",
+ "hypgm-http",
+ "hypgm-view",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tower",
+ "uuid",
+]
+
+[[package]]
 name = "exemplum-dmn-auth"
 version = "0.1.0"
 dependencies = [
@@ -1438,7 +1460,6 @@ dependencies = [
  "chrono",
  "exemplum-dmn-users",
  "hypgm-authn",
- "hypgm-authz",
  "hypgm-errors",
  "hypgm-http",
  "hypgm-view",

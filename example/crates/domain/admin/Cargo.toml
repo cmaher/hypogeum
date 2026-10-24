@@ -1,0 +1,27 @@
+[package]
+name = "exemplum-dmn-admin"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+exemplum-dmn-users = { path = "../users" }
+hypgm-authn = { path = "../../../../crates/core/authn" }
+hypgm-authz = { path = "../../../../crates/core/authz" }
+hypgm-errors = { path = "../../../../crates/core/errors" }
+hypgm-http = { path = "../../../../crates/core/http" }
+hypgm-view = { path = "../../../../crates/core/view" }
+cedar-policy = "4"
+axum = { version = "0.8", default-features = false, features = ["tokio", "json", "query"] }
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+async-trait.workspace = true
+tokio.workspace = true
+chrono.workspace = true
+tower = { version = "0.5", features = ["util"] }
+
+[lints]
+workspace = true
