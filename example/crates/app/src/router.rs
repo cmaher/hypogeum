@@ -48,6 +48,7 @@ where
     );
     let auth_routes = exemplum_dmn_auth::controller::router(auth_components.clone());
     let auth_pages = exemplum_dmn_auth::view::router(auth_components);
+    let backend = ExemplumAuthBackend::from_arc(components.auth_repo, components.account_service);
 
     // `/api` owns JSON errors for every path beneath it; page routes own HTML errors.
     let api = Router::new()
@@ -55,7 +56,11 @@ where
         .nest("/auth", auth_routes)
         .nest("/admin", admin)
         .fallback(not_found_handler)
-        .layer(axum::middleware::from_fn(api_same_origin));
+        .layer(axum::middleware::from_fn(api_same_origin))
+        .layer(axum::middleware::from_fn_with_state(
+            backend.clone(),
+            exemplum_dmn_auth::backend::bearer_gate,
+        ));
 
     let pages = Router::new()
         .merge(hello_pages)
@@ -70,9 +75,12 @@ where
             hypgm_view::assets::router(),
         )
         .layer(axum::middleware::from_fn(html_error_middleware))
-        .layer(axum::middleware::from_fn(cross_site_middleware));
+        .layer(axum::middleware::from_fn(cross_site_middleware))
+        .layer(axum::middleware::from_fn_with_state(
+            backend.clone(),
+            exemplum_dmn_auth::backend::html_bearer_gate,
+        ));
 
-    let backend = ExemplumAuthBackend::from_arc(components.auth_repo, components.account_service);
     let login_backend = PrincipalAuthBackend::new(backend.clone());
     let session_layer = SessionManagerLayer::new(components.session_store);
     let auth_layer = axum_login::AuthManagerLayerBuilder::new(login_backend, session_layer).build();
@@ -86,10 +94,6 @@ where
         .route("/api/", any(not_found_handler))
         .merge(pages)
         .fallback(html_not_found_handler)
-        .layer(axum::middleware::from_fn_with_state(
-            backend,
-            exemplum_dmn_auth::backend::bearer_gate,
-        ))
         .layer(auth_layer)
         .layer(Extension(jwt_validator))
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))

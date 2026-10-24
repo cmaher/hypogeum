@@ -65,26 +65,55 @@ pub async fn bearer_gate(
     next: axum::middleware::Next,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let authorization = request
-        .headers()
+    match validate_bearer(&backend, request.headers(), request.extensions()).await {
+        Ok(()) => next.run(request).await,
+        Err(error) => hypgm_authn::extractor::AuthRejection(error).into_response(),
+    }
+}
+
+/// Revalidate bearer identities while preserving the page router's HTML errors.
+pub async fn html_bearer_gate(
+    axum::extract::State(backend): axum::extract::State<ExemplumAuthBackend>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    match validate_bearer(&backend, request.headers(), request.extensions()).await {
+        Ok(()) => next.run(request).await,
+        Err(error) => {
+            let mut response = hypgm_view::HtmlError::from(error).into_response();
+            if response.status() == axum::http::StatusCode::UNAUTHORIZED {
+                response.headers_mut().insert(
+                    axum::http::header::WWW_AUTHENTICATE,
+                    axum::http::HeaderValue::from_static("Bearer"),
+                );
+            }
+            response
+        }
+    }
+}
+
+async fn validate_bearer(
+    backend: &ExemplumAuthBackend,
+    headers: &axum::http::HeaderMap,
+    extensions: &axum::http::Extensions,
+) -> Result<(), AuthError> {
+    let authorization = headers
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok());
     if let Some((scheme, token)) =
         authorization.and_then(|value| value.trim().split_once(char::is_whitespace))
         && scheme.eq_ignore_ascii_case("bearer")
-        && let Some(validator) = request.extensions().get::<hypgm_authn::jwt::JwtValidator>()
+        && let Some(validator) = extensions.get::<hypgm_authn::jwt::JwtValidator>()
         && let Ok(principal) = validator.verify_token(token.trim())
     {
         match backend.resolve_principal(principal.auth_id).await {
             Ok(Some(current)) if current.user_id == principal.user_id => {}
-            Ok(_) => {
-                return hypgm_authn::extractor::AuthRejection(AuthError::InvalidCredentials)
-                    .into_response();
-            }
-            Err(error) => return hypgm_authn::extractor::AuthRejection(error).into_response(),
+            Ok(_) => return Err(AuthError::InvalidCredentials),
+            Err(error) => return Err(error),
         }
     }
-    next.run(request).await
+    Ok(())
 }
 
 #[cfg(test)]

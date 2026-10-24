@@ -409,6 +409,29 @@ async fn test_token_exchange_and_jwt_bearer_auth() {
     let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(json["message"], "Hello, API Developer!");
 
+    harness.auth_repo.revoke(auth_id).await.unwrap();
+    for (path, content_type) in [
+        ("/admin/users", hypgm_view::HTML_CONTENT_TYPE),
+        ("/api/admin/users", "application/json"),
+    ] {
+        let response = client
+            .get(format!("{}{path}", harness.endpoint))
+            .bearer_auth(&token_res.access_token)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(response.headers()[CONTENT_TYPE], content_type);
+        assert_eq!(response.headers()["www-authenticate"], "Bearer");
+        let body = response.text().await.unwrap();
+        if content_type == hypgm_view::HTML_CONTENT_TYPE {
+            assert!(body.contains("data-view-error"));
+        } else {
+            let error: serde_json::Value = serde_json::from_str(&body).unwrap();
+            assert_eq!(error["code"], "unauthenticated");
+        }
+    }
+
     harness.shutdown().await;
 }
 
