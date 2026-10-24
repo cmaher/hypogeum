@@ -689,3 +689,84 @@ async fn overflowing_shutdown_deadline_returns_config_error_and_retires_pool() {
         assert!(pool.is_closed());
     }
 }
+
+#[sqlx::test(migrations = false)]
+#[ignore = "run by integration_suite"]
+async fn readiness_verifies_configured_role(
+    _options: sqlx::postgres::PgPoolOptions,
+    options: sqlx::postgres::PgConnectOptions,
+) {
+    let db = hypgm_test_support::TestDatabase::provision(options).await;
+    let exemplum_config = hypgmx_rdbms::DatabaseConfig {
+        migrator_role: "exemplum_migrator".into(),
+        owner_role: "exemplum_owner".into(),
+        tasks_role: "exemplum_tasks".into(),
+        app_schemas: vec![],
+        domain_migrators: vec![],
+        service_contracts: vec![],
+    };
+    db.migrate_with(&exemplum_config).await;
+
+    let pool = PgPool::connect(&db.exemplum_tasks_url).await.unwrap();
+
+    // Matching role passes readiness via free function and Queue
+    hypgmx_tasks::check_ready(&pool, "exemplum_tasks")
+        .await
+        .unwrap();
+
+    let queue = Queue::<u32>::new(
+        pool.clone(),
+        "exemplum-queue",
+        WorkerConfig::default().with_tasks_role("exemplum_tasks"),
+    )
+    .unwrap();
+    queue.check_ready().await.unwrap();
+
+    let lifecycle = hypgmx_tasks::worker::Lifecycle::new(
+        "exemplum-worker",
+        sqlx::postgres::PgPoolOptions::new().max_connections(2),
+        db.exemplum_tasks_url.parse().unwrap(),
+    );
+    assert!(queue.worker(&lifecycle).await.is_ok());
+
+    // Mismatched role fails readiness via free function and Queue
+    let err = hypgmx_tasks::check_ready(&pool, "hypogeum_tasks")
+        .await
+        .unwrap_err();
+    assert!(matches!(err, hypgm_errors::TasksError::NotReady));
+
+    let mismatched_queue = Queue::<u32>::new(
+        pool.clone(),
+        "mismatched-queue",
+        WorkerConfig::default().with_tasks_role("hypogeum_tasks"),
+    )
+    .unwrap();
+    let err = mismatched_queue.check_ready().await.unwrap_err();
+    assert!(matches!(err, hypgm_errors::TasksError::NotReady));
+
+    let mismatched_lifecycle = hypgmx_tasks::worker::Lifecycle::new(
+        "mismatched-worker",
+        sqlx::postgres::PgPoolOptions::new().max_connections(2),
+        db.exemplum_tasks_url.parse().unwrap(),
+    );
+    let worker_err = mismatched_queue
+        .worker(&mismatched_lifecycle)
+        .await
+        .unwrap_err();
+    assert!(matches!(worker_err, hypgm_errors::TasksError::NotReady));
+
+    // Invalid role identifier fails configuration
+    let invalid_config = WorkerConfig::default().with_tasks_role("invalid-role!");
+    assert!(matches!(
+        invalid_config.validate().unwrap_err(),
+        hypgm_errors::TasksError::Config(_)
+    ));
+    assert!(matches!(
+        hypgmx_tasks::check_ready(&pool, "invalid-role!")
+            .await
+            .unwrap_err(),
+        hypgm_errors::TasksError::Config(_)
+    ));
+
+    pool.close().await;
+}

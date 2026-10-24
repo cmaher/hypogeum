@@ -3,7 +3,9 @@
 pub mod contract;
 pub mod pool_config;
 
-pub use contract::{DatabaseConfig, DomainMigrator, SeaOrmAdapter, ServiceContract};
+pub use contract::{
+    DatabaseConfig, DomainMigrator, SeaOrmAdapter, ServiceContract, validate_identifier,
+};
 pub use pool_config::PoolConfig;
 
 #[cfg(feature = "postgres")]

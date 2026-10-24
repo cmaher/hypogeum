@@ -299,7 +299,7 @@ impl From<ServiceError> for tonic::Status {
 pub enum TasksError {
     #[error("Invalid task framework configuration: {0}")]
     Config(String),
-    #[error("Tasks runtime requires migrated Apalis schema and hypogeum_tasks credentials")]
+    #[error("Tasks runtime requires migrated Apalis schema and configured role credentials")]
     NotReady,
     #[error("Task framework operation failed: {0}")]
     Operation(#[source] Box<dyn std::error::Error + Send + Sync>),
@@ -556,6 +556,7 @@ mod tests {
 
         let not_ready = TasksError::NotReady;
         assert_eq!(not_ready.public_error(), PublicErrorInfo::INTERNAL_ERROR);
+        assert!(!not_ready.to_string().contains("hypogeum_tasks"));
 
         let op = TasksError::operation(std::io::Error::other("private diagnostic"));
         assert_eq!(op.public_error(), PublicErrorInfo::INTERNAL_ERROR);

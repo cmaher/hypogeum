@@ -50,9 +50,9 @@ cargo make apalis-dashboard
 
 The standalone `apalis-dashboard` binary in `cmd/apalis-dashboard` uses the
 reusable `crates/ext/tasks` Board router. It starts with no queues or handlers and binds
-`127.0.0.1:8082` by default. Configure `HYPOGEUM_TASKS_DATABASE_URL`, `HYPOGEUM_TASKS_BOARD_BIND`
+`127.0.0.1:8082` by default. Configure `HYPOGEUM_TASKS_DATABASE_URL`, `HYPOGEUM_TASKS_ROLE`, `HYPOGEUM_TASKS_BOARD_BIND`
 and `HYPOGEUM_TASKS_SHUTDOWN_SECONDS` at the composition root. It requires explicit
-migrations and `hypogeum_tasks` credentials. Its readiness function exposes
+migrations and configured role credentials (`HYPOGEUM_TASKS_ROLE`, defaults to `hypogeum_tasks`). Its readiness function exposes
 only the upstream schema contract, without ledger access.
 
 For a composed application, construct `Board::new()`, register typed queues, and
