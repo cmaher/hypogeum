@@ -141,7 +141,7 @@ dependencies = [
 
 [[package]]
 name = "apalis-dashboard"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "anyhow",
  "axum",
@@ -1883,7 +1883,7 @@ dependencies = [
 
 [[package]]
 name = "hypgm-authn"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "argon2",
  "async-trait",
@@ -1908,7 +1908,7 @@ dependencies = [
 
 [[package]]
 name = "hypgm-authz"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "axum",
  "cedar-policy",
@@ -1927,7 +1927,7 @@ dependencies = [
 
 [[package]]
 name = "hypgm-envconfig"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "dotenvy",
  "envy",
@@ -1938,7 +1938,7 @@ dependencies = [
 
 [[package]]
 name = "hypgm-errors"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "http",
  "thiserror",
@@ -1947,7 +1947,7 @@ dependencies = [
 
 [[package]]
 name = "hypgm-http"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "axum",
  "bytes",
@@ -1967,7 +1967,7 @@ dependencies = [
 
 [[package]]
 name = "hypgm-logging"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "serde",
  "serde_json",
@@ -1979,7 +1979,7 @@ dependencies = [
 
 [[package]]
 name = "hypgm-rpc"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "prost",
  "prost-types",
@@ -1991,7 +1991,7 @@ dependencies = [
 
 [[package]]
 name = "hypgm-test-support"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "hypgmx-rdbms",
  "sqlx",
@@ -2001,7 +2001,7 @@ dependencies = [
 
 [[package]]
 name = "hypgm-view"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "askama",
  "axum",
@@ -2021,7 +2021,7 @@ dependencies = [
 
 [[package]]
 name = "hypgmx-file-storage"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "async-trait",
  "axum",
@@ -2044,7 +2044,7 @@ dependencies = [
 
 [[package]]
 name = "hypgmx-gdrive-authorize"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2059,7 +2059,7 @@ dependencies = [
 
 [[package]]
 name = "hypgmx-rdbms"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "apalis-postgres",
  "async-trait",
@@ -2079,7 +2079,7 @@ dependencies = [
 
 [[package]]
 name = "hypgmx-tasks"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "apalis",
  "apalis-board",
