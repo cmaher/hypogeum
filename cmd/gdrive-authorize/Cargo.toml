@@ -1,0 +1,25 @@
+[package]
+name = "hypgmx-gdrive-authorize"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "gdrive-authorize"
+path = "src/main.rs"
+
+[dependencies]
+hypgmx-file-storage = { path = "../../crates/ext/file-storage", features = ["google-drive"] }
+google-drive3 = "7"
+hypgm-envconfig = { path = "../../crates/core/envconfig" }
+anyhow = "1"
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+axum = "0.8"
+
+[lints]
+workspace = true

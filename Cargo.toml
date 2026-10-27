@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "cmd/apalis-dashboard",
+    "cmd/gdrive-authorize",
     "crates/core/authn",
     "crates/core/authz",
     "crates/core/envconfig",
