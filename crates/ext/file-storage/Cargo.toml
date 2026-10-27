@@ -4,7 +4,14 @@ version.workspace = true
 edition = "2024"
 rust-version.workspace = true
 
+[features]
+google-drive = ["dep:google-drive3", "dep:http-body-util", "dep:serde_json", "dep:hyper-rustls"]
+
 [dependencies]
+hyper-rustls = { version = "0.27", default-features = false, features = ["http1"], optional = true }
+google-drive3 = { version = "7", optional = true }
+http-body-util = { version = "0.1", optional = true }
+serde_json = { version = "1", optional = true }
 async-trait = "0.1"
 bytes = "1"
 hypgm-errors = { path = "../../core/errors", default-features = false }
