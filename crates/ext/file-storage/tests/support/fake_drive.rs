@@ -28,6 +28,7 @@ pub struct Faults {
     pub final_disconnect: Option<bool>,
     pub query_disconnect: bool,
     pub malformed_final: bool,
+    pub final_body_failure: bool,
 }
 
 struct File {
@@ -324,6 +325,16 @@ async fn handle(State(components): State<Components>, request: Request) -> Respo
         }
         if final_failure == Some(true) {
             return failure(503, "backendError");
+        }
+        if std::mem::take(&mut data.faults.final_body_failure) {
+            use futures_util::{StreamExt, stream};
+            let body =
+                stream::once(async { Ok::<_, std::io::Error>(bytes::Bytes::from_static(b"{")) })
+                    .chain(stream::once(async {
+                        tokio::task::yield_now().await;
+                        Err(std::io::Error::other("injected truncated response"))
+                    }));
+            return Response::new(Body::from_stream(body));
         }
         if std::mem::take(&mut data.faults.malformed_final) {
             return (StatusCode::OK, "invalid-json").into_response();

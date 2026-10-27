@@ -210,9 +210,8 @@ async fn upload_is_pull_driven_and_cancellation_never_publishes() {
         Ok(Bytes::from(vec![1; 8 * 1024 * 1024 + 1]))
     })
     .chain(stream::pending());
-    let write = storage.write(Box::pin(source), ExpectedIntegrity::default());
+    let mut write = Box::pin(storage.write(Box::pin(source), ExpectedIntegrity::default()));
     assert_eq!(count.load(Ordering::SeqCst), 0);
-    tokio::pin!(write);
     tokio::select! { result = &mut write => panic!("unexpected completion: {result:?}"), _ = async { while fake.ranges().is_empty() { tokio::task::yield_now().await; } } => {} }
     drop(write);
     assert_eq!(fake.file_count(), 0);
@@ -396,4 +395,78 @@ async fn drive_http_errors_have_safe_classification() {
         });
         assert!(!format!("{err:?}").contains("secret-token"));
     }
+}
+
+#[tokio::test]
+async fn lost_final_responses_are_queried_once_and_never_blindly_deleted() {
+    for completed in [false, true] {
+        for query_fails in [false, true] {
+            let fake = FakeDrive::start().await;
+            let storage = storage(&fake).await;
+            fake.faults(|f| {
+                f.final_disconnect = Some(completed);
+                f.query_disconnect = query_fails;
+            });
+            let result = storage
+                .write(input(b"abc".to_vec()), ExpectedIntegrity::default())
+                .await;
+            if query_fails {
+                assert!(matches!(
+                    result,
+                    Err(StorageError::UncertainCompletion { .. })
+                ));
+            } else if completed {
+                assert!(result.is_ok());
+            } else {
+                assert!(matches!(result, Err(StorageError::Io { .. })));
+            }
+            assert_eq!(
+                fake.ranges()
+                    .iter()
+                    .filter(|r| r.as_str() == "bytes */3")
+                    .count(),
+                1
+            );
+            assert_eq!(fake.file_count(), usize::from(completed));
+            assert_eq!(fake.deleted(), 0);
+        }
+    }
+}
+
+#[tokio::test]
+async fn unreadable_success_metadata_retains_possibly_completed_file() {
+    let fake = FakeDrive::start().await;
+    let storage = storage(&fake).await;
+    fake.faults(|f| f.malformed_final = true);
+    assert!(matches!(
+        storage
+            .write(input(b"abc".to_vec()), ExpectedIntegrity::default())
+            .await,
+        Err(StorageError::UncertainCompletion { .. })
+    ));
+    assert_eq!(fake.file_count(), 1);
+    assert_eq!(fake.deleted(), 0);
+    assert_eq!(fake.cancelled_sessions(), 0);
+}
+
+#[tokio::test]
+async fn truncated_final_response_body_uses_status_query() {
+    let fake = FakeDrive::start().await;
+    let storage = storage(&fake).await;
+    fake.faults(|f| f.final_body_failure = true);
+    let result = storage
+        .write(input(b"abc".to_vec()), ExpectedIntegrity::default())
+        .await;
+    assert!(
+        result.is_ok(),
+        "truncated final reply must be settled: {result:?}"
+    );
+    assert_eq!(
+        fake.ranges()
+            .iter()
+            .filter(|r| r.as_str() == "bytes */3")
+            .count(),
+        1
+    );
+    assert_eq!(fake.file_count(), 1);
 }

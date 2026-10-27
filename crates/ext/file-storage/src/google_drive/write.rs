@@ -56,26 +56,33 @@ impl GoogleDriveStorage {
         } else {
             format!("bytes {offset}-{}/{}", info.size_bytes - 1, info.size_bytes)
         };
-        let final_result = self.put(&session, &range, tail).await;
-        let response = match final_result {
-            Ok(response) if response.status().is_success() => response,
+        // A transport failure can occur after successful headers, while reading
+        // the final metadata body. Include that read in the one-query recovery.
+        let final_result = match self.put(&session, &range, tail).await {
+            Ok(response) if response.status().is_success() => response_bytes(response).await,
             Ok(response) if response.status().is_server_error() => {
-                self.settle(&session, info.size_bytes).await?
+                Err(error::io("complete upload"))
             }
-            Err(StorageError::Io { .. }) => self.settle(&session, info.size_bytes).await?,
             Ok(response) => {
                 let error = response_error(response, "complete upload").await;
                 self.cancel(&session).await;
                 return Err(error);
+            }
+            Err(error) => Err(error),
+        };
+        let bytes = match final_result {
+            Ok(bytes) => bytes,
+            Err(StorageError::Io { .. }) => {
+                let response = self.settle(&session, info.size_bytes).await?;
+                response_bytes(response)
+                    .await
+                    .map_err(|_| uncertain("decode completed upload"))?
             }
             Err(error) => {
                 self.cancel(&session).await;
                 return Err(error);
             }
         };
-        let bytes = response_bytes(response)
-            .await
-            .map_err(|_| uncertain("decode completed upload"))?;
         let file: google_drive3::api::File =
             serde_json::from_slice(&bytes).map_err(|_| uncertain("decode completed upload"))?;
         let key = file
