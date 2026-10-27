@@ -1,5 +1,5 @@
 use super::*;
-use crate::{ByteStream, FileStorage, ObjectRef};
+use crate::{ByteStream, FileStorage, ObjectRef, ReadOptions};
 use bytes::Bytes;
 use futures_util::{StreamExt, stream};
 
@@ -270,12 +270,26 @@ async fn independent_clients_see_only_completed_immutable_objects() {
         b"corrupted",
     )
     .unwrap();
+    let chunks = b
+        .read(&first.object_ref, ReadOptions::default())
+        .await
+        .unwrap()
+        .collect::<Vec<_>>()
+        .await;
+    let actual: Vec<u8> = chunks
+        .into_iter()
+        .flat_map(|chunk| chunk.unwrap())
+        .collect();
+    assert_eq!(actual, b"corrupted");
     let mut read = b
         .read(
             &first.object_ref,
-            ExpectedIntegrity {
-                size_bytes: Some(first.info.size_bytes),
-                sha256: Some(first.info.sha256),
+            ReadOptions {
+                expected: ExpectedIntegrity {
+                    size_bytes: Some(first.info.size_bytes),
+                    sha256: Some(first.info.sha256),
+                },
+                ..Default::default()
             },
         )
         .await
@@ -316,7 +330,7 @@ async fn symlinks_directories_and_fifos_are_rejected_without_following_or_blocki
             _ => unreachable!(),
         }
         assert!(matches!(
-            storage.read(&reference, ExpectedIntegrity::default()).await,
+            storage.read(&reference, ReadOptions::default()).await,
             Err(StorageError::InvalidReference(_))
         ));
         assert!(matches!(
@@ -550,9 +564,12 @@ async fn round_trip_eof_integrity_and_idempotent_delete() {
         let mut read = storage
             .read(
                 &stored.object_ref,
-                ExpectedIntegrity {
-                    size_bytes: Some(stored.info.size_bytes),
-                    sha256: Some(stored.info.sha256.clone()),
+                ReadOptions {
+                    expected: ExpectedIntegrity {
+                        size_bytes: Some(stored.info.size_bytes),
+                        sha256: Some(stored.info.sha256.clone()),
+                    },
+                    ..Default::default()
                 },
             )
             .await
@@ -565,9 +582,12 @@ async fn round_trip_eof_integrity_and_idempotent_delete() {
         let wrong = storage
             .read(
                 &stored.object_ref,
-                ExpectedIntegrity {
-                    size_bytes: Some(500),
-                    sha256: None,
+                ReadOptions {
+                    expected: ExpectedIntegrity {
+                        size_bytes: Some(500),
+                        sha256: None,
+                    },
+                    ..Default::default()
                 },
             )
             .await
@@ -592,7 +612,7 @@ async fn round_trip_eof_integrity_and_idempotent_delete() {
             key: key.into(),
         };
         assert!(matches!(
-            storage.read(&reference, ExpectedIntegrity::default()).await,
+            storage.read(&reference, ReadOptions::default()).await,
             Err(StorageError::InvalidReference(_))
         ));
         assert!(matches!(
@@ -686,4 +706,37 @@ async fn failed_write_cleans_staging_away_from_the_async_executor() {
     .unwrap();
     assert_ne!(cleanup_thread, executor);
     assert_eq!(count(root.path(), "staging"), 0);
+}
+
+#[tokio::test]
+async fn read_limit_cannot_override_adapter_limit() {
+    let root = tempfile::tempdir().unwrap();
+    let storage = FilesystemStorage::new(config(root.path())).await.unwrap();
+    let stored = storage
+        .write(bytes(b"abc"), ExpectedIntegrity::default())
+        .await
+        .unwrap();
+    let small = FilesystemStorage::new(FilesystemConfig {
+        max_object_bytes: 2,
+        ..config(root.path())
+    })
+    .await
+    .unwrap();
+    for max_bytes in [None, Some(u64::MAX)] {
+        let mut read = small
+            .read(
+                &stored.object_ref,
+                ReadOptions {
+                    max_bytes,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            read.next().await,
+            Some(Err(StorageError::SizeLimit { limit: 2 }))
+        ));
+        assert!(read.next().await.is_none());
+    }
 }

@@ -1,9 +1,9 @@
 use super::*;
 use crate::{ByteStream, FileStorage, ObjectInfo, ObjectRef, StoredObject};
+use crate::{ReadOptions, read_state::ReadState};
 use async_trait::async_trait;
 use bytes::Bytes;
 use futures_util::stream;
-use sha2::{Digest, Sha256};
 use tokio::io::AsyncReadExt;
 
 #[async_trait]
@@ -19,9 +19,9 @@ impl FileStorage for FilesystemStorage {
     async fn read(
         &self,
         reference: &ObjectRef,
-        expected: ExpectedIntegrity,
+        options: ReadOptions,
     ) -> Result<ByteStream, StorageError> {
-        let reader = self.reader(reference, expected).await?;
+        let reader = self.reader(reference, options, false).await?;
         Ok(Box::pin(stream::try_unfold(
             reader,
             |mut reader| async move { Ok(reader.next_chunk().await?.map(|bytes| (bytes, reader))) },
@@ -29,9 +29,9 @@ impl FileStorage for FilesystemStorage {
     }
 
     async fn inspect(&self, reference: &ObjectRef) -> Result<ObjectInfo, StorageError> {
-        let mut reader = self.reader(reference, ExpectedIntegrity::default()).await?;
+        let mut reader = self.reader(reference, ReadOptions::default(), true).await?;
         while reader.next_chunk().await?.is_some() {}
-        Ok(reader.info())
+        Ok(reader.state.info())
     }
 
     async fn delete(&self, reference: &ObjectRef) -> Result<(), StorageError> {
@@ -83,9 +83,10 @@ impl FilesystemStorage {
     async fn reader(
         &self,
         reference: &ObjectRef,
-        expected: ExpectedIntegrity,
+        options: ReadOptions,
+        inspect: bool,
     ) -> Result<Reader, StorageError> {
-        expected.validate()?;
+        let state = ReadState::new(options, self.max_object_bytes, inspect)?;
         let path = self.resolve(reference)?;
         let file = blocking(move || {
             regular_metadata(&path)?;
@@ -113,10 +114,7 @@ impl FilesystemStorage {
         .await?;
         Ok(Reader {
             file: tokio::fs::File::from_std(file),
-            size: 0,
-            hash: Sha256::new(),
-            expected,
-            limit: self.max_object_bytes,
+            state,
         })
     }
 }
@@ -136,20 +134,10 @@ fn regular_metadata(path: &Path) -> Result<(), StorageError> {
 
 struct Reader {
     file: tokio::fs::File,
-    size: u64,
-    hash: Sha256,
-    expected: ExpectedIntegrity,
-    limit: u64,
+    state: ReadState,
 }
 
 impl Reader {
-    fn info(&self) -> ObjectInfo {
-        ObjectInfo {
-            size_bytes: self.size,
-            sha256: hex::encode(self.hash.clone().finalize()),
-        }
-    }
-
     async fn next_chunk(&mut self) -> Result<Option<Bytes>, StorageError> {
         let mut buffer = vec![0; CHUNK_BYTES];
         let count = self
@@ -158,15 +146,10 @@ impl Reader {
             .await
             .map_err(|e| StorageError::io("read object", e))?;
         if count == 0 {
-            self.expected.verify(&self.info())?;
+            self.state.finish()?;
             return Ok(None);
         }
-        self.size = self
-            .size
-            .checked_add(count as u64)
-            .filter(|size| *size <= self.limit)
-            .ok_or(StorageError::SizeLimit { limit: self.limit })?;
-        self.hash.update(&buffer[..count]);
+        self.state.update(&buffer[..count])?;
         buffer.truncate(count);
         Ok(Some(Bytes::from(buffer)))
     }

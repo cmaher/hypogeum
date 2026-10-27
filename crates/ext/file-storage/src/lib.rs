@@ -8,8 +8,9 @@ pub mod filesystem;
 #[cfg(feature = "google-drive")]
 pub mod google_drive;
 pub mod models;
+mod read_state;
 pub use hypgm_errors::StorageError;
-pub use models::{ExpectedIntegrity, ObjectInfo, ObjectRef, StoredObject};
+pub use models::{ExpectedIntegrity, ObjectInfo, ObjectRef, ReadOptions, StoredObject};
 
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -29,11 +30,14 @@ pub trait FileStorage: Send + Sync {
         input: ByteStream,
         expected: ExpectedIntegrity,
     ) -> Result<StoredObject, StorageError>;
-    /// Errors may follow bytes. Consume through successful EOF to verify integrity.
+    /// Stream bytes without integrity verification with `ReadOptions::default()`.
+    /// Options can independently bound bytes and request size and/or SHA-256 checks.
+    /// Errors may follow bytes. Requested checks require successful EOF; partial
+    /// consumption makes no integrity claim. Adapter resource limits always apply.
     async fn read(
         &self,
         reference: &ObjectRef,
-        expected: ExpectedIntegrity,
+        options: ReadOptions,
     ) -> Result<ByteStream, StorageError>;
     /// Compute actual full-object size and SHA-256 (not metadata-only inspection).
     async fn inspect(&self, reference: &ObjectRef) -> Result<ObjectInfo, StorageError>;

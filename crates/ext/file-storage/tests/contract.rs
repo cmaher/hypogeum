@@ -4,7 +4,9 @@
 use bytes::Bytes;
 use futures_util::{StreamExt, stream};
 use hypgmx_file_storage::filesystem::{FilesystemConfig, FilesystemStorage};
-use hypgmx_file_storage::{ByteStream, ExpectedIntegrity, FileStorage, ObjectRef, StorageError};
+use hypgmx_file_storage::{
+    ByteStream, ExpectedIntegrity, FileStorage, ObjectRef, ReadOptions, StorageError,
+};
 use sha2::{Digest, Sha256};
 use std::sync::{
     Arc,
@@ -43,7 +45,16 @@ async fn round_trip_contract(storage: Arc<dyn FileStorage>) {
         let reference: ObjectRef = serde_json::from_str(&encoded).unwrap();
         assert_eq!(reference, stored.object_ref);
         assert_eq!(storage.inspect(&reference).await.unwrap(), stored.info);
-        let mut read = storage.read(&reference, expected).await.unwrap();
+        let mut read = storage
+            .read(
+                &reference,
+                ReadOptions {
+                    expected,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
         let mut actual = Vec::new();
         while let Some(chunk) = read.next().await {
             let chunk = chunk.unwrap();
@@ -67,7 +78,7 @@ async fn round_trip_contract(storage: Arc<dyn FileStorage>) {
             Err(StorageError::NotFound(_))
         ));
         assert!(matches!(
-            storage.read(&reference, ExpectedIntegrity::default()).await,
+            storage.read(&reference, ReadOptions::default()).await,
             Err(StorageError::NotFound(_))
         ));
     }
@@ -98,7 +109,13 @@ async fn integrity_contract(storage: Arc<dyn FileStorage>) {
             .await
             .unwrap();
         let mut read = storage
-            .read(&stored.object_ref, expected.clone())
+            .read(
+                &stored.object_ref,
+                ReadOptions {
+                    expected: expected.clone(),
+                    ..Default::default()
+                },
+            )
             .await
             .unwrap();
         let mut actual = Vec::new();
@@ -117,7 +134,16 @@ async fn integrity_contract(storage: Arc<dyn FileStorage>) {
         assert!(b"abc".starts_with(&actual));
         assert!(read.next().await.is_none());
         // Dropping before the final poll makes no verification claim.
-        let mut early = storage.read(&stored.object_ref, expected).await.unwrap();
+        let mut early = storage
+            .read(
+                &stored.object_ref,
+                ReadOptions {
+                    expected,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
         assert!(early.next().await.unwrap().is_ok());
         drop(early);
     }
@@ -143,6 +169,76 @@ async fn integrity_contract(storage: Arc<dyn FileStorage>) {
     ));
 }
 
+// Run the same options cases against both real adapters.
+async fn read_options_contract(storage: Arc<dyn FileStorage>) {
+    for data in [b"".as_slice(), b"abc"] {
+        let stored = storage
+            .write(
+                input(vec![Bytes::copy_from_slice(data)]),
+                ExpectedIntegrity::default(),
+            )
+            .await
+            .unwrap();
+        for options in [
+            ReadOptions::default(),
+            ReadOptions {
+                max_bytes: Some(data.len() as u64),
+                ..Default::default()
+            },
+            ReadOptions {
+                expected: ExpectedIntegrity {
+                    size_bytes: Some(data.len() as u64),
+                    sha256: None,
+                },
+                ..Default::default()
+            },
+            ReadOptions {
+                expected: ExpectedIntegrity {
+                    size_bytes: None,
+                    sha256: Some(stored.info.sha256.clone()),
+                },
+                ..Default::default()
+            },
+        ] {
+            let mut read = storage.read(&stored.object_ref, options).await.unwrap();
+            let mut actual = Vec::new();
+            while let Some(chunk) = read.next().await {
+                actual.extend_from_slice(&chunk.unwrap());
+            }
+            assert_eq!(actual, data);
+        }
+        if !data.is_empty() {
+            for limit in [0, data.len() as u64 - 1] {
+                let mut read = storage
+                    .read(
+                        &stored.object_ref,
+                        ReadOptions {
+                            max_bytes: Some(limit),
+                            ..Default::default()
+                        },
+                    )
+                    .await
+                    .unwrap();
+                assert!(
+                    matches!(read.next().await, Some(Err(StorageError::SizeLimit { limit: actual })) if actual == limit)
+                );
+                assert!(read.next().await.is_none());
+            }
+        }
+        let invalid = ReadOptions {
+            expected: ExpectedIntegrity {
+                size_bytes: None,
+                sha256: Some("invalid".into()),
+            },
+            ..Default::default()
+        };
+        assert!(matches!(
+            storage.read(&stored.object_ref, invalid).await,
+            Err(StorageError::InvalidInput(_))
+        ));
+    }
+}
+
 async fn backpressure_contract(storage: Arc<dyn FileStorage>) {
     let polls = Arc::new(AtomicUsize::new(0));
     let count = polls.clone();
@@ -157,7 +253,7 @@ async fn backpressure_contract(storage: Arc<dyn FileStorage>) {
     assert_eq!(stored.info.size_bytes, 1024 * 1024);
     // The returned read stream remains idle until polled, then yields bounded data.
     let mut read = storage
-        .read(&stored.object_ref, ExpectedIntegrity::default())
+        .read(&stored.object_ref, ReadOptions::default())
         .await
         .unwrap();
     let first = read.next().await.unwrap().unwrap();
@@ -180,6 +276,7 @@ async fn filesystem_contract() {
     );
     round_trip_contract(storage.clone()).await;
     integrity_contract(storage.clone()).await;
+    read_options_contract(storage.clone()).await;
     backpressure_contract(storage).await;
 }
 
@@ -198,9 +295,9 @@ impl FileStorage for FragmentedReads {
     async fn read(
         &self,
         reference: &ObjectRef,
-        expected: ExpectedIntegrity,
+        options: ReadOptions,
     ) -> Result<ByteStream, StorageError> {
-        let stream = self.0.read(reference, expected).await?;
+        let stream = self.0.read(reference, options).await?;
         Ok(Box::pin(stream.flat_map(|item| {
             let pieces: Vec<_> = match item {
                 Ok(bytes) => (0..bytes.len())
@@ -267,6 +364,7 @@ async fn google_drive_contract() {
     );
     round_trip_contract(storage.clone()).await;
     integrity_contract(storage.clone()).await;
+    read_options_contract(storage.clone()).await;
     backpressure_contract(storage).await;
 }
 
@@ -307,5 +405,6 @@ async fn google_drive_live_contract() {
     );
     round_trip_contract(storage.clone()).await;
     integrity_contract(storage.clone()).await;
+    read_options_contract(storage.clone()).await;
     backpressure_contract(storage).await;
 }

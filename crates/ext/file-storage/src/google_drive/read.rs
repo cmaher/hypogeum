@@ -2,12 +2,12 @@ use super::{FOLDER_MIME, GoogleDriveStorage, error};
 use crate::{
     ByteStream, ExpectedIntegrity, FileStorage, ObjectInfo, ObjectRef, StorageError, StoredObject,
 };
+use crate::{ReadOptions, read_state::ReadState};
 use async_trait::async_trait;
 use bytes::Bytes;
 use futures_util::stream;
 use google_drive3::common;
 use http_body_util::BodyExt;
-use sha2::{Digest, Sha256};
 use std::io;
 
 const READ_CHUNK_BYTES: usize = 64 * 1024;
@@ -25,9 +25,9 @@ impl FileStorage for GoogleDriveStorage {
     async fn read(
         &self,
         reference: &ObjectRef,
-        expected: ExpectedIntegrity,
+        options: ReadOptions,
     ) -> Result<ByteStream, StorageError> {
-        let reader = self.reader(reference, expected).await?;
+        let reader = self.reader(reference, options, false).await?;
         Ok(Box::pin(stream::try_unfold(
             reader,
             |mut reader| async move { Ok(reader.next_chunk().await?.map(|chunk| (chunk, reader))) },
@@ -35,9 +35,9 @@ impl FileStorage for GoogleDriveStorage {
     }
 
     async fn inspect(&self, reference: &ObjectRef) -> Result<ObjectInfo, StorageError> {
-        let mut reader = self.reader(reference, ExpectedIntegrity::default()).await?;
+        let mut reader = self.reader(reference, ReadOptions::default(), true).await?;
         while reader.next_chunk().await?.is_some() {}
-        Ok(reader.info())
+        Ok(reader.state.info())
     }
 
     async fn delete(&self, reference: &ObjectRef) -> Result<(), StorageError> {
@@ -100,10 +100,11 @@ impl GoogleDriveStorage {
     async fn reader(
         &self,
         reference: &ObjectRef,
-        expected: ExpectedIntegrity,
+        options: ReadOptions,
+        inspect: bool,
     ) -> Result<Reader, StorageError> {
         let id = self.resolve(reference)?;
-        expected.validate()?;
+        let state = ReadState::new(options, self.max_object_bytes, inspect)?;
         self.guard(id).await?;
         let (response, _) = self
             .hub
@@ -118,10 +119,7 @@ impl GoogleDriveStorage {
         Ok(Reader {
             body: response.into_body(),
             pending: Bytes::new(),
-            hash: Sha256::new(),
-            size: 0,
-            limit: self.max_object_bytes,
-            expected,
+            state,
         })
     }
 }
@@ -129,23 +127,14 @@ impl GoogleDriveStorage {
 struct Reader {
     body: common::Body,
     pending: Bytes,
-    hash: Sha256,
-    size: u64,
-    limit: u64,
-    expected: ExpectedIntegrity,
+    state: ReadState,
 }
 impl Reader {
-    fn info(&self) -> ObjectInfo {
-        ObjectInfo {
-            size_bytes: self.size,
-            sha256: hex::encode(self.hash.clone().finalize()),
-        }
-    }
     async fn next_chunk(&mut self) -> Result<Option<Bytes>, StorageError> {
         while self.pending.is_empty() {
             match self.body.frame().await {
                 None => {
-                    self.expected.verify(&self.info())?;
+                    self.state.finish()?;
                     return Ok(None);
                 }
                 Some(Err(_)) => return Err(error::io("read Drive body")),
@@ -159,12 +148,7 @@ impl Reader {
         let bytes = self
             .pending
             .split_to(self.pending.len().min(READ_CHUNK_BYTES));
-        self.size = self
-            .size
-            .checked_add(bytes.len() as u64)
-            .filter(|size| *size <= self.limit)
-            .ok_or(StorageError::SizeLimit { limit: self.limit })?;
-        self.hash.update(&bytes);
+        self.state.update(&bytes)?;
         Ok(Some(bytes))
     }
 }
@@ -192,10 +176,7 @@ mod tests {
         let mut reader = Reader {
             body: common::Body::new(http_body_util::StreamBody::new(frames)),
             pending: Bytes::new(),
-            hash: Sha256::new(),
-            size: 0,
-            limit: 1_000_000,
-            expected: ExpectedIntegrity::default(),
+            state: ReadState::new(ReadOptions::default(), 1_000_000, false).unwrap(),
         };
         assert_eq!(polls.load(Ordering::SeqCst), 0);
         assert_eq!(

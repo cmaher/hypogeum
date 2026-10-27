@@ -31,6 +31,16 @@ pub struct ExpectedIntegrity {
     pub sha256: Option<String>,
 }
 
+/// Read policy. Defaults to no integrity verification and the adapter's byte limit.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReadOptions {
+    /// Full-object checks performed only at successful EOF. Neither is required.
+    pub expected: ExpectedIntegrity,
+    /// Maximum bytes allowed, independent of expected size. The adapter's configured
+    /// limit still applies; the smaller limit wins. Zero permits only empty objects.
+    pub max_bytes: Option<u64>,
+}
+
 impl ExpectedIntegrity {
     pub fn validate(&self) -> Result<(), StorageError> {
         if let Some(hash) = &self.sha256

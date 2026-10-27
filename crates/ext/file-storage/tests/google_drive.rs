@@ -51,7 +51,7 @@ async fn constructor_requires_a_live_folder() {
 
 use bytes::Bytes;
 use futures_util::{StreamExt, stream};
-use hypgmx_file_storage::{ByteStream, ExpectedIntegrity};
+use hypgmx_file_storage::{ByteStream, ExpectedIntegrity, ReadOptions};
 fn input(bytes: Vec<u8>) -> ByteStream {
     Box::pin(stream::iter([Ok(Bytes::from(bytes))]))
 }
@@ -249,7 +249,7 @@ async fn folder_guard_hides_foreign_trashed_and_folder_objects() {
     for id in ids {
         let reference = reference(&id);
         assert!(matches!(
-            storage.read(&reference, ExpectedIntegrity::default()).await,
+            storage.read(&reference, ReadOptions::default()).await,
             Err(StorageError::NotFound(_))
         ));
         assert!(matches!(
@@ -281,7 +281,7 @@ async fn invalid_references_make_no_requests() {
         },
     ] {
         assert!(matches!(
-            storage.read(&bad, ExpectedIntegrity::default()).await,
+            storage.read(&bad, ReadOptions::default()).await,
             Err(StorageError::InvalidReference(_))
         ));
         assert!(matches!(
@@ -315,9 +315,12 @@ async fn reads_are_bounded_and_integrity_errors_precede_eof() {
     let mut read = storage
         .read(
             &reference,
-            ExpectedIntegrity {
-                size_bytes: Some(1),
-                sha256: None,
+            ReadOptions {
+                expected: ExpectedIntegrity {
+                    size_bytes: Some(1),
+                    sha256: None,
+                },
+                ..Default::default()
             },
         )
         .await
@@ -347,15 +350,23 @@ async fn reads_are_bounded_and_integrity_errors_precede_eof() {
     )
     .await
     .unwrap();
-    let mut read = small
-        .read(&reference, ExpectedIntegrity::default())
-        .await
-        .unwrap();
-    assert!(matches!(
-        read.next().await,
-        Some(Err(StorageError::SizeLimit { limit: 1 }))
-    ));
-    assert!(read.next().await.is_none());
+    for max_bytes in [None, Some(u64::MAX)] {
+        let mut read = small
+            .read(
+                &reference,
+                ReadOptions {
+                    max_bytes,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            read.next().await,
+            Some(Err(StorageError::SizeLimit { limit: 1 }))
+        ));
+        assert!(read.next().await.is_none());
+    }
 }
 
 #[tokio::test]
