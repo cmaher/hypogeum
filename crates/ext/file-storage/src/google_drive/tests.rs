@@ -38,7 +38,8 @@ async fn invalid_configuration_fails_before_authentication() {
 #[test]
 fn reference_validation() {
     let storage =
-        GoogleDriveStorage::construct(config(), "token".to_string(), "http://localhost/").unwrap();
+        GoogleDriveStorage::construct(config(), "token".to_string(), "http://localhost/", true)
+            .unwrap();
     let reference = ObjectRef {
         version: 1,
         store_id: "test".into(),

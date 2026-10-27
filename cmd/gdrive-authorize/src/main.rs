@@ -61,14 +61,17 @@ impl TokenStorage for ConsentTokens {
 }
 
 type Connector = hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>;
-fn connector() -> Result<Connector> {
-    Ok(hyper_rustls::HttpsConnectorBuilder::new()
+/// Plaintext HTTP is reserved for loopback tests; requests carry credentials.
+fn connector(allow_http: bool) -> Result<Connector> {
+    let builder = hyper_rustls::HttpsConnectorBuilder::new()
         .with_native_roots()
-        .map_err(|_| anyhow!("Cannot initialize TLS roots"))?
-        .https_or_http()
-        .enable_http1()
-        .enable_http2()
-        .build())
+        .map_err(|_| anyhow!("Cannot initialize TLS roots"))?;
+    let builder = if allow_http {
+        builder.https_or_http()
+    } else {
+        builder.https_only()
+    };
+    Ok(builder.enable_http1().enable_http2().build())
 }
 
 #[tokio::main]
@@ -95,7 +98,7 @@ async fn main() -> Result<()> {
     };
     let auth_client =
         hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
-            .build(connector()?);
+            .build(connector(false)?);
     let auth = yup_oauth2::InstalledFlowAuthenticator::with_client(
         secret,
         yup_oauth2::InstalledFlowReturnMethod::HTTPRedirect,
@@ -117,7 +120,7 @@ async fn main() -> Result<()> {
     if scope == DriveScope::File {
         let client =
             hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
-                .build(connector()?);
+                .build(connector(false)?);
         let hub = DriveHub::new(client, auth);
         let id = create_folder(
             &hub,
@@ -266,7 +269,7 @@ mod tests {
             });
             let client =
                 hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
-                    .build(connector().unwrap());
+                    .build(connector(true).unwrap());
             let hub = DriveHub::new(client, "fixed-token".to_owned());
             let result = create_folder(&hub, DriveScope::File, "storage-folder", &root).await;
             server.abort();

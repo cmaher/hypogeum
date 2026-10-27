@@ -20,6 +20,14 @@ impl GoogleDriveStorage {
         expected: ExpectedIntegrity,
     ) -> Result<StoredObject, StorageError> {
         expected.validate()?;
+        if expected
+            .size_bytes
+            .is_some_and(|size| size > self.max_object_bytes)
+        {
+            return Err(StorageError::SizeLimit {
+                limit: self.max_object_bytes,
+            });
+        }
         let metadata = serde_json::json!({
             "name": uuid::Uuid::new_v4().to_string(), "parents": [self.folder_id], "mimeType": "application/octet-stream"
         });
@@ -42,33 +50,56 @@ impl GoogleDriveStorage {
             .and_then(|h| h.to_str().ok())
             .ok_or_else(|| error::io("start upload"))?
             .to_owned();
+        // The bearer token is attached to every session request: only follow a
+        // session URI on the configured Drive origin.
+        if !session.starts_with(&self.root_url) {
+            return Err(error::io("start upload"));
+        }
         // Session URIs are bearer-like: keep them out of all error sources.
         let prepared = self.prepare(&session, input, expected).await;
-        let (tail, offset, info) = match prepared {
+        let (mut tail, mut offset, info) = match prepared {
             Ok(prepared) => prepared,
             Err(error) => {
                 self.cancel(&session).await;
                 return Err(error);
             }
         };
-        let range = if info.size_bytes == 0 {
-            "bytes */0".into()
-        } else {
-            format!("bytes {offset}-{}/{}", info.size_bytes - 1, info.size_bytes)
-        };
         // A transport failure can occur after successful headers, while reading
         // the final metadata body. Include that read in the one-query recovery.
-        let final_result = match self.put(&session, &range, tail).await {
-            Ok(response) if response.status().is_success() => response_bytes(response).await,
-            Ok(response) if response.status().is_server_error() => {
-                Err(error::io("complete upload"))
+        let final_result = loop {
+            let range = if info.size_bytes == 0 {
+                "bytes */0".into()
+            } else {
+                format!("bytes {offset}-{}/{}", info.size_bytes - 1, info.size_bytes)
+            };
+            match self.put(&session, &range, tail.clone()).await {
+                Ok(response) if response.status().is_success() => {
+                    break response_bytes(response).await;
+                }
+                Ok(response) if response.status().is_server_error() => {
+                    break Err(error::io("complete upload"));
+                }
+                // Drive may persist only part of the final chunk. Resend the
+                // unacknowledged, still nonempty, tail.
+                Ok(response) if response.status().as_u16() == 308 && info.size_bytes > 0 => {
+                    match acknowledged(&response, offset, info.size_bytes - 1) {
+                        Ok(acked) => {
+                            tail = tail.slice((acked - offset) as usize..);
+                            offset = acked;
+                        }
+                        Err(error) => {
+                            self.cancel(&session).await;
+                            return Err(error);
+                        }
+                    }
+                }
+                Ok(response) => {
+                    let error = response_error(response, "complete upload").await;
+                    self.cancel(&session).await;
+                    return Err(error);
+                }
+                Err(error) => break Err(error),
             }
-            Ok(response) => {
-                let error = response_error(response, "complete upload").await;
-                self.cancel(&session).await;
-                return Err(error);
-            }
-            Err(error) => Err(error),
         };
         let bytes = match final_result {
             Ok(bytes) => bytes,
@@ -102,15 +133,22 @@ impl GoogleDriveStorage {
                 .is_some_and(|hash| hash != &info.sha256)
         {
             // Only this upload's newly returned file ID is eligible for cleanup.
-            let _ = self
+            // An unconfirmed cleanup may leave an unreferenced object behind.
+            return match self
                 .hub
                 .files()
                 .delete(&reference.key)
                 .supports_all_drives(true)
                 .add_scope(self.scope.as_url())
                 .doit()
-                .await;
-            return Err(StorageError::IntegrityMismatch);
+                .await
+            {
+                Ok(_) => Err(StorageError::IntegrityMismatch),
+                Err(e) => match error::api(e, "delete mismatched upload") {
+                    StorageError::NotFound(_) => Err(StorageError::IntegrityMismatch),
+                    _ => Err(uncertain("delete mismatched upload")),
+                },
+            };
         }
         Ok(StoredObject {
             object_ref: reference,
@@ -138,6 +176,9 @@ impl GoogleDriveStorage {
                     .ok_or(StorageError::SizeLimit {
                         limit: self.max_object_bytes,
                     })?;
+                if expected.size_bytes.is_some_and(|expected| size > expected) {
+                    return Err(StorageError::IntegrityMismatch);
+                }
                 let part = bytes.split_to(count);
                 hash.update(&part);
                 buffer.extend_from_slice(&part);
@@ -170,17 +211,7 @@ impl GoogleDriveStorage {
             if response.status().as_u16() != 308 {
                 return Err(error::io("upload chunk"));
             }
-            let acknowledged = response
-                .headers()
-                .get(header::RANGE)
-                .and_then(|h| h.to_str().ok())
-                .and_then(|s| s.strip_prefix("bytes=0-"))
-                .and_then(|s| s.parse::<u64>().ok())
-                .and_then(|last| last.checked_add(1))
-                .ok_or_else(|| error::io("acknowledge upload chunk"))?;
-            if acknowledged <= *offset || acknowledged > end + 1 {
-                return Err(error::io("acknowledge upload chunk"));
-            }
+            let acknowledged = acknowledged(&response, *offset, end + 1)?;
             let count = (acknowledged - *offset) as usize;
             bytes = bytes.slice(count..);
             *offset = acknowledged;
@@ -247,6 +278,20 @@ impl GoogleDriveStorage {
             _ => Err(uncertain("complete upload")),
         }
     }
+}
+
+/// Bytes Drive persisted after a 308, which must advance past `offset` and not
+/// exceed `limit`.
+fn acknowledged(response: &Response, offset: u64, limit: u64) -> Result<u64, StorageError> {
+    response
+        .headers()
+        .get(header::RANGE)
+        .and_then(|h| h.to_str().ok())
+        .and_then(|s| s.strip_prefix("bytes=0-"))
+        .and_then(|s| s.parse::<u64>().ok())
+        .and_then(|last| last.checked_add(1))
+        .filter(|acked| *acked > offset && *acked <= limit)
+        .ok_or_else(|| error::io("acknowledge upload chunk"))
 }
 
 fn uncertain(operation: &'static str) -> StorageError {

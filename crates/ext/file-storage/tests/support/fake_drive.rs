@@ -29,6 +29,9 @@ pub struct Faults {
     pub query_disconnect: bool,
     pub malformed_final: bool,
     pub final_body_failure: bool,
+    pub final_partial_ack: Option<usize>,
+    pub delete_failure: bool,
+    pub foreign_location: bool,
 }
 
 struct File {
@@ -210,12 +213,14 @@ async fn handle(State(components): State<Components>, request: Request) -> Respo
                 completed: None,
             },
         );
+        let root = if std::mem::take(&mut data.faults.foreign_location) {
+            "https://foreign.invalid/"
+        } else {
+            components.root.as_str()
+        };
         return (
             StatusCode::OK,
-            [(
-                header::LOCATION,
-                format!("{}upload/session/{id}", components.root),
-            )],
+            [(header::LOCATION, format!("{root}upload/session/{id}"))],
         )
             .into_response();
     }
@@ -284,6 +289,13 @@ async fn handle(State(components): State<Components>, request: Request) -> Respo
             session.bytes.extend_from_slice(&body[..accepted]);
             return resume(session.bytes.len());
         }
+        if let Some(accepted) = data.faults.final_partial_ack.take() {
+            let session = data.sessions.get_mut(id).unwrap();
+            session
+                .bytes
+                .extend_from_slice(&body[..accepted.min(body.len())]);
+            return resume(session.bytes.len());
+        }
         let final_failure = data.faults.final_failure.take();
         let disconnect = data.faults.final_disconnect.take();
         if final_failure == Some(false) {
@@ -343,6 +355,9 @@ async fn handle(State(components): State<Components>, request: Request) -> Respo
     }
     if let Some(id) = path.strip_prefix("/drive/v3/files/") {
         if method == "DELETE" {
+            if std::mem::take(&mut data.faults.delete_failure) {
+                return failure(503, "backendError");
+            }
             let removed = data.files.remove(id).is_some();
             data.deleted += 1;
             if std::mem::take(&mut data.faults.delete_disconnect) {

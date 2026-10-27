@@ -470,3 +470,74 @@ async fn truncated_final_response_body_uses_status_query() {
     );
     assert_eq!(fake.file_count(), 1);
 }
+
+#[tokio::test]
+async fn partially_acknowledged_final_chunk_resends_the_tail() {
+    let fake = FakeDrive::start().await;
+    let storage = storage(&fake).await;
+    fake.faults(|f| f.final_partial_ack = Some(1));
+    let stored = storage
+        .write(input(b"abc".to_vec()), ExpectedIntegrity::default())
+        .await
+        .unwrap();
+    assert_eq!(fake.content(&stored.object_ref.key).unwrap(), b"abc");
+    assert_eq!(fake.ranges(), ["bytes 0-2/3", "bytes 1-2/3"]);
+    assert_eq!(fake.cancelled_sessions(), 0);
+}
+
+#[tokio::test]
+async fn unconfirmed_mismatch_cleanup_is_uncertain() {
+    let fake = FakeDrive::start().await;
+    let storage = storage(&fake).await;
+    fake.faults(|f| {
+        f.bad_checksum = true;
+        f.delete_failure = true;
+    });
+    assert!(matches!(
+        storage
+            .write(input(b"abc".to_vec()), ExpectedIntegrity::default())
+            .await,
+        Err(StorageError::UncertainCompletion { .. })
+    ));
+    assert_eq!(fake.file_count(), 1);
+}
+
+#[tokio::test]
+async fn declared_sizes_fail_before_uploading_excess_bytes() {
+    let fake = FakeDrive::start().await;
+    let storage = storage(&fake).await;
+    let requests = fake.requests();
+    let oversized = ExpectedIntegrity {
+        size_bytes: Some(32 * 1024 * 1024 + 1),
+        sha256: None,
+    };
+    assert!(matches!(
+        storage.write(input(b"abc".to_vec()), oversized).await,
+        Err(StorageError::SizeLimit { .. })
+    ));
+    assert_eq!(fake.requests(), requests);
+    let short = ExpectedIntegrity {
+        size_bytes: Some(10),
+        sha256: None,
+    };
+    assert!(matches!(
+        storage.write(input(vec![1; 9 * 1024 * 1024]), short).await,
+        Err(StorageError::IntegrityMismatch)
+    ));
+    assert!(fake.ranges().is_empty());
+    assert_eq!(fake.cancelled_sessions(), 1);
+}
+
+#[tokio::test]
+async fn foreign_session_uri_is_never_followed() {
+    let fake = FakeDrive::start().await;
+    let storage = storage(&fake).await;
+    fake.faults(|f| f.foreign_location = true);
+    assert!(matches!(
+        storage
+            .write(input(b"abc".to_vec()), ExpectedIntegrity::default())
+            .await,
+        Err(StorageError::Io { .. })
+    ));
+    assert!(fake.ranges().is_empty());
+}

@@ -78,13 +78,13 @@ impl GoogleDriveStorage {
             },
             yup_oauth2::client::CustomHyperClientBuilder::from(
                 hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
-                    .build(Self::connector()?),
+                    .build(Self::connector(false)?),
             ),
         )
         .build()
         .await
         .map_err(|_| error::permission())?;
-        let storage = Self::construct(config, auth, "https://www.googleapis.com/")?;
+        let storage = Self::construct(config, auth, "https://www.googleapis.com/", false)?;
         storage.check_folder().await?;
         Ok(storage)
     }
@@ -96,26 +96,31 @@ impl GoogleDriveStorage {
         root_url: &str,
         access_token: &str,
     ) -> Result<Self, StorageError> {
-        let storage = Self::construct(config, access_token.to_owned(), root_url)?;
+        Self::validate_config(&config)?;
+        let storage = Self::construct(config, access_token.to_owned(), root_url, true)?;
         storage.check_folder().await?;
         Ok(storage)
     }
 
-    fn client() -> Result<google_drive3::common::Client<Connector>, StorageError> {
+    fn client(allow_http: bool) -> Result<google_drive3::common::Client<Connector>, StorageError> {
         Ok(
             hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
-                .build(Self::connector()?),
+                .build(Self::connector(allow_http)?),
         )
     }
 
-    fn connector() -> Result<Connector, StorageError> {
-        Ok(hyper_rustls::HttpsConnectorBuilder::new()
+    /// Plaintext HTTP is reserved for loopback test endpoints; requests carry
+    /// bearer credentials.
+    fn connector(allow_http: bool) -> Result<Connector, StorageError> {
+        let builder = hyper_rustls::HttpsConnectorBuilder::new()
             .with_native_roots()
-            .map_err(|_| error::io("initialize TLS"))?
-            .https_or_http()
-            .enable_http1()
-            .enable_http2()
-            .build())
+            .map_err(|_| error::io("initialize TLS"))?;
+        let builder = if allow_http {
+            builder.https_or_http()
+        } else {
+            builder.https_only()
+        };
+        Ok(builder.enable_http1().enable_http2().build())
     }
 
     fn validate_config(config: &GoogleDriveConfig) -> Result<(), StorageError> {
@@ -134,9 +139,9 @@ impl GoogleDriveStorage {
         config: GoogleDriveConfig,
         auth: impl google_drive3::common::GetToken + 'static,
         root_url: &str,
+        allow_http: bool,
     ) -> Result<Self, StorageError> {
-        Self::validate_config(&config)?;
-        let client = Self::client()?;
+        let client = Self::client(allow_http)?;
         let mut hub = DriveHub::new(client, auth);
         let root_url = format!("{}/", root_url.trim_end_matches('/'));
         hub.root_url(root_url.clone());
