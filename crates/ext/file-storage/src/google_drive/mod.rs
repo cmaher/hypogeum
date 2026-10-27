@@ -4,6 +4,7 @@
 //! managers own retries. Cancelled upload futures abandon their resumable session
 //! (Drive expires it); they never publish an incomplete object.
 mod error;
+mod read;
 #[cfg(test)]
 mod tests;
 mod write;
