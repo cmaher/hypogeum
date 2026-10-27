@@ -6,6 +6,7 @@
 mod error;
 #[cfg(test)]
 mod tests;
+mod write;
 
 use crate::{ObjectRef, StorageError};
 use google_drive3::{DriveHub, hyper_rustls, hyper_util, yup_oauth2};
