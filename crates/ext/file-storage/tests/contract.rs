@@ -234,3 +234,78 @@ async fn integrity_contract_accepts_fragmented_reads() {
     .unwrap();
     integrity_contract(Arc::new(FragmentedReads(Arc::new(storage)))).await;
 }
+
+#[cfg(feature = "google-drive")]
+mod support;
+
+#[cfg(feature = "google-drive")]
+fn drive_config(folder_id: String) -> hypgmx_file_storage::google_drive::GoogleDriveConfig {
+    use hypgmx_file_storage::google_drive::{DriveScope, GoogleDriveConfig};
+    GoogleDriveConfig {
+        store_id: "contract".into(),
+        folder_id,
+        client_id: "client".into(),
+        client_secret: "secret".into(),
+        refresh_token: "refresh".into(),
+        scope: DriveScope::Full,
+        max_object_bytes: 2_000_000,
+    }
+}
+
+#[cfg(feature = "google-drive")]
+#[tokio::test]
+async fn google_drive_contract() {
+    let fake = support::fake_drive::FakeDrive::start().await;
+    let storage = Arc::new(
+        hypgmx_file_storage::google_drive::GoogleDriveStorage::with_test_endpoint(
+            drive_config("folder".into()),
+            &fake.root_url,
+            "test-token",
+        )
+        .await
+        .unwrap(),
+    );
+    round_trip_contract(storage.clone()).await;
+    integrity_contract(storage.clone()).await;
+    backpressure_contract(storage).await;
+}
+
+#[cfg(feature = "google-drive")]
+#[tokio::test]
+async fn google_drive_fragmented_reads() {
+    let fake = support::fake_drive::FakeDrive::start().await;
+    let storage = hypgmx_file_storage::google_drive::GoogleDriveStorage::with_test_endpoint(
+        drive_config("folder".into()),
+        &fake.root_url,
+        "test-token",
+    )
+    .await
+    .unwrap();
+    integrity_contract(Arc::new(FragmentedReads(Arc::new(storage)))).await;
+}
+
+/// Requires HYPOGEUM_GDRIVE_TEST_{CLIENT_ID,CLIENT_SECRET,REFRESH_TOKEN,FOLDER_ID}.
+/// Run: `cargo test -p hypgmx-file-storage --features google-drive -- --ignored google_drive_live`
+#[cfg(feature = "google-drive")]
+#[tokio::test]
+#[ignore = "requires a dedicated live Drive folder and OAuth credentials"]
+async fn google_drive_live_contract() {
+    let get = |key| {
+        std::env::var(format!("HYPOGEUM_GDRIVE_TEST_{key}"))
+            .unwrap_or_else(|_| panic!("missing HYPOGEUM_GDRIVE_TEST_{key}"))
+    };
+    let config = hypgmx_file_storage::google_drive::GoogleDriveConfig {
+        client_id: get("CLIENT_ID"),
+        client_secret: get("CLIENT_SECRET"),
+        refresh_token: get("REFRESH_TOKEN"),
+        ..drive_config(get("FOLDER_ID"))
+    };
+    let storage = Arc::new(
+        hypgmx_file_storage::google_drive::GoogleDriveStorage::new(config)
+            .await
+            .unwrap(),
+    );
+    round_trip_contract(storage.clone()).await;
+    integrity_contract(storage.clone()).await;
+    backpressure_contract(storage).await;
+}

@@ -5,6 +5,8 @@
 //! own metadata. Partial consumption never verifies integrity. There is no general
 //! rename, path, resume, listing or distributed transaction contract.
 pub mod filesystem;
+#[cfg(feature = "google-drive")]
+pub mod google_drive;
 pub mod models;
 pub use hypgm_errors::StorageError;
 pub use models::{ExpectedIntegrity, ObjectInfo, ObjectRef, StoredObject};
