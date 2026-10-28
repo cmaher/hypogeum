@@ -1,5 +1,5 @@
 use super::*;
-use crate::{ByteStream, FileStorage, ObjectInfo, ObjectRef, StoredObject};
+use crate::{ByteStream, FileStorage, ObjectInfo, ObjectKey, ObjectRef, StoredObject};
 use crate::{
     ReadOptions,
     read_state::{ReadState, beyond_end},
@@ -13,10 +13,11 @@ use tokio::io::AsyncReadExt;
 impl FileStorage for FilesystemStorage {
     async fn write(
         &self,
+        key: &ObjectKey,
         input: ByteStream,
         expected: ExpectedIntegrity,
     ) -> Result<StoredObject, StorageError> {
-        FilesystemStorage::write(self, input, expected).await
+        FilesystemStorage::write(self, key, input, expected).await
     }
 
     async fn read(
@@ -40,8 +41,13 @@ impl FileStorage for FilesystemStorage {
     async fn delete(&self, reference: &ObjectRef) -> Result<(), StorageError> {
         let path = self.resolve(reference)?;
         let ops = self.ops.clone();
-        let completed = self.root.join("completed");
+        let root = self.root.clone();
         blocking(move || {
+            match require_parents(&root, &path) {
+                // No parent directory, so no entry to remove or settle.
+                Err(StorageError::NotFound(_)) => return Ok(()),
+                result => result?,
+            }
             match regular_metadata(&path) {
                 Ok(()) => {
                     ops.check(Operation::Delete)
@@ -61,7 +67,7 @@ impl FileStorage for FilesystemStorage {
                 Err(e) => return Err(e),
             }
             // Also sync when already missing: retry can settle a previous uncertain unlink.
-            ops.sync_dir(&completed, Operation::CompletedSync)
+            ops.sync_dir(path.parent().expect("object parent"), Operation::ParentSync)
                 .map_err(|source| StorageError::UncertainCompletion {
                     operation: "sync deletion",
                     source,
@@ -73,14 +79,9 @@ impl FileStorage for FilesystemStorage {
 
 impl FilesystemStorage {
     fn resolve(&self, reference: &ObjectRef) -> Result<PathBuf, StorageError> {
-        let valid_key = uuid::Uuid::parse_str(&reference.key)
-            .is_ok_and(|uuid| uuid.to_string() == reference.key && uuid.get_version_num() == 4);
-        if reference.version != 1 || reference.store_id != self.store_id || !valid_key {
-            return Err(StorageError::InvalidReference(
-                "unknown version, store or malformed key".into(),
-            ));
-        }
-        Ok(self.root.join("completed").join(&reference.key))
+        let key = reference.key_in(&self.store_id)?;
+        object_path(&self.root, &key)
+            .ok_or_else(|| StorageError::InvalidReference("reserved object key".into()))
     }
 
     async fn reader(
@@ -91,8 +92,10 @@ impl FilesystemStorage {
     ) -> Result<Reader, StorageError> {
         let state = ReadState::new(options, self.max_object_bytes, inspect)?;
         let path = self.resolve(reference)?;
+        let root = self.root.clone();
         let range = state.range();
         let file = blocking(move || {
+            require_parents(&root, &path)?;
             regular_metadata(&path)?;
             let mut options = fs::OpenOptions::new();
             options.read(true);
@@ -132,10 +135,28 @@ impl FilesystemStorage {
     }
 }
 
+/// The layout is trusted against concurrent mutation, but never follow a
+/// symlinked key segment. A segment that is a file means no such object.
+fn require_parents(root: &Path, path: &Path) -> Result<(), StorageError> {
+    for parent in parents(root, path) {
+        let metadata = fs::symlink_metadata(parent)
+            .map_err(|e| StorageError::io("inspect object parent", e))?;
+        if metadata.file_type().is_symlink() {
+            return Err(StorageError::InvalidReference(
+                "object parents must be real directories".into(),
+            ));
+        }
+        if !metadata.file_type().is_dir() {
+            return Err(StorageError::NotFound(io::Error::new(
+                io::ErrorKind::NotFound,
+                "object parent is not a directory",
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn regular_metadata(path: &Path) -> Result<(), StorageError> {
-    // The layout is trusted against concurrent mutation, but never follow an
-    // existing replacement of the completed directory or an object symlink.
-    require_directory(path.parent().expect("completed object parent"))?;
     let metadata = fs::symlink_metadata(path).map_err(|e| StorageError::io("inspect object", e))?;
     if !metadata.file_type().is_file() {
         return Err(StorageError::InvalidReference(

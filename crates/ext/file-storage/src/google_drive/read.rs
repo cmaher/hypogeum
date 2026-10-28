@@ -1,7 +1,11 @@
-use super::{FOLDER_MIME, GoogleDriveStorage, SHORTCUT_MIME, error, write::response_error};
+use super::{
+    GoogleDriveStorage, error,
+    paths::{self, Located, Resolved},
+    write::response_error,
+};
 use crate::{
-    ByteRange, ByteStream, ExpectedIntegrity, FileStorage, ObjectInfo, ObjectRef, StorageError,
-    StoredObject,
+    ByteRange, ByteStream, ExpectedIntegrity, FileStorage, ObjectInfo, ObjectKey, ObjectRef,
+    StorageError, StoredObject,
 };
 use crate::{
     ReadOptions,
@@ -19,21 +23,22 @@ use std::io;
 
 const READ_CHUNK_BYTES: usize = 64 * 1024;
 
-fn outside() -> StorageError {
-    StorageError::NotFound(io::Error::new(
-        io::ErrorKind::NotFound,
-        "object outside storage folder",
-    ))
+/// A failed download. `Stale` failures may come from an outdated cached ID or
+/// size and are worth one fresh resolution.
+enum Fetch {
+    Stale(StorageError),
+    Failed(StorageError),
 }
 
 #[async_trait]
 impl FileStorage for GoogleDriveStorage {
     async fn write(
         &self,
+        key: &ObjectKey,
         input: ByteStream,
         expected: ExpectedIntegrity,
     ) -> Result<StoredObject, StorageError> {
-        GoogleDriveStorage::write(self, input, expected).await
+        GoogleDriveStorage::write(self, key, input, expected).await
     }
 
     async fn read(
@@ -55,159 +60,91 @@ impl FileStorage for GoogleDriveStorage {
     }
 
     async fn delete(&self, reference: &ObjectRef) -> Result<(), StorageError> {
-        let id = self.resolve(reference)?;
-        match self.guard(id).await {
-            Err(StorageError::NotFound(_)) => return Ok(()),
-            result => {
-                result?;
+        let key = reference.key_in(&self.store_id)?;
+        let mut fresh = false;
+        loop {
+            let Located { file, cached } = match self.locate(&key, fresh).await {
+                Err(StorageError::NotFound(_)) => return Ok(()),
+                located => located?,
+            };
+            let result = self
+                .hub
+                .files()
+                .delete(&file.id)
+                .supports_all_drives(true)
+                .add_scope(self.scope.as_url())
+                .doit()
+                .await;
+            self.forget_file(&key).await;
+            match result {
+                Ok(_) => return Ok(()),
+                Err(google_drive3::Error::HttpError(_) | google_drive3::Error::Io(_)) => {
+                    return Err(StorageError::UncertainCompletion {
+                        operation: "delete Drive object",
+                        source: io::Error::other("Drive deletion could not be confirmed"),
+                    });
+                }
+                Err(e) => match error::api(e, "delete Drive object") {
+                    // A stale cached ID: the key may now name another file.
+                    StorageError::NotFound(_) if cached && !fresh => {
+                        self.forget_path(&key).await;
+                        fresh = true;
+                    }
+                    StorageError::NotFound(_) => return Ok(()),
+                    error => return Err(error),
+                },
             }
-        }
-        match self
-            .hub
-            .files()
-            .delete(id)
-            .supports_all_drives(true)
-            .add_scope(self.scope.as_url())
-            .doit()
-            .await
-        {
-            Ok(_) => Ok(()),
-            Err(google_drive3::Error::HttpError(_) | google_drive3::Error::Io(_)) => {
-                Err(StorageError::UncertainCompletion {
-                    operation: "delete Drive object",
-                    source: io::Error::other("Drive deletion could not be confirmed"),
-                })
-            }
-            Err(e) => match error::api(e, "delete Drive object") {
-                StorageError::NotFound(_) => Ok(()),
-                error => Err(error),
-            },
         }
     }
 }
 
 impl GoogleDriveStorage {
-    /// Accept a non-trashed, non-folder, non-shortcut file anywhere below the
-    /// storage folder. Drive items have a single parent: the walk checks every
-    /// listed parent but follows only the first, at most the configured maximum
-    /// depth of folders up. Proven descendants are cached for the configured
-    /// time to live; ancestor moves and trash changes are not observed while
-    /// cached ancestry is trusted.
-    /// Returns the object's size when Drive reports one.
-    async fn guard(&self, id: &str) -> Result<Option<u64>, StorageError> {
-        let result = self.check_object(id).await;
-        if matches!(&result, Err(StorageError::NotFound(_))) {
-            self.forget_object(id).await;
-        }
-        result
-    }
-
-    async fn check_object(&self, id: &str) -> Result<Option<u64>, StorageError> {
-        let file = self.metadata(id).await?;
-        if file.trashed == Some(true)
-            || matches!(file.mime_type.as_deref(), Some(FOLDER_MIME | SHORTCUT_MIME))
-        {
-            return Err(outside());
-        }
-        let size = file.size.and_then(|size| u64::try_from(size).ok());
-        let mut parents = file.parents.unwrap_or_default();
-        let mut chain = Vec::new();
-        loop {
-            if self.contains_any(&parents) {
-                self.remember(chain).await;
-                return Ok(size);
-            }
-            let Some(parent) = parents.first().cloned() else {
-                return Err(outside());
-            };
-            if chain.len() == self.max_ancestor_depth {
-                return Err(outside());
-            }
-            let folder = match self.metadata(&parent).await {
-                Err(StorageError::NotFound(_)) => return Err(outside()),
-                result => result?,
-            };
-            if folder.trashed == Some(true) || folder.mime_type.as_deref() != Some(FOLDER_MIME) {
-                return Err(outside());
-            }
-            chain.push(parent);
-            parents = folder.parents.unwrap_or_default();
-        }
-    }
-
-    async fn metadata(&self, id: &str) -> Result<google_drive3::api::File, StorageError> {
-        let (_, file) = self
-            .hub
-            .files()
-            .get(id)
-            .supports_all_drives(true)
-            .param("fields", "parents,trashed,mimeType,size")
-            .add_scope(self.scope.as_url())
-            .doit()
-            .await
-            .map_err(|e| error::api(e, "guard Drive object"))?;
-        Ok(file)
-    }
-
-    fn contains_any(&self, parents: &[String]) -> bool {
-        parents.iter().any(|parent| {
-            *parent == self.folder_id
-                || self
-                    .descendants
-                    .as_ref()
-                    .is_some_and(|cache| cache.contains_key(parent))
-        })
-    }
-
-    async fn remember(&self, folders: Vec<String>) {
-        let Some(cache) = &self.descendants else {
-            return;
-        };
-        for folder in folders {
-            cache.insert(folder, ()).await;
-        }
-    }
-
-    async fn forget_object(&self, id: &str) {
-        if let Some(cache) = &self.objects {
-            cache.invalidate(id).await;
-        }
-    }
-
-    async fn read_guard(&self, id: &str) -> Result<Option<u64>, StorageError> {
-        if let Some(cache) = &self.objects
-            && let Some(size) = cache.get(id).await
-        {
-            return Ok(size);
-        }
-        let size = self.guard(id).await?;
-        if let Some(cache) = &self.objects {
-            cache.insert(id.to_owned(), size).await;
-        }
-        Ok(size)
-    }
-
     async fn reader(
         &self,
         reference: &ObjectRef,
         options: ReadOptions,
         inspect: bool,
     ) -> Result<Reader, StorageError> {
-        let id = self.resolve(reference)?;
+        let key = reference.key_in(&self.store_id)?;
         let state = ReadState::new(options, self.max_object_bytes, inspect)?;
-        let size = self.read_guard(id).await?;
-        let body = match state.range() {
+        let mut fresh = false;
+        loop {
+            let Located { file, cached } = self.locate(&key, fresh).await?;
+            match self.body(&file, state.range()).await {
+                Ok(body) => {
+                    return Ok(Reader {
+                        body,
+                        pending: Bytes::new(),
+                        state,
+                    });
+                }
+                Err(Fetch::Stale(_)) if cached && !fresh => {
+                    self.forget_path(&key).await;
+                    fresh = true;
+                }
+                Err(Fetch::Stale(error)) => {
+                    self.forget_file(&key).await;
+                    return Err(error);
+                }
+                Err(Fetch::Failed(error)) => return Err(error),
+            }
+        }
+    }
+
+    async fn body(&self, file: &Resolved, range: Option<ByteRange>) -> Result<common::Body, Fetch> {
+        match range {
             None => {
                 let response = self
                     .hub
                     .files()
-                    .get(id)
+                    .get(&file.id)
                     .supports_all_drives(true)
                     .param("alt", "media")
                     .add_scope(self.scope.as_url())
                     .doit()
                     .await;
-                let (response, _) = match response {
+                match response {
+                    Ok((response, _)) => Ok(response.into_body()),
                     Err(error) => {
                         let code = match &error {
                             google_drive3::Error::Failure(response) => {
@@ -218,50 +155,52 @@ impl GoogleDriveStorage {
                             }
                             _ => None,
                         };
-                        if matches!(code, Some(404 | 416)) {
-                            self.forget_object(id).await;
-                        }
-                        return Err(error::api(error, "read Drive object"));
+                        let error = error::api(error, "read Drive object");
+                        Err(if matches!(code, Some(404 | 416)) {
+                            Fetch::Stale(error)
+                        } else {
+                            Fetch::Failed(error)
+                        })
                     }
-                    Ok(response) => response,
-                };
-                response.into_body()
+                }
             }
             // ReadState rejects ranges whose end overflows.
-            Some(range) if size.is_some_and(|size| size < range.offset + range.length) => {
-                return Err(beyond_end());
+            Some(range)
+                if file
+                    .size
+                    .is_some_and(|size| size < range.offset + range.length) =>
+            {
+                Err(Fetch::Stale(beyond_end()))
             }
-            Some(ByteRange { length: 0, .. }) => common::to_body::<Bytes>(None),
-            Some(range) => self.ranged_body(id, range).await?,
-        };
-        Ok(Reader {
-            body,
-            pending: Bytes::new(),
-            state,
-        })
+            Some(ByteRange { length: 0, .. }) => Ok(common::to_body::<Bytes>(None)),
+            Some(range) => self.ranged_body(&file.id, range).await,
+        }
     }
 
     /// Only a `206` carrying exactly the requested range is streamed: a server
     /// ignoring `Range` would otherwise send the whole object.
-    async fn ranged_body(&self, id: &str, range: ByteRange) -> Result<common::Body, StorageError> {
+    async fn ranged_body(&self, id: &str, range: ByteRange) -> Result<common::Body, Fetch> {
         const OPERATION: &str = "read Drive object range";
         let end = range.offset + range.length - 1;
+        // Resolved IDs are restricted to the Drive ID alphabet.
+        debug_assert!(paths::valid_id(id));
         let request = Request::get(format!(
             "{}drive/v3/files/{id}?alt=media&supportsAllDrives=true",
             self.root_url
         ))
         .header(header::RANGE, format!("bytes={}-{end}", range.offset))
         .body(common::to_body::<Bytes>(None))
-        .map_err(|_| error::io(OPERATION))?;
-        let response = self.request(request, OPERATION).await?;
-        if matches!(response.status().as_u16(), 404 | 416) {
-            self.forget_object(id).await;
-        }
+        .map_err(|_| Fetch::Failed(error::io(OPERATION)))?;
+        let response = self
+            .request(request, OPERATION)
+            .await
+            .map_err(Fetch::Failed)?;
         match response.status().as_u16() {
             206 => (),
-            416 => return Err(beyond_end()),
-            200 => return Err(error::io(OPERATION)),
-            _ => return Err(response_error(response, OPERATION).await),
+            416 => return Err(Fetch::Stale(beyond_end())),
+            404 => return Err(Fetch::Stale(response_error(response, OPERATION).await)),
+            200 => return Err(Fetch::Failed(error::io(OPERATION))),
+            _ => return Err(Fetch::Failed(response_error(response, OPERATION).await)),
         }
         let expected = format!("bytes {}-{end}/", range.offset);
         if !response
@@ -270,7 +209,7 @@ impl GoogleDriveStorage {
             .and_then(|h| h.to_str().ok())
             .is_some_and(|h| h.starts_with(&expected))
         {
-            return Err(error::io(OPERATION));
+            return Err(Fetch::Failed(error::io(OPERATION)));
         }
         Ok(response.into_body().boxed())
     }

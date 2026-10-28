@@ -9,7 +9,7 @@ fn config() -> GoogleDriveConfig {
         refresh_token: "refresh-sentinel".into(),
         scope: DriveScope::Full,
         max_object_bytes: 100,
-        ancestry: DriveAncestryConfig::default(),
+        path_cache: DrivePathCacheConfig::default(),
     }
 }
 
@@ -32,43 +32,6 @@ async fn invalid_configuration_fails_before_authentication() {
         assert!(matches!(
             GoogleDriveStorage::new(config).await,
             Err(StorageError::InvalidInput(_))
-        ));
-    }
-}
-
-#[test]
-fn reference_validation() {
-    let storage =
-        GoogleDriveStorage::construct(config(), "token".to_string(), "http://localhost/", true)
-            .unwrap();
-    let reference = ObjectRef {
-        version: 1,
-        store_id: "test".into(),
-        key: "a-Z_09".into(),
-    };
-    assert_eq!(storage.resolve(&reference).unwrap(), "a-Z_09");
-    for key in ["", "../file", "a/b", "a?b", "é", "a b"] {
-        assert!(matches!(
-            storage.resolve(&ObjectRef {
-                key: key.into(),
-                ..reference.clone()
-            }),
-            Err(StorageError::InvalidReference(_))
-        ));
-    }
-    for bad in [
-        ObjectRef {
-            version: 2,
-            ..reference.clone()
-        },
-        ObjectRef {
-            store_id: "other".into(),
-            ..reference
-        },
-    ] {
-        assert!(matches!(
-            storage.resolve(&bad),
-            Err(StorageError::InvalidReference(_))
         ));
     }
 }

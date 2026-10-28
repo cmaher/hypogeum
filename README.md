@@ -24,7 +24,7 @@ The repository uses a two-tier architecture cleanly separating framework foundat
 │   │   ├── test-support/         # Testcontainers bootstrap for isolated database tests
 │   │   └── view/                 # Opt-in HTML views, HTMX support, and vendored assets
 │   └── ext/                      # External driver & stateful adapters (hypgmx-*)
-│       ├── file-storage/         # Streamed immutable byte storage
+│       ├── file-storage/         # Streamed byte storage at path-shaped keys
 │       ├── rdbms/
 │       │   ├── db/               # Migration runner, schema verification, inspection
 │       │   └── postgres/         # Database pool management

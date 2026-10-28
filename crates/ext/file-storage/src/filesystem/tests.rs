@@ -1,5 +1,5 @@
 use super::*;
-use crate::{ByteStream, FileStorage, ObjectRef, ReadOptions};
+use crate::{ByteStream, FileStorage, ObjectKey, ObjectRef, ReadOptions};
 use bytes::Bytes;
 use futures_util::{StreamExt, stream};
 
@@ -16,12 +16,56 @@ fn bytes(data: &'static [u8]) -> ByteStream {
 fn count(root: &Path, directory: &str) -> usize {
     fs::read_dir(root.join(directory)).unwrap().count()
 }
+/// Regular files outside the staging area.
+fn objects(root: &Path) -> usize {
+    fn walk(path: &Path) -> usize {
+        fs::read_dir(path)
+            .unwrap()
+            .map(|entry| {
+                let entry = entry.unwrap();
+                let kind = entry.file_type().unwrap();
+                if kind.is_dir() {
+                    walk(&entry.path())
+                } else {
+                    usize::from(kind.is_file())
+                }
+            })
+            .sum()
+    }
+    fs::read_dir(root)
+        .unwrap()
+        .map(|entry| entry.unwrap())
+        .filter(|entry| entry.file_name() != STAGING)
+        .map(|entry| {
+            if entry.file_type().unwrap().is_dir() {
+                walk(&entry.path())
+            } else {
+                1
+            }
+        })
+        .sum()
+}
+fn key(key: &str) -> ObjectKey {
+    ObjectKey::new(key).unwrap()
+}
 fn reference(key: String) -> ObjectRef {
     ObjectRef {
-        version: 1,
+        version: 2,
         store_id: "fixtures".into(),
         key,
     }
+}
+async fn content(storage: &FilesystemStorage, reference: &ObjectRef) -> Vec<u8> {
+    let chunks = storage
+        .read(reference, ReadOptions::default())
+        .await
+        .unwrap()
+        .collect::<Vec<_>>()
+        .await;
+    chunks
+        .into_iter()
+        .flat_map(|chunk| chunk.unwrap())
+        .collect()
 }
 
 #[tokio::test]
@@ -37,12 +81,16 @@ async fn source_failure_cleans_partial_bytes() {
     ]);
     assert!(
         storage
-            .write(Box::pin(input), ExpectedIntegrity::default())
+            .write(
+                &key("a/object"),
+                Box::pin(input),
+                ExpectedIntegrity::default()
+            )
             .await
             .is_err()
     );
     assert_eq!(count(root.path(), "staging"), 0);
-    assert_eq!(count(root.path(), "completed"), 0);
+    assert_eq!(objects(root.path()), 0);
 }
 
 #[tokio::test]
@@ -73,11 +121,15 @@ async fn cancellation_never_publishes_partial_bytes() {
     let client = storage.clone();
     let writer = tokio::spawn(async move {
         client
-            .write(Box::pin(input), ExpectedIntegrity::default())
+            .write(
+                &key("object"),
+                Box::pin(input),
+                ExpectedIntegrity::default(),
+            )
             .await
     });
     ready.notified().await;
-    assert_eq!(count(root.path(), "completed"), 0);
+    assert_eq!(objects(root.path()), 0);
     let stage = fs::read_dir(root.path().join("staging"))
         .unwrap()
         .next()
@@ -88,7 +140,13 @@ async fn cancellation_never_publishes_partial_bytes() {
         .unwrap()
         .to_owned();
     assert!(matches!(
-        storage.inspect(&reference(stage)).await,
+        storage
+            .inspect(&reference(format!("staging/{stage}")))
+            .await,
+        Err(StorageError::InvalidReference(_))
+    ));
+    assert!(matches!(
+        storage.inspect(&reference("object".into())).await,
         Err(StorageError::NotFound(_))
     ));
     writer.abort();
@@ -103,7 +161,7 @@ async fn cancellation_never_publishes_partial_bytes() {
     .unwrap();
     assert_ne!(cleanup_thread, executor);
     assert_eq!(count(root.path(), "staging"), 0);
-    assert_eq!(count(root.path(), "completed"), 0);
+    assert_eq!(objects(root.path()), 0);
 }
 
 #[tokio::test]
@@ -112,26 +170,25 @@ async fn injected_write_sync_and_install_failures_have_precise_outcomes() {
         Operation::Create,
         Operation::Write,
         Operation::FileSync,
+        Operation::CreateParent,
+        Operation::CreateParentSync,
         Operation::Install,
-        Operation::CompletedSync,
+        Operation::ParentSync,
         Operation::StagingSync,
     ] {
         let root = tempfile::tempdir().unwrap();
-        let key = uuid::Uuid::new_v4().to_string();
-        let ops = Arc::new(FsOps {
-            key: Some(key.clone()),
-            ..Default::default()
-        });
+        let object = key("nested/whole");
+        let ops = Arc::new(FsOps::default());
         let storage = FilesystemStorage::construct(config(root.path()), ops.clone())
             .await
             .unwrap();
         ops.failures.lock().unwrap().push(operation);
         let result = storage
-            .write(bytes(b"whole"), ExpectedIntegrity::default())
+            .write(&object, bytes(b"whole"), ExpectedIntegrity::default())
             .await;
         let uncertain = matches!(
             operation,
-            Operation::Install | Operation::CompletedSync | Operation::StagingSync
+            Operation::Install | Operation::ParentSync | Operation::StagingSync
         );
         assert_eq!(
             matches!(result, Err(StorageError::UncertainCompletion { .. })),
@@ -140,28 +197,23 @@ async fn injected_write_sync_and_install_failures_have_precise_outcomes() {
         );
         assert!(result.is_err());
         assert_eq!(count(root.path(), "staging"), 0);
-        if matches!(operation, Operation::CompletedSync | Operation::StagingSync) {
-            assert_eq!(
-                storage
-                    .inspect(&reference(key.clone()))
-                    .await
-                    .unwrap()
-                    .size_bytes,
-                5
-            );
-            assert_eq!(count(root.path(), "completed"), 1);
+        let reference = ObjectRef::new("fixtures", &object);
+        if matches!(operation, Operation::ParentSync | Operation::StagingSync) {
+            assert_eq!(content(&storage, &reference).await, b"whole");
+            assert_eq!(objects(root.path()), 1);
         } else {
-            assert_eq!(count(root.path(), "completed"), 0);
+            assert_eq!(objects(root.path()), 0);
         }
-        // An independent client generates a fresh key for a domain-controlled retry.
+        // A domain-controlled retry of the same key replaces any installed object.
         let retry = FilesystemStorage::new(config(root.path())).await.unwrap();
-        let completed_before = count(root.path(), "completed");
         let retried = retry
-            .write(bytes(b"retry"), ExpectedIntegrity::default())
+            .write(&object, bytes(b"again"), ExpectedIntegrity::default())
             .await
             .unwrap();
-        assert_ne!(retried.object_ref.key, key);
-        assert_eq!(count(root.path(), "completed"), completed_before + 1);
+        assert_eq!(retried.object_ref, reference);
+        assert_eq!(content(&retry, &reference).await, b"again");
+        assert_eq!(objects(root.path()), 1);
+        assert_eq!(count(root.path(), "staging"), 0);
     }
 }
 
@@ -178,12 +230,16 @@ async fn failed_cleanup_leaves_only_unreadable_staging_debris() {
         .extend([Operation::FileSync, Operation::Cleanup]);
     assert!(
         storage
-            .write(bytes(b"partial"), ExpectedIntegrity::default())
+            .write(
+                &key("partial"),
+                bytes(b"partial"),
+                ExpectedIntegrity::default()
+            )
             .await
             .is_err()
     );
     assert_eq!(count(root.path(), "staging"), 1);
-    assert_eq!(count(root.path(), "completed"), 0);
+    assert_eq!(objects(root.path()), 0);
     let independent = FilesystemStorage::new(config(root.path())).await.unwrap();
     let debris = fs::read_dir(root.path().join("staging"))
         .unwrap()
@@ -198,10 +254,18 @@ async fn failed_cleanup_leaves_only_unreadable_staging_debris() {
         independent.inspect(&reference(debris)).await,
         Err(StorageError::NotFound(_))
     ));
+    assert!(matches!(
+        independent.inspect(&reference("partial".into())).await,
+        Err(StorageError::NotFound(_))
+    ));
     assert_eq!(count(root.path(), "staging"), 1); // Initialization does not perform online cleanup.
     assert!(
         independent
-            .write(bytes(b"complete"), ExpectedIntegrity::default())
+            .write(
+                &key("partial"),
+                bytes(b"complete"),
+                ExpectedIntegrity::default()
+            )
             .await
             .is_ok()
     );
@@ -238,17 +302,21 @@ async fn delete_sync_uncertainty_is_retryable_without_recreating_bytes() {
         .await
         .unwrap();
     let stored = storage
-        .write(bytes(b"complete"), ExpectedIntegrity::default())
+        .write(
+            &key("a/b"),
+            bytes(b"complete"),
+            ExpectedIntegrity::default(),
+        )
         .await
         .unwrap();
-    ops.failures.lock().unwrap().push(Operation::CompletedSync);
+    ops.failures.lock().unwrap().push(Operation::ParentSync);
     assert!(matches!(
         storage.delete(&stored.object_ref).await,
         Err(StorageError::UncertainCompletion { .. })
     ));
-    assert_eq!(count(root.path(), "completed"), 0);
+    assert_eq!(objects(root.path()), 0);
     storage.delete(&stored.object_ref).await.unwrap();
-    assert_eq!(count(root.path(), "completed"), 0);
+    assert_eq!(objects(root.path()), 0);
 }
 
 #[tokio::test]
@@ -256,20 +324,17 @@ async fn independent_clients_see_only_completed_immutable_objects() {
     let root = tempfile::tempdir().unwrap();
     let a = FilesystemStorage::new(config(root.path())).await.unwrap();
     let b = FilesystemStorage::new(config(root.path())).await.unwrap();
+    let (first_key, second_key) = (key("first"), key("second"));
     let (first, second) = tokio::join!(
-        a.write(bytes(b"first"), ExpectedIntegrity::default()),
-        b.write(bytes(b"second"), ExpectedIntegrity::default())
+        a.write(&first_key, bytes(b"first"), ExpectedIntegrity::default()),
+        b.write(&second_key, bytes(b"second"), ExpectedIntegrity::default())
     );
     let first = first.unwrap();
     let second = second.unwrap();
     assert_ne!(first.object_ref, second.object_ref);
     assert_eq!(a.inspect(&second.object_ref).await.unwrap(), second.info);
     assert_eq!(b.inspect(&first.object_ref).await.unwrap(), first.info);
-    fs::write(
-        root.path().join("completed").join(&first.object_ref.key),
-        b"corrupted",
-    )
-    .unwrap();
+    fs::write(root.path().join(&first.object_ref.key), b"corrupted").unwrap();
     let chunks = b
         .read(&first.object_ref, ReadOptions::default())
         .await
@@ -316,8 +381,9 @@ async fn symlinks_directories_and_fifos_are_rejected_without_following_or_blocki
     let outside = root.path().join("outside");
     fs::write(&outside, b"keep").unwrap();
     for kind in ["symlink", "directory", "fifo"] {
-        let reference = reference(uuid::Uuid::new_v4().to_string());
-        let path = root.path().join("completed").join(&reference.key);
+        let reference = reference(format!("{kind}/object"));
+        fs::create_dir(root.path().join(kind)).unwrap();
+        let path = root.path().join(&reference.key);
         match kind {
             "symlink" => symlink(&outside, &path).unwrap(),
             "directory" => fs::create_dir(&path).unwrap(),
@@ -341,12 +407,51 @@ async fn symlinks_directories_and_fifos_are_rejected_without_following_or_blocki
             storage.delete(&reference).await,
             Err(StorageError::InvalidReference(_))
         ));
+        // Writes never replace a non-regular entry.
+        assert!(matches!(
+            storage
+                .write(
+                    &key(&reference.key),
+                    bytes(b"x"),
+                    ExpectedIntegrity::default()
+                )
+                .await,
+            Err(StorageError::InvalidInput(_))
+        ));
     }
-    assert_eq!(fs::read(outside).unwrap(), b"keep");
+    assert_eq!(fs::read(&outside).unwrap(), b"keep");
+    // A symlinked segment anywhere in the key is never followed.
+    let elsewhere = tempfile::tempdir().unwrap();
+    fs::create_dir(elsewhere.path().join("inner")).unwrap();
+    fs::write(elsewhere.path().join("inner/object"), b"keep").unwrap();
+    fs::create_dir(root.path().join("real")).unwrap();
+    symlink(elsewhere.path(), root.path().join("real/linked")).unwrap();
+    for key_text in ["real/linked/inner/object", "real/linked/inner/new"] {
+        let reference = reference(key_text.into());
+        assert!(matches!(
+            storage.read(&reference, ReadOptions::default()).await,
+            Err(StorageError::InvalidReference(_))
+        ));
+        assert!(matches!(
+            storage.delete(&reference).await,
+            Err(StorageError::InvalidReference(_))
+        ));
+        assert!(matches!(
+            storage
+                .write(&key(key_text), bytes(b"x"), ExpectedIntegrity::default())
+                .await,
+            Err(StorageError::InvalidInput(_))
+        ));
+    }
+    assert_eq!(
+        fs::read(elsewhere.path().join("inner/object")).unwrap(),
+        b"keep"
+    );
+    assert!(!elsewhere.path().join("inner/new").exists());
     let layout_root = tempfile::tempdir().unwrap();
     symlink(
-        root.path().join("completed"),
-        layout_root.path().join("completed"),
+        root.path().join("staging"),
+        layout_root.path().join("staging"),
     )
     .unwrap();
     assert!(matches!(
@@ -396,7 +501,11 @@ async fn write_backpressure_does_not_collect_input_before_processing() {
     }));
     assert!(
         storage
-            .write(Box::pin(input), ExpectedIntegrity::default())
+            .write(
+                &key("object"),
+                Box::pin(input),
+                ExpectedIntegrity::default()
+            )
             .await
             .is_err()
     );
@@ -410,39 +519,60 @@ async fn byte_limit_is_enforced_with_unknown_length_and_oversized_chunks() {
     let input = stream::iter([Ok(Bytes::from(vec![0; 2_000_000]))]);
     assert!(matches!(
         storage
-            .write(Box::pin(input), ExpectedIntegrity::default())
+            .write(
+                &key("object"),
+                Box::pin(input),
+                ExpectedIntegrity::default()
+            )
             .await,
         Err(StorageError::SizeLimit { limit: 1_000_000 })
     ));
-    assert_eq!(count(root.path(), "completed"), 0);
+    assert_eq!(objects(root.path()), 0);
     assert_eq!(count(root.path(), "staging"), 0);
 }
 
 #[tokio::test]
-async fn malformed_uuid_encodings_and_other_reference_versions_are_rejected() {
+async fn malformed_reserved_keys_and_other_reference_versions_are_rejected() {
     let root = tempfile::tempdir().unwrap();
     let storage = FilesystemStorage::new(config(root.path())).await.unwrap();
-    let uuid = uuid::Uuid::parse_str("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa").unwrap();
     for key in [
-        uuid.simple().to_string(),
-        uuid.to_string().to_uppercase(),
-        "../completed/object".into(),
-        "..\\completed\\object".into(),
-        "/tmp/object".into(),
-        "C:\\object".into(),
-        "00000000-0000-0000-0000-000000000000".into(),
-        "bad\0key".into(),
+        "",
+        "../object",
+        "a/../../object",
+        "..\\object",
+        "/tmp/object",
+        "C:\\object",
+        "a//b",
+        "bad\0key",
+        "staging",
+        "staging/object",
     ] {
-        let reference = reference(key);
+        let reference = reference(key.into());
+        assert!(
+            matches!(
+                storage.inspect(&reference).await,
+                Err(StorageError::InvalidReference(_))
+            ),
+            "{key:?}"
+        );
+    }
+    for reserved in ["staging", "staging/object"] {
         assert!(matches!(
-            storage.inspect(&reference).await,
-            Err(StorageError::InvalidReference(_))
+            storage
+                .write(&key(reserved), bytes(b"x"), ExpectedIntegrity::default())
+                .await,
+            Err(StorageError::InvalidInput(_))
         ));
     }
-    for version in [0, 2, u32::MAX] {
+    // Only the first segment is reserved.
+    storage
+        .write(&key("a/staging"), bytes(b"x"), ExpectedIntegrity::default())
+        .await
+        .unwrap();
+    for version in [0, 1, 3, u32::MAX] {
         let reference = ObjectRef {
             version,
-            ..reference(uuid.to_string())
+            ..reference("a/staging".into())
         };
         assert!(matches!(
             storage.inspect(&reference).await,
@@ -464,6 +594,7 @@ async fn durable_write_checks_integrity_and_limits() {
     let input = || Box::pin(stream::iter([Ok(Bytes::from_static(b"abc"))])) as crate::ByteStream;
     let stored = storage
         .write(
+            &key("dir/abc"),
             input(),
             ExpectedIntegrity {
                 size_bytes: Some(3),
@@ -473,13 +604,11 @@ async fn durable_write_checks_integrity_and_limits() {
         .await
         .unwrap();
     assert_eq!(stored.info.size_bytes, 3);
-    assert_eq!(
-        std::fs::read(root.path().join("completed").join(stored.object_ref.key)).unwrap(),
-        b"abc"
-    );
+    assert_eq!(std::fs::read(root.path().join("dir/abc")).unwrap(), b"abc");
     assert!(matches!(
         storage
             .write(
+                &key("dir/abc"),
                 input(),
                 ExpectedIntegrity {
                     size_bytes: Some(2),
@@ -491,9 +620,13 @@ async fn durable_write_checks_integrity_and_limits() {
     ));
     let big = Box::pin(stream::iter([Ok(Bytes::from_static(b"abcd"))]));
     assert!(matches!(
-        storage.write(big, ExpectedIntegrity::default()).await,
+        storage
+            .write(&key("dir/abc"), big, ExpectedIntegrity::default())
+            .await,
         Err(StorageError::SizeLimit { .. })
     ));
+    // Failed writes leave the existing object in place.
+    assert_eq!(std::fs::read(root.path().join("dir/abc")).unwrap(), b"abc");
     assert_eq!(
         std::fs::read_dir(root.path().join("staging"))
             .unwrap()
@@ -502,39 +635,102 @@ async fn durable_write_checks_integrity_and_limits() {
     );
 }
 #[tokio::test]
-async fn collision_never_overwrites_completed_bytes() {
+async fn overwrite_replaces_atomically_for_open_and_new_readers() {
     let root = tempfile::tempdir().unwrap();
-    let key = uuid::Uuid::new_v4().to_string();
-    let ops = Arc::new(FsOps {
-        key: Some(key.clone()),
-        ..Default::default()
-    });
-    let storage = FilesystemStorage::construct(
-        FilesystemConfig {
-            root: root.path().into(),
-            store_id: "test".into(),
-            max_object_bytes: 10,
-        },
-        ops,
-    )
-    .await
-    .unwrap();
-    let input =
-        |bytes| Box::pin(stream::iter([Ok(Bytes::from_static(bytes))])) as crate::ByteStream;
-    storage
-        .write(input(b"first"), ExpectedIntegrity::default())
+    let storage = FilesystemStorage::new(config(root.path())).await.unwrap();
+    let object = key("photos/a.jpg");
+    let first = storage
+        .write(&object, bytes(b"first"), ExpectedIntegrity::default())
         .await
         .unwrap();
-    assert!(
-        storage
-            .write(input(b"second"), ExpectedIntegrity::default())
-            .await
-            .is_err()
-    );
+    let open = storage
+        .read(&first.object_ref, ReadOptions::default())
+        .await
+        .unwrap();
+    let second = storage
+        .write(&object, bytes(b"second"), ExpectedIntegrity::default())
+        .await
+        .unwrap();
+    assert_eq!(second.object_ref, first.object_ref);
+    assert_ne!(second.info, first.info);
+    // A reader opened before the replacement keeps the previous object.
+    let previous: Vec<u8> = open
+        .collect::<Vec<_>>()
+        .await
+        .into_iter()
+        .flat_map(|chunk| chunk.unwrap())
+        .collect();
+    assert_eq!(previous, b"first");
+    assert_eq!(content(&storage, &second.object_ref).await, b"second");
     assert_eq!(
-        std::fs::read(root.path().join("completed").join(key)).unwrap(),
-        b"first"
+        storage.inspect(&second.object_ref).await.unwrap(),
+        second.info
     );
+    assert_eq!(objects(root.path()), 1);
+    assert_eq!(count(root.path(), "staging"), 0);
+}
+
+#[tokio::test]
+async fn nested_keys_create_parents_and_round_trip() {
+    let root = tempfile::tempdir().unwrap();
+    let storage = FilesystemStorage::new(config(root.path())).await.unwrap();
+    let stored = storage
+        .write(
+            &key("a/b/c.jpg"),
+            bytes(b"nested"),
+            ExpectedIntegrity::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(stored.object_ref.key, "a/b/c.jpg");
+    assert_eq!(fs::read(root.path().join("a/b/c.jpg")).unwrap(), b"nested");
+    // A sibling lands next to the object it was derived from.
+    let sibling = storage
+        .write(
+            &key("a/b/c.thumb.jpg"),
+            bytes(b"thumb"),
+            ExpectedIntegrity::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(content(&storage, &stored.object_ref).await, b"nested");
+    assert_eq!(content(&storage, &sibling.object_ref).await, b"thumb");
+    assert_eq!(
+        storage.inspect(&stored.object_ref).await.unwrap(),
+        stored.info
+    );
+    storage.delete(&stored.object_ref).await.unwrap();
+    storage.delete(&stored.object_ref).await.unwrap();
+    assert!(matches!(
+        storage.inspect(&stored.object_ref).await,
+        Err(StorageError::NotFound(_))
+    ));
+    assert_eq!(content(&storage, &sibling.object_ref).await, b"thumb");
+    // Missing parents read as missing objects, and deletion stays idempotent.
+    let missing = reference("no/such/parent".into());
+    assert!(matches!(
+        storage.inspect(&missing).await,
+        Err(StorageError::NotFound(_))
+    ));
+    storage.delete(&missing).await.unwrap();
+    // An object cannot also be a parent.
+    assert!(matches!(
+        storage
+            .write(
+                &key("a/b/c.thumb.jpg/x"),
+                bytes(b"x"),
+                ExpectedIntegrity::default()
+            )
+            .await,
+        Err(StorageError::InvalidInput(_))
+    ));
+    let under_file = reference("a/b/c.thumb.jpg/x".into());
+    assert!(matches!(
+        storage.inspect(&under_file).await,
+        Err(StorageError::NotFound(_))
+    ));
+    storage.delete(&under_file).await.unwrap();
+    assert_eq!(count(root.path(), "staging"), 0);
 }
 
 #[tokio::test]
@@ -552,6 +748,7 @@ async fn round_trip_eof_integrity_and_idempotent_delete() {
     for data in [b"abc".as_slice(), b""] {
         let stored = storage
             .write(
+                &key("round/trip"),
                 Box::pin(stream::iter([Ok(Bytes::copy_from_slice(data))])),
                 ExpectedIntegrity::default(),
             )
@@ -601,10 +798,10 @@ async fn round_trip_eof_integrity_and_idempotent_delete() {
         ));
     }
     for (version, store_id, key) in [
-        (2, "test", "x"),
-        (1, "foreign", "x"),
-        (1, "test", "../outside"),
-        (1, "test", "/absolute"),
+        (1, "test", "x"),
+        (2, "foreign", "x"),
+        (2, "test", "../outside"),
+        (2, "test", "/absolute"),
     ] {
         let reference = ObjectRef {
             version,
@@ -638,7 +835,11 @@ async fn empty_chunks_allow_other_tasks_to_cancel_the_write() {
     }));
     let writer = tokio::spawn(async move {
         storage
-            .write(Box::pin(input), ExpectedIntegrity::default())
+            .write(
+                &key("object"),
+                Box::pin(input),
+                ExpectedIntegrity::default(),
+            )
             .await
     });
     ready.notified().await;
@@ -654,9 +855,7 @@ async fn empty_chunks_allow_other_tasks_to_cancel_the_write() {
 #[tokio::test]
 async fn installed_object_with_replayed_exists_error_is_uncertain_and_retained() {
     let root = tempfile::tempdir().unwrap();
-    let key = uuid::Uuid::new_v4().to_string();
     let ops = Arc::new(FsOps {
-        key: Some(key.clone()),
         install_then_error: Some(io::ErrorKind::AlreadyExists),
         ..Default::default()
     });
@@ -664,17 +863,25 @@ async fn installed_object_with_replayed_exists_error_is_uncertain_and_retained()
         .await
         .unwrap();
     let result = storage
-        .write(bytes(b"complete"), ExpectedIntegrity::default())
+        .write(
+            &key("object"),
+            bytes(b"complete"),
+            ExpectedIntegrity::default(),
+        )
         .await;
     assert!(
         matches!(result, Err(StorageError::UncertainCompletion { .. })),
         "{result:?}"
     );
     assert_eq!(
-        storage.inspect(&reference(key)).await.unwrap().size_bytes,
+        storage
+            .inspect(&reference("object".into()))
+            .await
+            .unwrap()
+            .size_bytes,
         8
     );
-    assert_eq!(count(root.path(), "completed"), 1);
+    assert_eq!(objects(root.path()), 1);
     assert_eq!(count(root.path(), "staging"), 0);
 }
 
@@ -692,7 +899,11 @@ async fn failed_write_cleans_staging_away_from_the_async_executor() {
     let input = stream::iter([Err(StorageError::io("source", io::Error::other("failed")))]);
     assert!(
         storage
-            .write(Box::pin(input), ExpectedIntegrity::default())
+            .write(
+                &key("object"),
+                Box::pin(input),
+                ExpectedIntegrity::default()
+            )
             .await
             .is_err()
     );
@@ -713,7 +924,7 @@ async fn read_limit_cannot_override_adapter_limit() {
     let root = tempfile::tempdir().unwrap();
     let storage = FilesystemStorage::new(config(root.path())).await.unwrap();
     let stored = storage
-        .write(bytes(b"abc"), ExpectedIntegrity::default())
+        .write(&key("object"), bytes(b"abc"), ExpectedIntegrity::default())
         .await
         .unwrap();
     let small = FilesystemStorage::new(FilesystemConfig {

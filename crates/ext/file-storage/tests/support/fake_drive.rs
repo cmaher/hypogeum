@@ -43,13 +43,17 @@ pub struct Faults {
 }
 
 struct File {
+    name: String,
     parents: Vec<String>,
     trashed: bool,
     mime: String,
     bytes: Vec<u8>,
 }
 struct Session {
+    name: String,
     parents: Vec<String>,
+    /// The existing file a replacement upload installs into.
+    target: Option<String>,
     bytes: Vec<u8>,
     completed: Option<Value>,
 }
@@ -63,6 +67,9 @@ struct Data {
     requests: usize,
     media_requests: usize,
     metadata_requests: usize,
+    list_requests: usize,
+    queries: Vec<String>,
+    folders_created: usize,
     media_ranges: Vec<String>,
     ranges: Vec<String>,
     deleted: usize,
@@ -93,6 +100,7 @@ impl FakeDrive {
         data.lock().unwrap().files.insert(
             "folder".into(),
             File {
+                name: "storage".into(),
                 parents: vec![],
                 trashed: false,
                 mime: FOLDER.into(),
@@ -117,7 +125,8 @@ impl FakeDrive {
     }
     pub fn insert_file(
         &self,
-        parents: Vec<String>,
+        parent: &str,
+        name: &str,
         trashed: bool,
         mime: &str,
         bytes: Vec<u8>,
@@ -126,7 +135,8 @@ impl FakeDrive {
         self.data.lock().unwrap().files.insert(
             id.clone(),
             File {
-                parents,
+                name: name.into(),
+                parents: vec![parent.into()],
                 trashed,
                 mime: mime.into(),
                 bytes,
@@ -134,17 +144,37 @@ impl FakeDrive {
         );
         id
     }
-    pub fn insert_folder(&self) -> String {
-        self.insert_file(vec![], false, FOLDER, vec![])
+    pub fn insert_folder(&self, parent: &str, name: &str) -> String {
+        self.insert_file(parent, name, false, FOLDER, vec![])
     }
-    /// A chain of `depth` nested folders below `parent`; returns the deepest.
-    pub fn insert_folder_chain(&self, parent: &str, depth: usize) -> String {
-        (0..depth).fold(parent.to_owned(), |parent, _| {
-            self.insert_file(vec![parent], false, FOLDER, vec![])
-        })
+    /// The ID of the single live item named by `path` below the storage folder;
+    /// the last segment may name a file or a folder.
+    pub fn id_at(&self, path: &str) -> Option<String> {
+        let data = self.data.lock().unwrap();
+        let mut parent = "folder".to_owned();
+        let segments: Vec<&str> = path.split('/').collect();
+        for (index, segment) in segments.iter().enumerate() {
+            let folder = index + 1 < segments.len();
+            let mut found = data.files.iter().filter(|(_, file)| {
+                !file.trashed
+                    && file.name == *segment
+                    && file.parents.contains(&parent)
+                    && (!folder || file.mime == FOLDER)
+            });
+            let (id, _) = found.next()?;
+            assert!(found.next().is_none(), "duplicate {segment}");
+            parent = id.clone();
+        }
+        Some(parent)
+    }
+    pub fn remove(&self, id: &str) {
+        self.data.lock().unwrap().files.remove(id);
     }
     pub fn set_parents(&self, id: &str, parents: Vec<String>) {
         self.data.lock().unwrap().files.get_mut(id).unwrap().parents = parents;
+    }
+    pub fn set_content(&self, id: &str, bytes: Vec<u8>) {
+        self.data.lock().unwrap().files.get_mut(id).unwrap().bytes = bytes;
     }
     pub fn set_trashed(&self, id: &str, trashed: bool) {
         self.data.lock().unwrap().files.get_mut(id).unwrap().trashed = trashed;
@@ -180,6 +210,16 @@ impl FakeDrive {
     }
     pub fn metadata_requests(&self) -> usize {
         self.data.lock().unwrap().metadata_requests
+    }
+    pub fn list_requests(&self) -> usize {
+        self.data.lock().unwrap().list_requests
+    }
+    /// `q` parameters of list requests, decoded.
+    pub fn queries(&self) -> Vec<String> {
+        self.data.lock().unwrap().queries.clone()
+    }
+    pub fn folders_created(&self) -> usize {
+        self.data.lock().unwrap().folders_created
     }
     /// `Range` headers sent on media downloads.
     pub fn media_ranges(&self) -> Vec<String> {
@@ -225,23 +265,49 @@ async fn handle(State(components): State<Components>, request: Request) -> Respo
     if let Some((code, reason)) = data.faults.next_status.take() {
         return failure(code, reason);
     }
-    if path == "/upload/drive/v3/files" && method == "POST" {
+    let upload_target = match (method, path.strip_prefix("/upload/drive/v3/files")) {
+        ("POST", Some("")) => Some(None),
+        ("PATCH", Some(id)) if id.starts_with('/') => Some(Some(id[1..].to_owned())),
+        _ => None,
+    };
+    if let Some(target) = upload_target {
         assert!(parts.uri.query().unwrap().contains("uploadType=resumable"));
         assert_eq!(
             parts.headers["x-upload-content-type"],
             "application/octet-stream"
         );
         let metadata: Value = serde_json::from_slice(&body).unwrap();
-        assert!(uuid::Uuid::parse_str(metadata["name"].as_str().unwrap()).is_ok());
+        let session = match &target {
+            None => {
+                let parents: Vec<String> =
+                    serde_json::from_value(metadata["parents"].clone()).unwrap();
+                if !parents.iter().all(|parent| data.files.contains_key(parent)) {
+                    return failure(404, "notFound");
+                }
+                Session {
+                    name: metadata["name"].as_str().unwrap().into(),
+                    parents,
+                    target: None,
+                    bytes: vec![],
+                    completed: None,
+                }
+            }
+            Some(id) => {
+                assert_eq!(metadata, json!({}));
+                let Some(file) = data.files.get(id) else {
+                    return failure(404, "notFound");
+                };
+                Session {
+                    name: file.name.clone(),
+                    parents: file.parents.clone(),
+                    target: target.clone(),
+                    bytes: vec![],
+                    completed: None,
+                }
+            }
+        };
         let id = uuid::Uuid::new_v4().to_string();
-        data.sessions.insert(
-            id.clone(),
-            Session {
-                parents: serde_json::from_value(metadata["parents"].clone()).unwrap(),
-                bytes: vec![],
-                completed: None,
-            },
-        );
+        data.sessions.insert(id.clone(), session);
         let root = if std::mem::take(&mut data.faults.foreign_location) {
             "https://foreign.invalid/"
         } else {
@@ -339,7 +405,11 @@ async fn handle(State(components): State<Components>, request: Request) -> Respo
         assert_eq!(session.bytes.len(), total.parse::<usize>().unwrap());
         let bytes = session.bytes.clone();
         let parents = session.parents.clone();
-        let file_id = uuid::Uuid::new_v4().to_string();
+        let name = session.name.clone();
+        let target = session.target.clone();
+        let file_id = target
+            .clone()
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         let mut metadata = json!({"id": file_id, "size": bytes.len().to_string(), "sha256Checksum": hex::encode(Sha256::digest(&bytes))});
         if std::mem::take(&mut data.faults.bad_checksum) {
             metadata["sha256Checksum"] = json!("0".repeat(64));
@@ -350,15 +420,21 @@ async fn handle(State(components): State<Components>, request: Request) -> Respo
         if std::mem::take(&mut data.faults.bad_size) {
             metadata["size"] = json!("999999999");
         }
-        data.files.insert(
-            file_id,
-            File {
-                parents,
-                trashed: false,
-                mime: "application/octet-stream".into(),
-                bytes,
-            },
-        );
+        match target.and_then(|id| data.files.get_mut(&id)) {
+            Some(file) => file.bytes = bytes,
+            None => {
+                data.files.insert(
+                    file_id,
+                    File {
+                        name,
+                        parents,
+                        trashed: false,
+                        mime: "application/octet-stream".into(),
+                        bytes,
+                    },
+                );
+            }
+        }
         data.sessions.get_mut(id).unwrap().completed = Some(metadata.clone());
         if disconnect == Some(true) {
             drop(data);
@@ -381,6 +457,42 @@ async fn handle(State(components): State<Components>, request: Request) -> Respo
             return (StatusCode::OK, "invalid-json").into_response();
         }
         return Json(metadata).into_response();
+    }
+    if path == "/drive/v3/files" && method == "GET" {
+        data.list_requests += 1;
+        let query: HashMap<String, String> = url_query(parts.uri.query().unwrap_or_default());
+        assert_eq!(query["corpora"], "allDrives");
+        let q = query["q"].clone();
+        data.queries.push(q.clone());
+        let clauses = parse_query(&q);
+        let files: Vec<Value> = data
+            .files
+            .iter()
+            .filter(|(_, file)| clauses.iter().all(|clause| clause.matches(file)))
+            .map(|(id, file)| json!({"id": id, "mimeType": file.mime, "size": file.bytes.len().to_string()}))
+            .collect();
+        return Json(json!({"files": files, "incompleteSearch": false})).into_response();
+    }
+    if path == "/drive/v3/files" && method == "POST" {
+        let metadata: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(metadata["mimeType"], FOLDER);
+        let parents: Vec<String> = serde_json::from_value(metadata["parents"].clone()).unwrap();
+        if !parents.iter().all(|parent| data.files.contains_key(parent)) {
+            return failure(404, "notFound");
+        }
+        let id = uuid::Uuid::new_v4().to_string();
+        data.folders_created += 1;
+        data.files.insert(
+            id.clone(),
+            File {
+                name: metadata["name"].as_str().unwrap().into(),
+                parents,
+                trashed: false,
+                mime: FOLDER.into(),
+                bytes: vec![],
+            },
+        );
+        return Json(json!({"id": id})).into_response();
     }
     if let Some(id) = path.strip_prefix("/drive/v3/files/") {
         if method == "DELETE" {
@@ -457,4 +569,132 @@ async fn handle(State(components): State<Components>, request: Request) -> Respo
         }
     }
     failure(404, "notFound")
+}
+
+fn url_query(query: &str) -> HashMap<String, String> {
+    query
+        .split('&')
+        .filter_map(|pair| pair.split_once('='))
+        .map(|(key, value)| (decode(key), decode(value)))
+        .collect()
+}
+
+fn decode(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let mut out = Vec::new();
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'%' => {
+                out.push(u8::from_str_radix(&value[index + 1..index + 3], 16).unwrap());
+                index += 3;
+            }
+            b'+' => {
+                out.push(b' ');
+                index += 1;
+            }
+            byte => {
+                out.push(byte);
+                index += 1;
+            }
+        }
+    }
+    String::from_utf8(out).unwrap()
+}
+
+enum Clause {
+    Name(String),
+    Parent(String),
+    NotTrashed,
+    Mime { equal: bool, mime: String },
+}
+
+impl Clause {
+    fn matches(&self, file: &File) -> bool {
+        match self {
+            Clause::Name(name) => file.name == *name,
+            Clause::Parent(parent) => file.parents.contains(parent),
+            Clause::NotTrashed => !file.trashed,
+            Clause::Mime { equal, mime } => (file.mime == *mime) == *equal,
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
+enum Token {
+    Word(String),
+    Literal(String),
+}
+
+/// Parses exactly the conjunctions the adapter sends, failing loudly otherwise.
+fn parse_query(q: &str) -> Vec<Clause> {
+    let mut tokens = Vec::new();
+    let mut chars = q.chars().peekable();
+    while let Some(&c) = chars.peek() {
+        if c == ' ' {
+            chars.next();
+        } else if c == '\'' {
+            chars.next();
+            let mut literal = String::new();
+            loop {
+                match chars.next().expect("unterminated literal") {
+                    '\\' => literal.push(chars.next().expect("dangling escape")),
+                    '\'' => break,
+                    c => literal.push(c),
+                }
+            }
+            tokens.push(Token::Literal(literal));
+        } else {
+            let mut word = String::new();
+            while let Some(&c) = chars.peek() {
+                if c == ' ' {
+                    break;
+                }
+                word.push(c);
+                chars.next();
+            }
+            tokens.push(Token::Word(word));
+        }
+    }
+    let word = |w: &str| Token::Word(w.into());
+    let mut clauses = Vec::new();
+    let mut tokens = tokens.into_iter();
+    loop {
+        let clause = match tokens.next().expect("clause") {
+            Token::Literal(parent) => {
+                assert_eq!(tokens.next(), Some(word("in")));
+                assert_eq!(tokens.next(), Some(word("parents")));
+                Clause::Parent(parent)
+            }
+            Token::Word(field) if field == "name" => {
+                assert_eq!(tokens.next(), Some(word("=")));
+                let Some(Token::Literal(name)) = tokens.next() else {
+                    panic!("name literal")
+                };
+                Clause::Name(name)
+            }
+            Token::Word(field) if field == "trashed" => {
+                assert_eq!(tokens.next(), Some(word("=")));
+                assert_eq!(tokens.next(), Some(word("false")));
+                Clause::NotTrashed
+            }
+            Token::Word(field) if field == "mimeType" => {
+                let equal = match tokens.next() {
+                    Some(Token::Word(op)) if op == "=" => true,
+                    Some(Token::Word(op)) if op == "!=" => false,
+                    other => panic!("mimeType operator {other:?}"),
+                };
+                let Some(Token::Literal(mime)) = tokens.next() else {
+                    panic!("mime literal")
+                };
+                Clause::Mime { equal, mime }
+            }
+            other => panic!("unsupported query token {other:?}"),
+        };
+        clauses.push(clause);
+        match tokens.next() {
+            None => return clauses,
+            Some(token) => assert_eq!(token, word("and")),
+        }
+    }
 }

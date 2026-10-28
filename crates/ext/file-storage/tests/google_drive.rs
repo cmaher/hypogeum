@@ -2,7 +2,7 @@
 mod support;
 use hypgmx_file_storage::{
     StorageError,
-    google_drive::{DriveAncestryConfig, DriveScope, GoogleDriveConfig, GoogleDriveStorage},
+    google_drive::{DrivePathCacheConfig, DriveScope, GoogleDriveConfig, GoogleDriveStorage},
 };
 use std::time::Duration;
 use support::fake_drive::FakeDrive;
@@ -16,7 +16,7 @@ fn config(folder_id: &str) -> GoogleDriveConfig {
         refresh_token: "refresh".into(),
         scope: DriveScope::Full,
         max_object_bytes: 32 * 1024 * 1024,
-        ancestry: DriveAncestryConfig::default(),
+        path_cache: DrivePathCacheConfig::default(),
     }
 }
 async fn storage(fake: &FakeDrive) -> GoogleDriveStorage {
@@ -33,7 +33,7 @@ async fn constructor_requires_a_live_folder() {
         ("application/octet-stream", false),
         ("application/vnd.google-apps.folder", true),
     ] {
-        let id = fake.insert_file(vec![], trashed, mime, vec![]);
+        let id = fake.insert_file("elsewhere", "not-a-folder", trashed, mime, vec![]);
         assert!(matches!(
             GoogleDriveStorage::with_test_endpoint(config(&id), &fake.root_url, "test-token").await,
             Err(StorageError::InvalidInput(_))
@@ -53,9 +53,33 @@ async fn constructor_requires_a_live_folder() {
 
 use bytes::Bytes;
 use futures_util::{StreamExt, stream};
-use hypgmx_file_storage::{ByteStream, ExpectedIntegrity, ReadOptions};
+use hypgmx_file_storage::{
+    ByteStream, ExpectedIntegrity, FileStorage, ObjectKey, ObjectRef, ReadOptions,
+};
 fn input(bytes: Vec<u8>) -> ByteStream {
     Box::pin(stream::iter([Ok(Bytes::from(bytes))]))
+}
+fn key(key: &str) -> ObjectKey {
+    ObjectKey::new(key).unwrap()
+}
+fn reference(key: &str) -> ObjectRef {
+    ObjectRef {
+        version: 2,
+        store_id: "test".into(),
+        key: key.into(),
+    }
+}
+async fn read_all(
+    storage: &GoogleDriveStorage,
+    reference: &ObjectRef,
+    options: ReadOptions,
+) -> Vec<u8> {
+    let mut read = storage.read(reference, options).await.unwrap();
+    let mut actual = Vec::new();
+    while let Some(chunk) = read.next().await {
+        actual.extend_from_slice(&chunk.unwrap());
+    }
+    actual
 }
 
 #[tokio::test]
@@ -68,10 +92,15 @@ async fn uploads_empty_exact_and_multiple_chunks_with_partial_ack() {
             fake.faults(|f| f.partial_ack = Some(256 * 1024));
         }
         let stored = storage
-            .write(input(bytes.clone()), ExpectedIntegrity::default())
+            .write(
+                &key(&format!("chunks/{length}")),
+                input(bytes.clone()),
+                ExpectedIntegrity::default(),
+            )
             .await
             .unwrap();
-        assert_eq!(fake.content(&stored.object_ref.key).unwrap(), bytes);
+        let id = fake.id_at(&stored.object_ref.key).unwrap();
+        assert_eq!(fake.content(&id).unwrap(), bytes);
         assert_eq!(stored.info.size_bytes, length as u64);
     }
     assert_eq!(fake.violations(), 0);
@@ -112,7 +141,10 @@ async fn validation_source_and_limit_failures_cancel_without_publishing() {
         } else {
             input(b"abc".to_vec())
         };
-        let err = storage.write(source, expected).await.unwrap_err();
+        let err = storage
+            .write(&key("object"), source, expected)
+            .await
+            .unwrap_err();
         assert!(match case {
             0 | 1 => matches!(err, StorageError::IntegrityMismatch),
             2 => matches!(err, StorageError::SizeLimit { .. }),
@@ -135,7 +167,11 @@ async fn final_failure_status_query_matrix() {
                 f.query_failure = query_fails;
             });
             let result = storage
-                .write(input(b"abc".to_vec()), ExpectedIntegrity::default())
+                .write(
+                    &key("object"),
+                    input(b"abc".to_vec()),
+                    ExpectedIntegrity::default(),
+                )
                 .await;
             if query_fails {
                 assert!(matches!(
@@ -166,7 +202,11 @@ async fn upload_cross_checks_server_metadata() {
             _ => f.omit_checksum = true,
         });
         let result = storage
-            .write(input(b"abc".to_vec()), ExpectedIntegrity::default())
+            .write(
+                &key("object"),
+                input(b"abc".to_vec()),
+                ExpectedIntegrity::default(),
+            )
             .await;
         if case == 2 {
             assert!(result.is_ok());
@@ -185,6 +225,7 @@ async fn failed_intermediate_chunk_cancels_and_redacts_errors() {
     fake.faults(|f| f.intermediate_failure = true);
     let err = storage
         .write(
+            &key("object"),
             input(vec![7; 8 * 1024 * 1024 + 1]),
             ExpectedIntegrity::default(),
         )
@@ -212,231 +253,14 @@ async fn upload_is_pull_driven_and_cancellation_never_publishes() {
         Ok(Bytes::from(vec![1; 8 * 1024 * 1024 + 1]))
     })
     .chain(stream::pending());
-    let mut write = Box::pin(storage.write(Box::pin(source), ExpectedIntegrity::default()));
+    let object = key("object");
+    let mut write =
+        Box::pin(storage.write(&object, Box::pin(source), ExpectedIntegrity::default()));
     assert_eq!(count.load(Ordering::SeqCst), 0);
     tokio::select! { result = &mut write => panic!("unexpected completion: {result:?}"), _ = async { while fake.ranges().is_empty() { tokio::task::yield_now().await; } } => {} }
     drop(write);
     assert_eq!(fake.file_count(), 0);
     assert_eq!(count.load(Ordering::SeqCst), 1);
-}
-
-use hypgmx_file_storage::{FileStorage, ObjectRef};
-fn reference(key: &str) -> ObjectRef {
-    ObjectRef {
-        version: 1,
-        store_id: "test".into(),
-        key: key.into(),
-    }
-}
-
-#[tokio::test]
-async fn folder_guard_hides_foreign_trashed_and_folder_objects() {
-    let fake = FakeDrive::start().await;
-    let storage = storage(&fake).await;
-    let ids = [
-        fake.insert_file(
-            vec!["other-folder".into()],
-            false,
-            "text/plain",
-            b"secret".to_vec(),
-        ),
-        fake.insert_file(
-            vec!["folder".into()],
-            true,
-            "text/plain",
-            b"trashed".to_vec(),
-        ),
-        fake.insert_folder(),
-    ];
-    for id in ids {
-        let reference = reference(&id);
-        assert!(matches!(
-            storage.read(&reference, ReadOptions::default()).await,
-            Err(StorageError::NotFound(_))
-        ));
-        assert!(matches!(
-            storage.inspect(&reference).await,
-            Err(StorageError::NotFound(_))
-        ));
-        storage.delete(&reference).await.unwrap();
-        assert!(fake.content(&id).is_some());
-    }
-    assert_eq!(fake.media_requests(), 0);
-    assert_eq!(fake.deleted(), 0);
-}
-
-#[tokio::test]
-async fn folder_guard_accepts_files_nested_below_the_root() {
-    use sha2::{Digest, Sha256};
-    let fake = FakeDrive::start().await;
-    let storage = storage(&fake).await;
-    for depth in 1..=3 {
-        let parent = fake.insert_folder_chain("folder", depth);
-        let bytes = format!("nested {depth}").into_bytes();
-        let id = fake.insert_file(vec![parent], false, "text/plain", bytes.clone());
-        let reference = reference(&id);
-        let mut read = storage
-            .read(&reference, ReadOptions::default())
-            .await
-            .unwrap();
-        let mut actual = Vec::new();
-        while let Some(chunk) = read.next().await {
-            actual.extend_from_slice(&chunk.unwrap());
-        }
-        assert_eq!(actual, bytes);
-        let info = storage.inspect(&reference).await.unwrap();
-        assert_eq!(info.sha256, hex::encode(Sha256::digest(&bytes)));
-        storage.delete(&reference).await.unwrap();
-        assert!(fake.content(&id).is_none());
-    }
-}
-
-#[tokio::test]
-async fn folder_guard_rejects_nested_foreign_trashed_and_non_file_objects() {
-    let fake = FakeDrive::start().await;
-    let storage = storage(&fake).await;
-    let outside = fake.insert_folder();
-    let foreign = fake.insert_folder_chain(&outside, 2);
-    let trashed = fake.insert_folder_chain("folder", 1);
-    let below_trashed = fake.insert_folder_chain(&trashed, 1);
-    fake.set_trashed(&trashed, true);
-    let nested = fake.insert_folder_chain("folder", 2);
-    let ids = [
-        fake.insert_file(vec![foreign], false, "text/plain", b"foreign".to_vec()),
-        fake.insert_file(vec![below_trashed], false, "text/plain", b"x".to_vec()),
-        fake.insert_file(
-            vec![nested.clone()],
-            false,
-            support::fake_drive::FOLDER,
-            vec![],
-        ),
-        fake.insert_file(
-            vec![nested.clone()],
-            false,
-            support::fake_drive::SHORTCUT,
-            vec![],
-        ),
-        fake.insert_file(vec!["missing".into()], false, "text/plain", b"x".to_vec()),
-        fake.insert_file(vec![], false, "text/plain", b"x".to_vec()),
-    ];
-    let under_trashed = reference(&ids[1]);
-    for id in ids {
-        let reference = reference(&id);
-        assert!(matches!(
-            storage.read(&reference, ReadOptions::default()).await,
-            Err(StorageError::NotFound(_))
-        ));
-        assert!(matches!(
-            storage.inspect(&reference).await,
-            Err(StorageError::NotFound(_))
-        ));
-        storage.delete(&reference).await.unwrap();
-        assert!(fake.content(&id).is_some());
-    }
-    assert_eq!(fake.media_requests(), 0);
-    assert_eq!(fake.deleted(), 0);
-    // Folders on a rejected walk are not remembered: a repeat walk still
-    // reaches the trashed folder (file, its parent, the trashed folder).
-    let before = fake.metadata_requests();
-    assert!(matches!(
-        storage.inspect(&under_trashed).await,
-        Err(StorageError::NotFound(_))
-    ));
-    assert_eq!(fake.metadata_requests() - before, 3);
-    // Rejections are not cached either: a restored folder is accepted.
-    fake.set_trashed(&trashed, false);
-    let restored = fake.insert_file(
-        vec![trashed.clone()],
-        false,
-        "text/plain",
-        b"restored".to_vec(),
-    );
-    storage.inspect(&reference(&restored)).await.unwrap();
-}
-
-#[tokio::test]
-async fn folder_guard_caches_proven_ancestors() {
-    let fake = FakeDrive::start().await;
-    let storage = storage(&fake).await;
-    let parent = fake.insert_folder_chain("folder", 3);
-    let first = fake.insert_file(vec![parent.clone()], false, "text/plain", b"a".to_vec());
-    let second = fake.insert_file(vec![parent], false, "text/plain", b"b".to_vec());
-    let before = fake.metadata_requests();
-    storage.inspect(&reference(&first)).await.unwrap();
-    assert_eq!(fake.metadata_requests() - before, 4);
-    let before = fake.metadata_requests();
-    storage.inspect(&reference(&second)).await.unwrap();
-    assert_eq!(fake.metadata_requests() - before, 1);
-}
-
-#[tokio::test]
-async fn folder_guard_caps_walk_depth() {
-    let fake = FakeDrive::start().await;
-    let storage = storage(&fake).await;
-    let deepest = fake.insert_folder_chain("folder", 32);
-    let id = fake.insert_file(vec![deepest], false, "text/plain", b"a".to_vec());
-    storage.inspect(&reference(&id)).await.unwrap();
-    let too_deep = fake.insert_folder_chain("folder", 33);
-    let id = fake.insert_file(vec![too_deep], false, "text/plain", b"a".to_vec());
-    assert!(matches!(
-        storage.inspect(&reference(&id)).await,
-        Err(StorageError::NotFound(_))
-    ));
-    // Cycles end at the depth cap.
-    let (a, b) = (fake.insert_folder(), fake.insert_folder());
-    fake.set_parents(&a, vec![b.clone()]);
-    fake.set_parents(&b, vec![a.clone()]);
-    let id = fake.insert_file(vec![a], false, "text/plain", b"a".to_vec());
-    let before = fake.metadata_requests();
-    assert!(matches!(
-        storage.inspect(&reference(&id)).await,
-        Err(StorageError::NotFound(_))
-    ));
-    assert_eq!(fake.metadata_requests() - before, 33);
-}
-
-#[tokio::test]
-async fn ancestry_depth_and_cache_are_configurable() {
-    let fake = FakeDrive::start().await;
-    let storage = GoogleDriveStorage::with_test_endpoint(
-        GoogleDriveConfig {
-            ancestry: DriveAncestryConfig {
-                max_depth: 1,
-                cache_ttl: Duration::ZERO,
-                ..Default::default()
-            },
-            ..config("folder")
-        },
-        &fake.root_url,
-        "test-token",
-    )
-    .await
-    .unwrap();
-    let parent = fake.insert_folder_chain("folder", 1);
-    let id = fake.insert_file(vec![parent], false, "text/plain", b"a".to_vec());
-    // With the cache disabled every walk fetches the parent again.
-    for _ in 0..2 {
-        let before = fake.metadata_requests();
-        storage.inspect(&reference(&id)).await.unwrap();
-        assert_eq!(fake.metadata_requests() - before, 2);
-    }
-    let too_deep = fake.insert_folder_chain("folder", 2);
-    let id = fake.insert_file(vec![too_deep], false, "text/plain", b"a".to_vec());
-    assert!(matches!(
-        storage.inspect(&reference(&id)).await,
-        Err(StorageError::NotFound(_))
-    ));
-    let invalid = GoogleDriveConfig {
-        ancestry: DriveAncestryConfig {
-            cache_ttl: Duration::MAX,
-            ..Default::default()
-        },
-        ..config("folder")
-    };
-    assert!(matches!(
-        GoogleDriveStorage::with_test_endpoint(invalid, &fake.root_url, "test-token").await,
-        Err(StorageError::InvalidInput(_))
-    ));
 }
 
 #[tokio::test]
@@ -447,6 +271,12 @@ async fn invalid_references_make_no_requests() {
     for bad in [
         reference("../file"),
         reference(""),
+        reference("a//b"),
+        reference("/absolute"),
+        ObjectRef {
+            version: 1,
+            ..reference("file")
+        },
         ObjectRef {
             version: 99,
             ..reference("file")
@@ -478,13 +308,14 @@ async fn reads_are_bounded_and_integrity_errors_precede_eof() {
     let fake = FakeDrive::start().await;
     let storage = storage(&fake).await;
     let bytes = vec![23; 400_000];
-    let id = fake.insert_file(
-        vec!["folder".into()],
+    fake.insert_file(
+        "folder",
+        "object",
         false,
         "application/octet-stream",
         bytes.clone(),
     );
-    let reference = reference(&id);
+    let reference = reference("object");
     let info = storage.inspect(&reference).await.unwrap();
     assert_eq!(info.size_bytes, bytes.len() as u64);
     assert_eq!(info.sha256, hex::encode(Sha256::digest(&bytes)));
@@ -549,8 +380,8 @@ async fn reads_are_bounded_and_integrity_errors_precede_eof() {
 async fn deletion_is_idempotent_and_lost_response_is_uncertain() {
     let fake = FakeDrive::start().await;
     let storage = storage(&fake).await;
-    let id = fake.insert_file(vec!["folder".into()], false, "text/plain", b"abc".to_vec());
-    let reference = reference(&id);
+    let id = fake.insert_file("folder", "object", false, "text/plain", b"abc".to_vec());
+    let reference = reference("object");
     fake.faults(|f| f.delete_disconnect = true);
     assert!(matches!(
         storage.delete(&reference).await,
@@ -595,7 +426,11 @@ async fn lost_final_responses_are_queried_once_and_never_blindly_deleted() {
                 f.query_disconnect = query_fails;
             });
             let result = storage
-                .write(input(b"abc".to_vec()), ExpectedIntegrity::default())
+                .write(
+                    &key("object"),
+                    input(b"abc".to_vec()),
+                    ExpectedIntegrity::default(),
+                )
                 .await;
             if query_fails {
                 assert!(matches!(
@@ -627,7 +462,11 @@ async fn unreadable_success_metadata_retains_possibly_completed_file() {
     fake.faults(|f| f.malformed_final = true);
     assert!(matches!(
         storage
-            .write(input(b"abc".to_vec()), ExpectedIntegrity::default())
+            .write(
+                &key("object"),
+                input(b"abc".to_vec()),
+                ExpectedIntegrity::default()
+            )
             .await,
         Err(StorageError::UncertainCompletion { .. })
     ));
@@ -642,7 +481,11 @@ async fn truncated_final_response_body_uses_status_query() {
     let storage = storage(&fake).await;
     fake.faults(|f| f.final_body_failure = true);
     let result = storage
-        .write(input(b"abc".to_vec()), ExpectedIntegrity::default())
+        .write(
+            &key("object"),
+            input(b"abc".to_vec()),
+            ExpectedIntegrity::default(),
+        )
         .await;
     assert!(
         result.is_ok(),
@@ -664,10 +507,15 @@ async fn partially_acknowledged_final_chunk_resends_the_tail() {
     let storage = storage(&fake).await;
     fake.faults(|f| f.final_partial_ack = Some(1));
     let stored = storage
-        .write(input(b"abc".to_vec()), ExpectedIntegrity::default())
+        .write(
+            &key("object"),
+            input(b"abc".to_vec()),
+            ExpectedIntegrity::default(),
+        )
         .await
         .unwrap();
-    assert_eq!(fake.content(&stored.object_ref.key).unwrap(), b"abc");
+    let id = fake.id_at(&stored.object_ref.key).unwrap();
+    assert_eq!(fake.content(&id).unwrap(), b"abc");
     assert_eq!(fake.ranges(), ["bytes 0-2/3", "bytes 1-2/3"]);
     assert_eq!(fake.cancelled_sessions(), 0);
 }
@@ -682,7 +530,11 @@ async fn unconfirmed_mismatch_cleanup_is_uncertain() {
     });
     assert!(matches!(
         storage
-            .write(input(b"abc".to_vec()), ExpectedIntegrity::default())
+            .write(
+                &key("object"),
+                input(b"abc".to_vec()),
+                ExpectedIntegrity::default()
+            )
             .await,
         Err(StorageError::UncertainCompletion { .. })
     ));
@@ -699,7 +551,9 @@ async fn declared_sizes_fail_before_uploading_excess_bytes() {
         sha256: None,
     };
     assert!(matches!(
-        storage.write(input(b"abc".to_vec()), oversized).await,
+        storage
+            .write(&key("object"), input(b"abc".to_vec()), oversized)
+            .await,
         Err(StorageError::SizeLimit { .. })
     ));
     assert_eq!(fake.requests(), requests);
@@ -708,7 +562,9 @@ async fn declared_sizes_fail_before_uploading_excess_bytes() {
         sha256: None,
     };
     assert!(matches!(
-        storage.write(input(vec![1; 9 * 1024 * 1024]), short).await,
+        storage
+            .write(&key("object"), input(vec![1; 9 * 1024 * 1024]), short)
+            .await,
         Err(StorageError::IntegrityMismatch)
     ));
     assert!(fake.ranges().is_empty());
@@ -722,7 +578,11 @@ async fn foreign_session_uri_is_never_followed() {
     fake.faults(|f| f.foreign_location = true);
     assert!(matches!(
         storage
-            .write(input(b"abc".to_vec()), ExpectedIntegrity::default())
+            .write(
+                &key("object"),
+                input(b"abc".to_vec()),
+                ExpectedIntegrity::default()
+            )
             .await,
         Err(StorageError::Io { .. })
     ));
@@ -733,15 +593,25 @@ async fn foreign_session_uri_is_never_followed() {
 async fn ranged_reads_send_range_and_require_partial_content() {
     use hypgmx_file_storage::ByteRange;
     let fake = FakeDrive::start().await;
-    let storage = storage(&fake).await;
+    // Uncached, so single-shot faults are observed rather than resolved again.
+    let storage = storage_with_cache(
+        &fake,
+        DrivePathCacheConfig {
+            capacity: 0,
+            ..Default::default()
+        },
+    )
+    .await;
     let bytes: Vec<u8> = (0..1_000u32).map(|i| (i % 251) as u8).collect();
-    let id = fake.insert_file(
-        vec!["folder".into()],
+    let folder = fake.insert_folder("folder", "nested");
+    fake.insert_file(
+        &folder,
+        "object",
         false,
         "application/octet-stream",
         bytes.clone(),
     );
-    let reference = reference(&id);
+    let reference = reference("nested/object");
     let ranged = |offset, length| ReadOptions {
         range: Some(ByteRange { offset, length }),
         ..Default::default()
@@ -816,228 +686,522 @@ fn range_options(offset: u64, length: u64) -> ReadOptions {
 }
 
 #[tokio::test]
-async fn object_guard_reuses_metadata_and_size_for_reads_and_inspection() {
+async fn writes_create_missing_folders_once() {
     let fake = FakeDrive::start().await;
     let storage = storage(&fake).await;
-    let id = fake.insert_file(
-        vec!["folder".into()],
-        false,
-        "text/plain",
-        b"abcdef".to_vec(),
+    let stored = storage
+        .write(
+            &key("a/b/c.jpg"),
+            input(b"c".to_vec()),
+            ExpectedIntegrity::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(stored.object_ref, reference("a/b/c.jpg"));
+    assert_eq!(fake.folders_created(), 2);
+    let id = fake.id_at("a/b/c.jpg").unwrap();
+    assert_eq!(fake.content(&id).unwrap(), b"c");
+    // Siblings and shallower keys reuse the cached folders.
+    let lists = fake.list_requests();
+    for path in ["a/b/d.jpg", "a/e.jpg"] {
+        storage
+            .write(
+                &key(path),
+                input(b"x".to_vec()),
+                ExpectedIntegrity::default(),
+            )
+            .await
+            .unwrap();
+    }
+    assert_eq!(fake.folders_created(), 2);
+    assert_eq!(
+        fake.list_requests() - lists,
+        2,
+        "one file lookup per new key"
     );
-    let reference = reference(&id);
-    let metadata = fake.metadata_requests();
-    let media = fake.media_requests();
-    for offset in 0..3 {
-        let mut read = storage
-            .read(&reference, range_options(offset, 1))
+    // An independent client finds the existing folders by name.
+    let other = storage_with_cache(&fake, DrivePathCacheConfig::default()).await;
+    other
+        .write(
+            &key("a/b/f.jpg"),
+            input(b"f".to_vec()),
+            ExpectedIntegrity::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(fake.folders_created(), 2);
+    assert_eq!(
+        read_all(&storage, &reference("a/b/f.jpg"), ReadOptions::default()).await,
+        b"f"
+    );
+    assert_eq!(fake.file_count(), 4);
+}
+
+#[tokio::test]
+async fn concurrent_writes_share_new_folders() {
+    let fake = FakeDrive::start().await;
+    let storage = storage(&fake).await;
+    let (first, second) = (key("shared/one"), key("shared/two"));
+    let (a, b) = tokio::join!(
+        storage.write(&first, input(b"1".to_vec()), ExpectedIntegrity::default()),
+        storage.write(&second, input(b"2".to_vec()), ExpectedIntegrity::default()),
+    );
+    a.unwrap();
+    b.unwrap();
+    assert_eq!(fake.folders_created(), 1);
+}
+
+#[tokio::test]
+async fn writes_replace_existing_files_in_place() {
+    let fake = FakeDrive::start().await;
+    let storage = storage(&fake).await;
+    let folder = fake.insert_folder("folder", "a");
+    let id = fake.insert_file(&folder, "c.jpg", false, "text/plain", b"old".to_vec());
+    for content in [b"new".as_slice(), b"newer"] {
+        let stored = storage
+            .write(
+                &key("a/c.jpg"),
+                input(content.to_vec()),
+                ExpectedIntegrity::default(),
+            )
             .await
             .unwrap();
+        assert_eq!(stored.info.size_bytes, content.len() as u64);
+        assert_eq!(fake.id_at("a/c.jpg").unwrap(), id);
+        assert_eq!(fake.content(&id).unwrap(), content);
+        assert_eq!(fake.file_count(), 1);
         assert_eq!(
-            read.next().await.unwrap().unwrap(),
-            &b"abcdef"[offset as usize..offset as usize + 1]
+            read_all(&storage, &reference("a/c.jpg"), ReadOptions::default()).await,
+            content
         );
-        assert!(read.next().await.is_none());
     }
-    storage.inspect(&reference).await.unwrap();
-    assert_eq!(fake.metadata_requests() - metadata, 1);
-    assert_eq!(fake.media_requests() - media, 4);
+    assert_eq!(fake.folders_created(), 0);
+    // A replacement that fails server verification removes the object rather
+    // than leaving unverified bytes at the key.
+    fake.faults(|f| f.bad_checksum = true);
     assert!(matches!(
-        storage.read(&reference, range_options(6, 1)).await,
-        Err(StorageError::InvalidInput(_))
+        storage
+            .write(
+                &key("a/c.jpg"),
+                input(b"bad".to_vec()),
+                ExpectedIntegrity::default()
+            )
+            .await,
+        Err(StorageError::IntegrityMismatch)
     ));
-    assert_eq!(fake.metadata_requests() - metadata, 1);
-    assert_eq!(fake.media_requests() - media, 4);
-}
-
-#[tokio::test]
-async fn rejected_object_guards_are_never_cached() {
-    let fake = FakeDrive::start().await;
-    let storage = storage(&fake).await;
-    for trashed in [false, true] {
-        let id = fake.insert_file(vec!["other".into()], trashed, "text/plain", b"abc".to_vec());
-        assert!(matches!(
-            storage.read(&reference(&id), range_options(0, 1)).await,
-            Err(StorageError::NotFound(_))
-        ));
-        fake.set_parents(&id, vec!["folder".into()]);
-        fake.set_trashed(&id, false);
-        let _read = storage
-            .read(&reference(&id), range_options(0, 1))
-            .await
-            .unwrap();
-    }
-}
-
-#[tokio::test]
-async fn media_failures_evict_object_guards() {
-    for status in [404, 416] {
-        let fake = FakeDrive::start().await;
-        let storage = storage(&fake).await;
-        let id = fake.insert_file(vec!["folder".into()], false, "text/plain", b"abc".to_vec());
-        let reference = reference(&id);
-        let _read = storage.read(&reference, range_options(0, 1)).await.unwrap();
-        let metadata = fake.metadata_requests();
-        fake.faults(|f| f.range_status = Some((status, "notFound")));
-        assert!(storage.read(&reference, range_options(0, 1)).await.is_err());
-        assert_eq!(fake.metadata_requests(), metadata);
-        let _read = storage.read(&reference, range_options(0, 1)).await.unwrap();
-        assert_eq!(fake.metadata_requests() - metadata, 1);
-    }
-}
-
-#[tokio::test]
-async fn object_cache_can_be_disabled_by_capacity_or_ttl() {
-    for ancestry in [
-        DriveAncestryConfig {
-            cache_capacity: 0,
-            ..Default::default()
-        },
-        DriveAncestryConfig {
-            cache_ttl: Duration::ZERO,
-            ..Default::default()
-        },
-    ] {
-        let fake = FakeDrive::start().await;
-        let storage = GoogleDriveStorage::with_test_endpoint(
-            GoogleDriveConfig {
-                ancestry,
-                ..config("folder")
-            },
-            &fake.root_url,
-            "test-token",
-        )
-        .await
-        .unwrap();
-        let id = fake.insert_file(vec!["folder".into()], false, "text/plain", b"abc".to_vec());
-        let metadata = fake.metadata_requests();
-        for _ in 0..3 {
-            let _read = storage
-                .read(&reference(&id), range_options(0, 1))
-                .await
-                .unwrap();
-        }
-        assert_eq!(fake.metadata_requests() - metadata, 3);
-    }
-}
-
-#[tokio::test]
-async fn fresh_delete_guard_evicts_objects_with_rejected_ancestry() {
-    for case in [
-        "parentless",
-        "missing",
-        "foreign",
-        "trashed",
-        "non-folder",
-        "depth",
-    ] {
-        let fake = FakeDrive::start().await;
-        let storage = GoogleDriveStorage::with_test_endpoint(
-            GoogleDriveConfig {
-                ancestry: DriveAncestryConfig {
-                    max_depth: 1,
-                    ..Default::default()
-                },
-                ..config("folder")
-            },
-            &fake.root_url,
-            "test-token",
-        )
-        .await
-        .unwrap();
-        let id = fake.insert_file(vec!["folder".into()], false, "text/plain", b"abc".to_vec());
-        let reference = reference(&id);
-        storage.inspect(&reference).await.unwrap();
-        let parents = match case {
-            "parentless" => vec![],
-            "missing" => vec!["missing".into()],
-            _ => {
-                let grandparents = match case {
-                    "foreign" => vec![],
-                    "depth" => vec![fake.insert_file(
-                        vec!["folder".into()],
-                        false,
-                        "application/vnd.google-apps.folder",
-                        vec![],
-                    )],
-                    _ => vec!["folder".into()],
-                };
-                vec![fake.insert_file(
-                    grandparents,
-                    case == "trashed",
-                    if case == "non-folder" {
-                        "text/plain"
-                    } else {
-                        "application/vnd.google-apps.folder"
-                    },
-                    vec![],
-                )]
-            }
-        };
-        fake.set_parents(&id, parents);
-        storage.delete(&reference).await.unwrap();
-        let media = fake.media_requests();
-        assert!(
-            matches!(
-                storage.read(&reference, range_options(0, 1)).await,
-                Err(StorageError::NotFound(_))
-            ),
-            "cached guard survived {case} ancestry rejection"
-        );
-        assert_eq!(fake.media_requests(), media);
-    }
-}
-
-#[tokio::test]
-async fn fresh_delete_guard_evicts_trashed_object() {
-    let fake = FakeDrive::start().await;
-    let storage = storage(&fake).await;
-    let id = fake.insert_file(vec!["folder".into()], false, "text/plain", b"abc".to_vec());
-    let reference = reference(&id);
-    storage.inspect(&reference).await.unwrap();
-    fake.set_trashed(&id, true);
-    storage.delete(&reference).await.unwrap();
+    assert_eq!(fake.file_count(), 0);
     assert!(matches!(
-        storage.inspect(&reference).await,
+        storage.inspect(&reference("a/c.jpg")).await,
         Err(StorageError::NotFound(_))
     ));
 }
 
 #[tokio::test]
-async fn unranged_media_failures_evict_object_guards() {
-    for status in [404, 416] {
-        let fake = FakeDrive::start().await;
-        let storage = storage(&fake).await;
-        let id = fake.insert_file(vec!["folder".into()], false, "text/plain", b"abc".to_vec());
-        let reference = reference(&id);
-        storage.inspect(&reference).await.unwrap();
-        let metadata = fake.metadata_requests();
-        fake.faults(|f| f.media_status = Some((status, "notFound")));
-        assert!(storage.inspect(&reference).await.is_err());
-        assert_eq!(fake.metadata_requests(), metadata);
-        storage.inspect(&reference).await.unwrap();
-        assert_eq!(fake.metadata_requests() - metadata, 1);
+async fn paths_resolve_by_name_below_the_storage_folder() {
+    use sha2::{Digest, Sha256};
+    let fake = FakeDrive::start().await;
+    let storage = storage(&fake).await;
+    let a = fake.insert_folder("folder", "a");
+    let b = fake.insert_folder(&a, "b");
+    let bytes = b"nested".to_vec();
+    let id = fake.insert_file(&b, "c.jpg", false, "text/plain", bytes.clone());
+    // Same names outside the storage folder, trashed, or of the other kind are ignored.
+    let outside = fake.insert_folder("elsewhere", "a");
+    let outside = fake.insert_file(&outside, "c.jpg", false, "text/plain", b"outside".to_vec());
+    fake.insert_file(&b, "c.jpg", true, "text/plain", b"trashed".to_vec());
+    fake.insert_folder(&b, "c.jpg");
+    fake.insert_file("folder", "a", false, "text/plain", b"file named a".to_vec());
+    let object = reference("a/b/c.jpg");
+    assert_eq!(
+        read_all(&storage, &object, ReadOptions::default()).await,
+        bytes
+    );
+    assert_eq!(
+        read_all(&storage, &object, range_options(1, 3)).await,
+        b"est"
+    );
+    let info = storage.inspect(&object).await.unwrap();
+    assert_eq!(info.sha256, hex::encode(Sha256::digest(&bytes)));
+    storage.delete(&object).await.unwrap();
+    assert!(fake.content(&id).is_none());
+    storage.delete(&object).await.unwrap();
+    for missing in [
+        "a/b/c.jpg",
+        "a/b",
+        "a/missing/c.jpg",
+        "missing",
+        "a/b/c.jpg/d",
+    ] {
+        assert!(
+            matches!(
+                storage.inspect(&reference(missing)).await,
+                Err(StorageError::NotFound(_))
+            ),
+            "{missing}"
+        );
+        storage.delete(&reference(missing)).await.unwrap();
     }
+    assert_eq!(fake.content(&outside).unwrap(), b"outside");
 }
 
 #[tokio::test]
-async fn expired_object_guard_checks_metadata_again() {
+async fn duplicate_names_are_ambiguous() {
     let fake = FakeDrive::start().await;
-    let storage = GoogleDriveStorage::with_test_endpoint(
+    let storage = storage(&fake).await;
+    let a = fake.insert_folder("folder", "a");
+    fake.insert_file(&a, "dup", false, "text/plain", b"1".to_vec());
+    fake.insert_file(&a, "dup", false, "text/plain", b"2".to_vec());
+    fake.insert_folder("folder", "twin");
+    fake.insert_folder("folder", "twin");
+    for path in ["a/dup", "twin/file"] {
+        let ambiguous = |result| matches!(result, Err(StorageError::InvalidInput(_)));
+        assert!(ambiguous(storage.inspect(&reference(path)).await.map(drop)));
+        assert!(ambiguous(storage.delete(&reference(path)).await));
+        assert!(ambiguous(
+            storage
+                .write(
+                    &key(path),
+                    input(b"x".to_vec()),
+                    ExpectedIntegrity::default()
+                )
+                .await
+                .map(drop)
+        ));
+    }
+    assert_eq!(fake.media_requests(), 0);
+    assert_eq!(fake.deleted(), 0);
+    assert!(fake.ranges().is_empty());
+    assert_eq!(fake.folders_created(), 0);
+    assert_eq!(fake.file_count(), 2);
+}
+
+#[tokio::test]
+async fn queries_escape_quotes_in_names() {
+    let fake = FakeDrive::start().await;
+    let storage = storage(&fake).await;
+    let path = r"it's/a 'quoted' and name";
+    storage
+        .write(
+            &key(path),
+            input(b"q".to_vec()),
+            ExpectedIntegrity::default(),
+        )
+        .await
+        .unwrap();
+    assert!(fake.id_at(path).is_some());
+    assert!(
+        fake.queries()
+            .iter()
+            .any(|q| q.starts_with(r"name = 'it\'s' and 'folder' in parents"))
+    );
+    assert!(
+        fake.queries()
+            .iter()
+            .any(|q| q.starts_with(r"name = 'a \'quoted\' and name' and"))
+    );
+    let fresh = storage_with_cache(&fake, DrivePathCacheConfig::default()).await;
+    assert_eq!(
+        read_all(&fresh, &reference(path), ReadOptions::default()).await,
+        b"q"
+    );
+}
+
+#[tokio::test]
+async fn shortcuts_are_not_objects_and_are_never_replaced() {
+    let fake = FakeDrive::start().await;
+    let storage = storage(&fake).await;
+    fake.insert_file(
+        "folder",
+        "link",
+        false,
+        support::fake_drive::SHORTCUT,
+        vec![],
+    );
+    assert!(matches!(
+        storage.inspect(&reference("link")).await,
+        Err(StorageError::NotFound(_))
+    ));
+    assert!(matches!(
+        storage
+            .write(
+                &key("link"),
+                input(b"x".to_vec()),
+                ExpectedIntegrity::default()
+            )
+            .await,
+        Err(StorageError::InvalidInput(_))
+    ));
+    assert_eq!(fake.file_count(), 1);
+}
+
+async fn storage_with_cache(
+    fake: &FakeDrive,
+    path_cache: DrivePathCacheConfig,
+) -> GoogleDriveStorage {
+    GoogleDriveStorage::with_test_endpoint(
         GoogleDriveConfig {
-            ancestry: DriveAncestryConfig {
-                cache_ttl: Duration::from_millis(50),
-                ..Default::default()
-            },
+            path_cache,
             ..config("folder")
         },
         &fake.root_url,
         "test-token",
     )
     .await
-    .unwrap();
-    let id = fake.insert_file(vec!["folder".into()], false, "text/plain", b"abc".to_vec());
-    let reference = reference(&id);
+    .unwrap()
+}
+
+#[tokio::test]
+async fn cached_paths_skip_resolution_for_reads_and_inspection() {
+    let fake = FakeDrive::start().await;
+    let storage = storage(&fake).await;
+    let folder = fake.insert_folder("folder", "a");
+    fake.insert_file(&folder, "b", false, "text/plain", b"abcdef".to_vec());
+    let reference = reference("a/b");
+    let lists = fake.list_requests();
+    let media = fake.media_requests();
+    for offset in 0..3 {
+        assert_eq!(
+            read_all(&storage, &reference, range_options(offset, 1)).await,
+            &b"abcdef"[offset as usize..offset as usize + 1]
+        );
+    }
+    storage.inspect(&reference).await.unwrap();
+    assert_eq!(fake.list_requests() - lists, 2, "one lookup per segment");
+    assert_eq!(fake.media_requests() - media, 4);
+    // The cached size rejects ranges past the end without a download.
+    assert!(matches!(
+        storage.read(&reference, range_options(6, 1)).await,
+        Err(StorageError::InvalidInput(_))
+    ));
+    assert_eq!(fake.media_requests() - media, 4);
+    assert_eq!(
+        fake.metadata_requests(),
+        1,
+        "only the constructor folder check"
+    );
+}
+
+#[tokio::test]
+async fn path_cache_can_be_disabled_by_capacity_or_ttl() {
+    for path_cache in [
+        DrivePathCacheConfig {
+            capacity: 0,
+            ..Default::default()
+        },
+        DrivePathCacheConfig {
+            ttl: Duration::ZERO,
+            ..Default::default()
+        },
+    ] {
+        let fake = FakeDrive::start().await;
+        let storage = storage_with_cache(&fake, path_cache).await;
+        let folder = fake.insert_folder("folder", "a");
+        fake.insert_file(&folder, "b", false, "text/plain", b"abc".to_vec());
+        let lists = fake.list_requests();
+        for _ in 0..3 {
+            read_all(&storage, &reference("a/b"), range_options(0, 1)).await;
+        }
+        assert_eq!(fake.list_requests() - lists, 6);
+    }
+    let fake = FakeDrive::start().await;
+    let invalid = DrivePathCacheConfig {
+        ttl: Duration::MAX,
+        ..Default::default()
+    };
+    assert!(matches!(
+        GoogleDriveStorage::with_test_endpoint(
+            GoogleDriveConfig {
+                path_cache: invalid,
+                ..config("folder")
+            },
+            &fake.root_url,
+            "test-token"
+        )
+        .await,
+        Err(StorageError::InvalidInput(_))
+    ));
+}
+
+/// Another client replaces `a/b` with a new file of different content.
+fn replace_externally(fake: &FakeDrive, bytes: &[u8]) -> String {
+    let old = fake.id_at("a/b").unwrap();
+    let folder = fake.id_at("a").unwrap();
+    fake.remove(&old);
+    fake.insert_file(&folder, "b", false, "text/plain", bytes.to_vec())
+}
+
+#[tokio::test]
+async fn stale_cached_ids_are_evicted_and_resolved_again_once() {
+    let fake = FakeDrive::start().await;
+    let storage = storage(&fake).await;
+    storage
+        .write(
+            &key("a/b"),
+            input(b"first".to_vec()),
+            ExpectedIntegrity::default(),
+        )
+        .await
+        .unwrap();
+    // Unranged and ranged reads, and inspection.
+    replace_externally(&fake, b"second");
+    assert_eq!(
+        read_all(&storage, &reference("a/b"), ReadOptions::default()).await,
+        b"second"
+    );
+    replace_externally(&fake, b"third");
+    assert_eq!(
+        read_all(&storage, &reference("a/b"), range_options(1, 2)).await,
+        b"hi"
+    );
+    replace_externally(&fake, b"fourth");
+    assert_eq!(
+        storage.inspect(&reference("a/b")).await.unwrap().size_bytes,
+        6
+    );
+    // A cached size that is now too small is checked again before rejecting.
+    let id = fake.id_at("a/b").unwrap();
+    fake.set_content(&id, b"fourth, longer".to_vec());
+    assert_eq!(
+        read_all(&storage, &reference("a/b"), range_options(8, 6)).await,
+        b"longer"
+    );
+    // Writes replace the file now at the key instead of failing on the stale ID.
+    replace_externally(&fake, b"fifth");
+    storage
+        .write(
+            &key("a/b"),
+            input(b"sixth".to_vec()),
+            ExpectedIntegrity::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(fake.file_count(), 1);
+    assert_eq!(fake.content(&fake.id_at("a/b").unwrap()).unwrap(), b"sixth");
+    // Deletion removes the file now at the key.
+    let replacement = replace_externally(&fake, b"seventh");
+    storage.delete(&reference("a/b")).await.unwrap();
+    assert!(fake.content(&replacement).is_none());
+    assert_eq!(fake.file_count(), 0);
+}
+
+#[tokio::test]
+async fn stale_cached_folders_are_resolved_again() {
+    let fake = FakeDrive::start().await;
+    let storage = storage(&fake).await;
+    storage
+        .write(
+            &key("a/b"),
+            input(b"first".to_vec()),
+            ExpectedIntegrity::default(),
+        )
+        .await
+        .unwrap();
+    storage
+        .write(
+            &key("a/c"),
+            input(b"c".to_vec()),
+            ExpectedIntegrity::default(),
+        )
+        .await
+        .unwrap();
+    // Another client deletes folder `a` and recreates the tree.
+    let old = fake.id_at("a").unwrap();
+    for path in ["a/b", "a/c"] {
+        fake.remove(&fake.id_at(path).unwrap());
+    }
+    fake.remove(&old);
+    let folder = fake.insert_folder("folder", "a");
+    fake.insert_file(&folder, "c", false, "text/plain", b"recreated".to_vec());
+    // Uploads into the deleted cached folder are retried against the current one.
+    storage
+        .write(
+            &key("a/d"),
+            input(b"d".to_vec()),
+            ExpectedIntegrity::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(fake.content(&fake.id_at("a/d").unwrap()).unwrap(), b"d");
+    assert_eq!(fake.folders_created(), 1);
+    // The cached file IDs are gone.
+    assert_eq!(
+        read_all(&storage, &reference("a/c"), ReadOptions::default()).await,
+        b"recreated"
+    );
+    assert!(matches!(
+        storage.inspect(&reference("a/b")).await,
+        Err(StorageError::NotFound(_))
+    ));
+}
+
+#[tokio::test]
+async fn genuine_misses_are_not_retried() {
+    let fake = FakeDrive::start().await;
+    let storage = storage(&fake).await;
+    storage
+        .write(
+            &key("a/b"),
+            input(b"abc".to_vec()),
+            ExpectedIntegrity::default(),
+        )
+        .await
+        .unwrap();
+    // Uncached: one lookup for the folder, then one for the missing file.
+    let lists = fake.list_requests();
+    assert!(matches!(
+        storage.inspect(&reference("a/missing")).await,
+        Err(StorageError::NotFound(_))
+    ));
+    // The cached folder made the miss worth one fresh walk.
+    assert_eq!(fake.list_requests() - lists, 3);
+    // Media failures for a freshly resolved file are returned, not retried.
+    let fresh = storage_with_cache(
+        &fake,
+        DrivePathCacheConfig {
+            capacity: 0,
+            ..Default::default()
+        },
+    )
+    .await;
+    for status in [404, 416] {
+        fake.faults(|f| f.media_status = Some((status, "notFound")));
+        let lists = fake.list_requests();
+        assert!(fresh.inspect(&reference("a/b")).await.is_err());
+        assert_eq!(fake.list_requests() - lists, 2);
+    }
+}
+
+#[tokio::test]
+async fn media_failures_on_cached_ids_resolve_again() {
+    for status in [404, 416] {
+        let fake = FakeDrive::start().await;
+        let storage = storage(&fake).await;
+        fake.insert_file("folder", "object", false, "text/plain", b"abc".to_vec());
+        let reference = reference("object");
+        storage.inspect(&reference).await.unwrap();
+        let lists = fake.list_requests();
+        fake.faults(|f| f.media_status = Some((status, "notFound")));
+        storage.inspect(&reference).await.unwrap();
+        assert_eq!(fake.list_requests() - lists, 1);
+        fake.faults(|f| f.range_status = Some((status, "notFound")));
+        read_all(&storage, &reference, range_options(0, 1)).await;
+        assert_eq!(fake.list_requests() - lists, 2);
+    }
+}
+
+#[tokio::test]
+async fn expired_paths_are_resolved_again() {
+    let fake = FakeDrive::start().await;
+    let storage = storage_with_cache(
+        &fake,
+        DrivePathCacheConfig {
+            ttl: Duration::from_millis(50),
+            ..Default::default()
+        },
+    )
+    .await;
+    let id = fake.insert_file("folder", "object", false, "text/plain", b"abc".to_vec());
+    let reference = reference("object");
     storage.inspect(&reference).await.unwrap();
     fake.set_trashed(&id, true);
     tokio::time::sleep(Duration::from_millis(100)).await;

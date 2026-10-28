@@ -1,5 +1,10 @@
-use super::{GoogleDriveStorage, error};
-use crate::{ByteStream, ExpectedIntegrity, ObjectInfo, ObjectRef, StorageError, StoredObject};
+use super::{
+    GoogleDriveStorage, SHORTCUT_MIME, error,
+    paths::{self, Resolved},
+};
+use crate::{
+    ByteStream, ExpectedIntegrity, ObjectInfo, ObjectKey, ObjectRef, StorageError, StoredObject,
+};
 use bytes::{Bytes, BytesMut};
 use futures_util::StreamExt;
 use google_drive3::{
@@ -13,9 +18,20 @@ use std::io;
 const UPLOAD_CHUNK_BYTES: usize = 8 * 1024 * 1024;
 type Response = hyper::Response<hyper::body::Incoming>;
 
+/// Where an upload installs its bytes.
+enum Target {
+    /// A new file in this folder.
+    Create(String),
+    /// A new revision of this existing file.
+    Replace(String),
+}
+
 impl GoogleDriveStorage {
+    /// Uploads to an existing file add a revision that becomes visible only on
+    /// completion, so readers observe the previous or the new object.
     pub async fn write(
         &self,
+        key: &ObjectKey,
         input: ByteStream,
         expected: ExpectedIntegrity,
     ) -> Result<StoredObject, StorageError> {
@@ -28,33 +44,19 @@ impl GoogleDriveStorage {
                 limit: self.max_object_bytes,
             });
         }
-        let metadata = serde_json::json!({
-            "name": uuid::Uuid::new_v4().to_string(), "parents": [self.folder_id], "mimeType": "application/octet-stream"
-        });
-        let url = format!(
-            "{}upload/drive/v3/files?uploadType=resumable&supportsAllDrives=true&fields=id,size,sha256Checksum",
-            self.root_url
-        );
-        let request = Request::post(url)
-            .header(header::CONTENT_TYPE, "application/json")
-            .header("X-Upload-Content-Type", "application/octet-stream")
-            .body(common::to_body(Some(metadata.to_string())))
-            .map_err(|_| error::io("start upload"))?;
-        let response = self.request(request, "start upload").await?;
-        if !response.status().is_success() {
-            return Err(response_error(response, "start upload").await);
-        }
-        let session = response
-            .headers()
-            .get(header::LOCATION)
-            .and_then(|h| h.to_str().ok())
-            .ok_or_else(|| error::io("start upload"))?
-            .to_owned();
-        // The bearer token is attached to every session request: only follow a
-        // session URI on the configured Drive origin.
-        if !session.starts_with(&self.root_url) {
-            return Err(error::io("start upload"));
-        }
+        // No input is consumed before a session starts, so a stale cached
+        // target can be resolved again once.
+        let mut fresh = false;
+        let (session, target) = loop {
+            let (target, cached) = self.target(key, fresh).await?;
+            match self.start_upload(&target, paths::file_name(key)).await {
+                Err(StorageError::NotFound(_)) if cached && !fresh => {
+                    self.forget_path(key).await;
+                    fresh = true;
+                }
+                result => break (result?, target),
+            }
+        };
         // Session URIs are bearer-like: keep them out of all error sources.
         let prepared = self.prepare(&session, input, expected).await;
         let (mut tail, mut offset, info) = match prepared {
@@ -116,28 +118,27 @@ impl GoogleDriveStorage {
         };
         let file: google_drive3::api::File =
             serde_json::from_slice(&bytes).map_err(|_| uncertain("decode completed upload"))?;
-        let key = file
+        let id = file
             .id
+            .filter(|id| match &target {
+                Target::Create(_) => paths::valid_id(id),
+                Target::Replace(existing) => id == existing,
+            })
             .ok_or_else(|| uncertain("identify completed upload"))?;
-        let reference = ObjectRef {
-            version: 1,
-            store_id: self.store_id.clone(),
-            key,
-        };
-        self.resolve(&reference)
-            .map_err(|_| uncertain("identify completed upload"))?;
         if file.size.and_then(|s| u64::try_from(s).ok()) != Some(info.size_bytes)
             || file
                 .sha256_checksum
                 .as_ref()
                 .is_some_and(|hash| hash != &info.sha256)
         {
-            // Only this upload's newly returned file ID is eligible for cleanup.
-            // An unconfirmed cleanup may leave an unreferenced object behind.
+            // Only this upload's file is eligible for cleanup. A replaced object
+            // already holds the unverified revision, so it is removed too rather
+            // than left corrupt. An unconfirmed cleanup may leave it behind.
+            self.forget_file(key).await;
             return match self
                 .hub
                 .files()
-                .delete(&reference.key)
+                .delete(&id)
                 .supports_all_drives(true)
                 .add_scope(self.scope.as_url())
                 .doit()
@@ -150,10 +151,84 @@ impl GoogleDriveStorage {
                 },
             };
         }
+        self.remember(
+            key.as_str(),
+            &Resolved {
+                id,
+                size: Some(info.size_bytes),
+            },
+        )
+        .await;
         Ok(StoredObject {
-            object_ref: reference,
+            object_ref: ObjectRef::new(self.store_id.clone(), key),
             info,
         })
+    }
+
+    /// The upload target for `key`, creating missing folders, and whether any
+    /// part of it came from the path cache.
+    async fn target(&self, key: &ObjectKey, fresh: bool) -> Result<(Target, bool), StorageError> {
+        if !fresh && let Some(file) = self.cached(key.as_str()).await {
+            return Ok((Target::Replace(file.id), true));
+        }
+        let mut cached = false;
+        let parent = {
+            let _creating = self.folders.lock().await;
+            self.parent_folder(key, fresh, true, &mut cached)
+                .await?
+                .expect("folders are created")
+        };
+        let target = match self.find(&parent, paths::file_name(key), false).await? {
+            Some(found) if found.mime.as_deref() == Some(SHORTCUT_MIME) => {
+                return Err(StorageError::InvalidInput(
+                    "a Drive shortcut occupies the object key".into(),
+                ));
+            }
+            Some(found) => Target::Replace(found.resolved.id),
+            None => Target::Create(parent),
+        };
+        Ok((target, cached))
+    }
+
+    async fn start_upload(&self, target: &Target, name: &str) -> Result<String, StorageError> {
+        const QUERY: &str =
+            "uploadType=resumable&supportsAllDrives=true&fields=id,size,sha256Checksum";
+        let (builder, metadata) = match target {
+            Target::Create(parent) => (
+                Request::post(format!("{}upload/drive/v3/files?{QUERY}", self.root_url)),
+                serde_json::json!({
+                    "name": name, "parents": [parent], "mimeType": "application/octet-stream"
+                }),
+            ),
+            Target::Replace(id) => (
+                Request::patch(format!(
+                    "{}upload/drive/v3/files/{id}?{QUERY}",
+                    self.root_url
+                )),
+                serde_json::json!({}),
+            ),
+        };
+        let request = builder
+            .header(header::CONTENT_TYPE, "application/json")
+            .header("X-Upload-Content-Type", "application/octet-stream")
+            .body(common::to_body(Some(metadata.to_string())))
+            .map_err(|_| error::io("start upload"))?;
+        let response = self.request(request, "start upload").await?;
+        if !response.status().is_success() {
+            return Err(response_error(response, "start upload").await);
+        }
+        let session = response
+            .headers()
+            .get(header::LOCATION)
+            .and_then(|h| h.to_str().ok())
+            .ok_or_else(|| error::io("start upload"))?
+            .to_owned();
+        // The bearer token is attached to every session request: only follow a
+        // session URI on the configured Drive origin.
+        if !session.starts_with(&self.root_url) {
+            return Err(error::io("start upload"));
+        }
+        Ok(session)
     }
 
     async fn prepare(
@@ -301,7 +376,7 @@ fn uncertain(operation: &'static str) -> StorageError {
     }
 }
 
-async fn response_bytes(response: Response) -> Result<Bytes, StorageError> {
+pub(super) async fn response_bytes(response: Response) -> Result<Bytes, StorageError> {
     http_body_util::Limited::new(response.into_body(), 1024 * 1024)
         .collect()
         .await

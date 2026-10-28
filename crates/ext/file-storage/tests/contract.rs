@@ -5,7 +5,8 @@ use bytes::Bytes;
 use futures_util::{StreamExt, stream};
 use hypgmx_file_storage::filesystem::{FilesystemConfig, FilesystemStorage};
 use hypgmx_file_storage::{
-    ByteRange, ByteStream, ExpectedIntegrity, FileStorage, ObjectRef, ReadOptions, StorageError,
+    ByteRange, ByteStream, ExpectedIntegrity, FileStorage, ObjectKey, ObjectRef, ReadOptions,
+    StorageError,
 };
 use sha2::{Digest, Sha256};
 use std::sync::{
@@ -17,8 +18,26 @@ fn input(chunks: Vec<Bytes>) -> ByteStream {
     Box::pin(stream::iter(chunks.into_iter().map(Ok)))
 }
 
-async fn round_trip_contract(storage: Arc<dyn FileStorage>) {
-    for chunks in [
+/// Cases write below `prefix`, so a shared live store stays partitioned.
+fn key(prefix: &str, path: &str) -> ObjectKey {
+    ObjectKey::new(format!("{prefix}/{path}")).unwrap()
+}
+
+async fn read_all(
+    storage: &dyn FileStorage,
+    reference: &ObjectRef,
+    options: ReadOptions,
+) -> Vec<u8> {
+    let mut read = storage.read(reference, options).await.unwrap();
+    let mut actual = Vec::new();
+    while let Some(chunk) = read.next().await {
+        actual.extend_from_slice(&chunk.unwrap());
+    }
+    actual
+}
+
+async fn round_trip_contract(storage: Arc<dyn FileStorage>, prefix: &str) {
+    for (case, chunks) in [
         vec![],
         vec![Bytes::new()],
         vec![
@@ -26,7 +45,11 @@ async fn round_trip_contract(storage: Arc<dyn FileStorage>) {
             Bytes::new(),
             Bytes::from(vec![42; 200_000]),
         ],
-    ] {
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let object = key(prefix, &format!("round-trip/{case}"));
         let all: Vec<u8> = chunks
             .iter()
             .flat_map(|chunk| chunk.iter().copied())
@@ -36,9 +59,10 @@ async fn round_trip_contract(storage: Arc<dyn FileStorage>) {
             sha256: Some(hex::encode(Sha256::digest(&all))),
         };
         let stored = storage
-            .write(input(chunks), expected.clone())
+            .write(&object, input(chunks), expected.clone())
             .await
             .unwrap();
+        assert_eq!(stored.object_ref.key, object.as_str());
         assert_eq!(stored.info.size_bytes, all.len() as u64);
         assert_eq!(Some(stored.info.sha256.clone()), expected.sha256);
         let encoded = serde_json::to_string(&stored.object_ref).unwrap();
@@ -62,9 +86,10 @@ async fn round_trip_contract(storage: Arc<dyn FileStorage>) {
             actual.extend_from_slice(&chunk);
         }
         assert_eq!(actual, all);
-        // Another write never changes an existing completed object.
+        // A write to another key never changes this object.
         storage
             .write(
+                &key(prefix, &format!("round-trip/{case}-sibling")),
                 input(vec![Bytes::from_static(b"different")]),
                 ExpectedIntegrity::default(),
             )
@@ -84,8 +109,8 @@ async fn round_trip_contract(storage: Arc<dyn FileStorage>) {
     }
 }
 
-async fn integrity_contract(storage: Arc<dyn FileStorage>) {
-    for expected in [
+async fn integrity_contract(storage: Arc<dyn FileStorage>, prefix: &str) {
+    for (case, expected) in [
         ExpectedIntegrity {
             size_bytes: Some(1),
             sha256: None,
@@ -94,15 +119,24 @@ async fn integrity_contract(storage: Arc<dyn FileStorage>) {
             size_bytes: None,
             sha256: Some("0".repeat(64)),
         },
-    ] {
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let object = key(prefix, &format!("integrity/{case}"));
         assert!(matches!(
             storage
-                .write(input(vec![Bytes::from_static(b"abc")]), expected.clone())
+                .write(
+                    &object,
+                    input(vec![Bytes::from_static(b"abc")]),
+                    expected.clone()
+                )
                 .await,
             Err(StorageError::IntegrityMismatch)
         ));
         let stored = storage
             .write(
+                &object,
                 input(vec![Bytes::from_static(b"abc")]),
                 ExpectedIntegrity::default(),
             )
@@ -152,28 +186,43 @@ async fn integrity_contract(storage: Arc<dyn FileStorage>) {
         sha256: Some("A".repeat(64)),
     };
     assert!(matches!(
-        storage.write(input(vec![]), invalid).await,
+        storage
+            .write(&key(prefix, "integrity/invalid"), input(vec![]), invalid)
+            .await,
         Err(StorageError::InvalidInput(_))
     ));
     let stored = storage
-        .write(input(vec![]), ExpectedIntegrity::default())
+        .write(
+            &key(prefix, "integrity/empty"),
+            input(vec![]),
+            ExpectedIntegrity::default(),
+        )
         .await
         .unwrap();
     let foreign = ObjectRef {
         store_id: "different-store".into(),
-        ..stored.object_ref
+        ..stored.object_ref.clone()
     };
     assert!(matches!(
         storage.inspect(&foreign).await,
         Err(StorageError::InvalidReference(_))
     ));
+    let first_version = ObjectRef {
+        version: 1,
+        ..stored.object_ref
+    };
+    assert!(matches!(
+        storage.inspect(&first_version).await,
+        Err(StorageError::InvalidReference(_))
+    ));
 }
 
 // Run the same options cases against both real adapters.
-async fn read_options_contract(storage: Arc<dyn FileStorage>) {
+async fn read_options_contract(storage: Arc<dyn FileStorage>, prefix: &str) {
     for data in [b"".as_slice(), b"abc"] {
         let stored = storage
             .write(
+                &key(prefix, &format!("read-options/{}", data.len())),
                 input(vec![Bytes::copy_from_slice(data)]),
                 ExpectedIntegrity::default(),
             )
@@ -239,11 +288,12 @@ async fn read_options_contract(storage: Arc<dyn FileStorage>) {
     }
 }
 
-async fn range_contract(storage: Arc<dyn FileStorage>) {
+async fn range_contract(storage: Arc<dyn FileStorage>, prefix: &str) {
     let data: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
     let len = data.len() as u64;
     let stored = storage
         .write(
+            &key(prefix, "range/object"),
             input(vec![Bytes::from(data.clone())]),
             ExpectedIntegrity::default(),
         )
@@ -304,14 +354,15 @@ async fn range_contract(storage: Arc<dyn FileStorage>) {
     ));
 }
 
-async fn backpressure_contract(storage: Arc<dyn FileStorage>) {
+async fn backpressure_contract(storage: Arc<dyn FileStorage>, prefix: &str) {
     let polls = Arc::new(AtomicUsize::new(0));
     let count = polls.clone();
     let chunks = stream::iter((0..1024).map(move |_| {
         count.fetch_add(1, Ordering::SeqCst);
         Ok(Bytes::from(vec![7; 1024]))
     }));
-    let write = storage.write(Box::pin(chunks), ExpectedIntegrity::default());
+    let object = key(prefix, "backpressure");
+    let write = storage.write(&object, Box::pin(chunks), ExpectedIntegrity::default());
     assert_eq!(polls.load(Ordering::SeqCst), 0);
     let stored = write.await.unwrap();
     assert_eq!(polls.load(Ordering::SeqCst), 1024);
@@ -324,6 +375,116 @@ async fn backpressure_contract(storage: Arc<dyn FileStorage>) {
     let first = read.next().await.unwrap().unwrap();
     assert!(first.len() <= 64 * 1024);
     drop(read);
+}
+
+/// Nested keys: write, read, ranged read, derived siblings, replace and delete.
+async fn path_contract(storage: Arc<dyn FileStorage>, prefix: &str) {
+    let original = key(prefix, "paths/a/b/c.bin");
+    let data: Vec<u8> = (0..100_000u32).map(|i| (i % 241) as u8).collect();
+    let stored = storage
+        .write(
+            &original,
+            input(vec![Bytes::from(data.clone())]),
+            ExpectedIntegrity::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(stored.object_ref.version, ObjectRef::VERSION);
+    assert_eq!(stored.object_ref.key, original.as_str());
+    let reference = stored.object_ref.clone();
+    assert_eq!(
+        read_all(storage.as_ref(), &reference, ReadOptions::default()).await,
+        data
+    );
+    let ranged = ReadOptions {
+        range: Some(ByteRange {
+            offset: 70_000,
+            length: 20_000,
+        }),
+        ..Default::default()
+    };
+    assert_eq!(
+        read_all(storage.as_ref(), &reference, ranged.clone()).await,
+        data[70_000..90_000]
+    );
+    // A derived object sits next to its source.
+    let derived = storage
+        .write(
+            &key(prefix, "paths/a/b/c.thumb.bin"),
+            input(vec![Bytes::from_static(b"thumb")]),
+            ExpectedIntegrity::default(),
+        )
+        .await
+        .unwrap();
+    // Replacement swaps the whole object at the same key.
+    let replacement: Vec<u8> = data.iter().rev().copied().collect();
+    let replaced = storage
+        .write(
+            &original,
+            input(vec![Bytes::from(replacement.clone())]),
+            ExpectedIntegrity {
+                size_bytes: Some(replacement.len() as u64),
+                sha256: Some(hex::encode(Sha256::digest(&replacement))),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(replaced.object_ref, reference);
+    assert_eq!(storage.inspect(&reference).await.unwrap(), replaced.info);
+    assert_eq!(
+        read_all(storage.as_ref(), &reference, ranged).await,
+        replacement[70_000..90_000]
+    );
+    // A failed replacement leaves the current object in place.
+    assert!(matches!(
+        storage
+            .write(
+                &original,
+                input(vec![Bytes::from_static(b"short")]),
+                ExpectedIntegrity {
+                    size_bytes: Some(6),
+                    sha256: None,
+                },
+            )
+            .await,
+        Err(StorageError::IntegrityMismatch)
+    ));
+    assert_eq!(storage.inspect(&reference).await.unwrap(), replaced.info);
+    assert_eq!(
+        read_all(
+            storage.as_ref(),
+            &derived.object_ref,
+            ReadOptions::default()
+        )
+        .await,
+        b"thumb"
+    );
+    for object in [&reference, &derived.object_ref] {
+        storage.delete(object).await.unwrap();
+        storage.delete(object).await.unwrap();
+        assert!(matches!(
+            storage.inspect(object).await,
+            Err(StorageError::NotFound(_))
+        ));
+    }
+    let missing = ObjectRef::new(
+        reference.store_id.clone(),
+        &key(prefix, "paths/missing/parent/x"),
+    );
+    assert!(matches!(
+        storage.inspect(&missing).await,
+        Err(StorageError::NotFound(_))
+    ));
+    storage.delete(&missing).await.unwrap();
+}
+
+async fn full_contract(storage: Arc<dyn FileStorage>, prefix: &str) {
+    round_trip_contract(storage.clone(), prefix).await;
+    integrity_contract(storage.clone(), prefix).await;
+    read_options_contract(storage.clone(), prefix).await;
+    range_contract(storage.clone(), prefix).await;
+    backpressure_contract(storage.clone(), prefix).await;
+    path_contract(storage, prefix).await;
 }
 
 #[cfg(unix)]
@@ -339,11 +500,7 @@ async fn filesystem_contract() {
         .await
         .unwrap(),
     );
-    round_trip_contract(storage.clone()).await;
-    integrity_contract(storage.clone()).await;
-    read_options_contract(storage.clone()).await;
-    range_contract(storage.clone()).await;
-    backpressure_contract(storage).await;
+    full_contract(storage, "contract").await;
 }
 
 /// Preserve real storage/integrity behavior while changing only stream framing.
@@ -353,10 +510,11 @@ struct FragmentedReads(Arc<dyn FileStorage>);
 impl FileStorage for FragmentedReads {
     async fn write(
         &self,
+        key: &ObjectKey,
         input: ByteStream,
         expected: ExpectedIntegrity,
     ) -> Result<hypgmx_file_storage::StoredObject, StorageError> {
-        self.0.write(input, expected).await
+        self.0.write(key, input, expected).await
     }
     async fn read(
         &self,
@@ -395,7 +553,7 @@ async fn integrity_contract_accepts_fragmented_reads() {
     })
     .await
     .unwrap();
-    integrity_contract(Arc::new(FragmentedReads(Arc::new(storage)))).await;
+    integrity_contract(Arc::new(FragmentedReads(Arc::new(storage))), "fragmented").await;
 }
 
 #[cfg(feature = "google-drive")]
@@ -412,7 +570,7 @@ fn drive_config(folder_id: String) -> hypgmx_file_storage::google_drive::GoogleD
         refresh_token: "refresh".into(),
         scope: DriveScope::Full,
         max_object_bytes: 2_000_000,
-        ancestry: Default::default(),
+        path_cache: Default::default(),
     }
 }
 
@@ -429,11 +587,7 @@ async fn google_drive_contract() {
         .await
         .unwrap(),
     );
-    round_trip_contract(storage.clone()).await;
-    integrity_contract(storage.clone()).await;
-    read_options_contract(storage.clone()).await;
-    range_contract(storage.clone()).await;
-    backpressure_contract(storage).await;
+    full_contract(storage, "contract").await;
 }
 
 #[cfg(feature = "google-drive")]
@@ -447,9 +601,11 @@ async fn google_drive_fragmented_reads() {
     )
     .await
     .unwrap();
-    integrity_contract(Arc::new(FragmentedReads(Arc::new(storage)))).await;
+    integrity_contract(Arc::new(FragmentedReads(Arc::new(storage))), "fragmented").await;
 }
 
+/// Smoke test of nested keys (write, read, ranged read, replace, delete) and the
+/// full contract against real Drive.
 /// Requires HYPOGEUM_GDRIVE_TEST_{CLIENT_ID,CLIENT_SECRET,REFRESH_TOKEN,FOLDER_ID}.
 /// Run: `cargo test -p hypgmx-file-storage --features google-drive -- --ignored google_drive_live`
 #[cfg(feature = "google-drive")]
@@ -471,9 +627,6 @@ async fn google_drive_live_contract() {
             .await
             .unwrap(),
     );
-    round_trip_contract(storage.clone()).await;
-    integrity_contract(storage.clone()).await;
-    read_options_contract(storage.clone()).await;
-    range_contract(storage.clone()).await;
-    backpressure_contract(storage).await;
+    // Objects are deleted; the per-run folders are left for the operator.
+    full_contract(storage, &format!("hypogeum-live/{}", uuid::Uuid::new_v4())).await;
 }
