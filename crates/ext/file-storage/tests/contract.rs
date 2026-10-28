@@ -5,7 +5,7 @@ use bytes::Bytes;
 use futures_util::{StreamExt, stream};
 use hypgmx_file_storage::filesystem::{FilesystemConfig, FilesystemStorage};
 use hypgmx_file_storage::{
-    ByteStream, ExpectedIntegrity, FileStorage, ObjectRef, ReadOptions, StorageError,
+    ByteRange, ByteStream, ExpectedIntegrity, FileStorage, ObjectRef, ReadOptions, StorageError,
 };
 use sha2::{Digest, Sha256};
 use std::sync::{
@@ -239,6 +239,69 @@ async fn read_options_contract(storage: Arc<dyn FileStorage>) {
     }
 }
 
+async fn range_contract(storage: Arc<dyn FileStorage>) {
+    let data: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
+    let len = data.len() as u64;
+    let stored = storage
+        .write(
+            input(vec![Bytes::from(data.clone())]),
+            ExpectedIntegrity::default(),
+        )
+        .await
+        .unwrap();
+    let ranged = |offset, length| ReadOptions {
+        range: Some(ByteRange { offset, length }),
+        ..Default::default()
+    };
+    for (offset, length) in [(0, 10), (1_000, 150_000), (len - 7, 7), (5, 0), (len, 0)] {
+        let mut read = storage
+            .read(&stored.object_ref, ranged(offset, length))
+            .await
+            .unwrap();
+        let mut actual = Vec::new();
+        while let Some(chunk) = read.next().await {
+            let chunk = chunk.unwrap();
+            assert!(chunk.len() <= 64 * 1024);
+            actual.extend_from_slice(&chunk);
+        }
+        let (start, end) = (offset as usize, (offset + length) as usize);
+        assert_eq!(actual, data[start..end]);
+    }
+    for (offset, length) in [(len - 7, 8), (len + 1, 0), (len, 1), (u64::MAX, 2)] {
+        assert!(matches!(
+            storage.read(&stored.object_ref, ranged(offset, length)).await,
+            Err(StorageError::InvalidInput(_))
+        ));
+    }
+    for expected in [
+        ExpectedIntegrity {
+            size_bytes: Some(10),
+            sha256: None,
+        },
+        ExpectedIntegrity {
+            size_bytes: None,
+            sha256: Some(stored.info.sha256.clone()),
+        },
+    ] {
+        let options = ReadOptions {
+            expected,
+            ..ranged(0, 10)
+        };
+        assert!(matches!(
+            storage.read(&stored.object_ref, options).await,
+            Err(StorageError::InvalidInput(_))
+        ));
+    }
+    let limited = ReadOptions {
+        max_bytes: Some(9),
+        ..ranged(0, 10)
+    };
+    assert!(matches!(
+        storage.read(&stored.object_ref, limited).await,
+        Err(StorageError::SizeLimit { limit: 9 })
+    ));
+}
+
 async fn backpressure_contract(storage: Arc<dyn FileStorage>) {
     let polls = Arc::new(AtomicUsize::new(0));
     let count = polls.clone();
@@ -277,6 +340,7 @@ async fn filesystem_contract() {
     round_trip_contract(storage.clone()).await;
     integrity_contract(storage.clone()).await;
     read_options_contract(storage.clone()).await;
+    range_contract(storage.clone()).await;
     backpressure_contract(storage).await;
 }
 
@@ -365,6 +429,7 @@ async fn google_drive_contract() {
     round_trip_contract(storage.clone()).await;
     integrity_contract(storage.clone()).await;
     read_options_contract(storage.clone()).await;
+    range_contract(storage.clone()).await;
     backpressure_contract(storage).await;
 }
 
@@ -406,5 +471,6 @@ async fn google_drive_live_contract() {
     round_trip_contract(storage.clone()).await;
     integrity_contract(storage.clone()).await;
     read_options_contract(storage.clone()).await;
+    range_contract(storage.clone()).await;
     backpressure_contract(storage).await;
 }

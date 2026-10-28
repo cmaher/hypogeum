@@ -1,12 +1,19 @@
-use super::{FOLDER_MIME, GoogleDriveStorage, SHORTCUT_MIME, error};
+use super::{FOLDER_MIME, GoogleDriveStorage, SHORTCUT_MIME, error, write::response_error};
 use crate::{
-    ByteStream, ExpectedIntegrity, FileStorage, ObjectInfo, ObjectRef, StorageError, StoredObject,
+    ByteRange, ByteStream, ExpectedIntegrity, FileStorage, ObjectInfo, ObjectRef, StorageError,
+    StoredObject,
 };
-use crate::{ReadOptions, read_state::ReadState};
+use crate::{
+    ReadOptions,
+    read_state::{ReadState, beyond_end},
+};
 use async_trait::async_trait;
 use bytes::Bytes;
 use futures_util::stream;
-use google_drive3::common;
+use google_drive3::{
+    common,
+    hyper::{Request, header},
+};
 use http_body_util::BodyExt;
 use std::io;
 
@@ -54,7 +61,9 @@ impl FileStorage for GoogleDriveStorage {
         let id = self.resolve(reference)?;
         match self.guard(id).await {
             Err(StorageError::NotFound(_)) => return Ok(()),
-            result => result?,
+            result => {
+                result?;
+            }
         }
         match self
             .hub
@@ -84,20 +93,22 @@ impl GoogleDriveStorage {
     /// Accept a non-trashed, non-folder, non-shortcut file anywhere below the
     /// storage folder. Drive items have a single parent: the walk checks every
     /// listed parent but follows only the first, at most `MAX_ANCESTOR_DEPTH`
-    /// folders up. Folders proven to be descendants are cached.
-    async fn guard(&self, id: &str) -> Result<(), StorageError> {
+    /// folders up. Folders proven to be descendants are cached. Returns the
+    /// object's size when Drive reports one.
+    async fn guard(&self, id: &str) -> Result<Option<u64>, StorageError> {
         let file = self.metadata(id).await?;
         if file.trashed == Some(true)
             || matches!(file.mime_type.as_deref(), Some(FOLDER_MIME | SHORTCUT_MIME))
         {
             return Err(outside());
         }
+        let size = file.size.and_then(|size| u64::try_from(size).ok());
         let mut parents = file.parents.unwrap_or_default();
         let mut chain = Vec::new();
         loop {
             if self.contains_any(&parents) {
                 self.remember(chain);
-                return Ok(());
+                return Ok(size);
             }
             let Some(parent) = parents.first().cloned() else {
                 return Err(outside());
@@ -123,7 +134,7 @@ impl GoogleDriveStorage {
             .files()
             .get(id)
             .supports_all_drives(true)
-            .param("fields", "parents,trashed,mimeType")
+            .param("fields", "parents,trashed,mimeType,size")
             .add_scope(self.scope.as_url())
             .doit()
             .await
@@ -156,22 +167,64 @@ impl GoogleDriveStorage {
     ) -> Result<Reader, StorageError> {
         let id = self.resolve(reference)?;
         let state = ReadState::new(options, self.max_object_bytes, inspect)?;
-        self.guard(id).await?;
-        let (response, _) = self
-            .hub
-            .files()
-            .get(id)
-            .supports_all_drives(true)
-            .param("alt", "media")
-            .add_scope(self.scope.as_url())
-            .doit()
-            .await
-            .map_err(|e| error::api(e, "read Drive object"))?;
+        let size = self.guard(id).await?;
+        let body = match state.range() {
+            None => {
+                let (response, _) = self
+                    .hub
+                    .files()
+                    .get(id)
+                    .supports_all_drives(true)
+                    .param("alt", "media")
+                    .add_scope(self.scope.as_url())
+                    .doit()
+                    .await
+                    .map_err(|e| error::api(e, "read Drive object"))?;
+                response.into_body()
+            }
+            // ReadState rejects ranges whose end overflows.
+            Some(range) if size.is_some_and(|size| size < range.offset + range.length) => {
+                return Err(beyond_end());
+            }
+            Some(ByteRange { length: 0, .. }) => common::to_body::<Bytes>(None),
+            Some(range) => self.ranged_body(id, range).await?,
+        };
         Ok(Reader {
-            body: response.into_body(),
+            body,
             pending: Bytes::new(),
             state,
         })
+    }
+
+    /// Only a `206` carrying exactly the requested range is streamed: a server
+    /// ignoring `Range` would otherwise send the whole object.
+    async fn ranged_body(&self, id: &str, range: ByteRange) -> Result<common::Body, StorageError> {
+        const OPERATION: &str = "read Drive object range";
+        let end = range.offset + range.length - 1;
+        let request = Request::get(format!(
+            "{}drive/v3/files/{id}?alt=media&supportsAllDrives=true",
+            self.root_url
+        ))
+        .header(header::RANGE, format!("bytes={}-{end}", range.offset))
+        .body(common::to_body::<Bytes>(None))
+        .map_err(|_| error::io(OPERATION))?;
+        let response = self.request(request, OPERATION).await?;
+        match response.status().as_u16() {
+            206 => (),
+            416 => return Err(beyond_end()),
+            200 => return Err(error::io(OPERATION)),
+            _ => return Err(response_error(response, OPERATION).await),
+        }
+        let expected = format!("bytes {}-{end}/", range.offset);
+        if !response
+            .headers()
+            .get(header::CONTENT_RANGE)
+            .and_then(|h| h.to_str().ok())
+            .is_some_and(|h| h.starts_with(&expected))
+        {
+            return Err(error::io(OPERATION));
+        }
+        Ok(response.into_body().boxed())
     }
 }
 

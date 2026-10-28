@@ -1,6 +1,9 @@
 use super::*;
 use crate::{ByteStream, FileStorage, ObjectInfo, ObjectRef, StoredObject};
-use crate::{ReadOptions, read_state::ReadState};
+use crate::{
+    ReadOptions,
+    read_state::{ReadState, beyond_end},
+};
 use async_trait::async_trait;
 use bytes::Bytes;
 use futures_util::stream;
@@ -88,6 +91,7 @@ impl FilesystemStorage {
     ) -> Result<Reader, StorageError> {
         let state = ReadState::new(options, self.max_object_bytes, inspect)?;
         let path = self.resolve(reference)?;
+        let range = state.range();
         let file = blocking(move || {
             regular_metadata(&path)?;
             let mut options = fs::OpenOptions::new();
@@ -100,14 +104,23 @@ impl FilesystemStorage {
             let file = options
                 .open(&path)
                 .map_err(|e| StorageError::io("open object", e))?;
-            if !file
+            let metadata = file
                 .metadata()
-                .map_err(|e| StorageError::io("inspect open object", e))?
-                .is_file()
-            {
+                .map_err(|e| StorageError::io("inspect open object", e))?;
+            if !metadata.is_file() {
                 return Err(StorageError::InvalidReference(
                     "object must be a regular file".into(),
                 ));
+            }
+            if let Some(range) = range {
+                // ReadState rejects ranges whose end overflows.
+                if metadata.len() < range.offset + range.length {
+                    return Err(beyond_end());
+                }
+                use std::io::Seek;
+                (&file)
+                    .seek(io::SeekFrom::Start(range.offset))
+                    .map_err(|e| StorageError::io("seek object", e))?;
             }
             Ok(file)
         })
@@ -139,7 +152,15 @@ struct Reader {
 
 impl Reader {
     async fn next_chunk(&mut self) -> Result<Option<Bytes>, StorageError> {
-        let mut buffer = vec![0; CHUNK_BYTES];
+        let wanted = self
+            .state
+            .remaining()
+            .map_or(CHUNK_BYTES, |remaining| remaining.min(CHUNK_BYTES as u64) as usize);
+        if wanted == 0 {
+            self.state.finish()?;
+            return Ok(None);
+        }
+        let mut buffer = vec![0; wanted];
         let count = self
             .file
             .read(&mut buffer)

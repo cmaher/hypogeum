@@ -10,7 +10,9 @@ pub mod google_drive;
 pub mod models;
 mod read_state;
 pub use hypgm_errors::StorageError;
-pub use models::{ExpectedIntegrity, ObjectInfo, ObjectRef, ReadOptions, StoredObject};
+pub use models::{
+    ByteRange, ExpectedIntegrity, ObjectInfo, ObjectRef, ReadOptions, StoredObject,
+};
 
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -34,6 +36,8 @@ pub trait FileStorage: Send + Sync {
     /// Options can independently bound bytes and request size and/or SHA-256 checks.
     /// Errors may follow bytes. Requested checks require successful EOF; partial
     /// consumption makes no integrity claim. Adapter resource limits always apply.
+    /// A range yields exactly its bytes; one extending past the object's end is
+    /// `InvalidInput`, and combining a range with `expected` checks is rejected.
     async fn read(
         &self,
         reference: &ObjectRef,

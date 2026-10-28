@@ -663,3 +663,46 @@ async fn foreign_session_uri_is_never_followed() {
     ));
     assert!(fake.ranges().is_empty());
 }
+
+#[tokio::test]
+async fn ranged_reads_send_range_and_require_partial_content() {
+    use hypgmx_file_storage::ByteRange;
+    let fake = FakeDrive::start().await;
+    let storage = storage(&fake).await;
+    let bytes: Vec<u8> = (0..1_000u32).map(|i| (i % 251) as u8).collect();
+    let id = fake.insert_file(
+        vec!["folder".into()],
+        false,
+        "application/octet-stream",
+        bytes.clone(),
+    );
+    let reference = reference(&id);
+    let ranged = |offset, length| ReadOptions {
+        range: Some(ByteRange { offset, length }),
+        ..Default::default()
+    };
+    let mut read = storage.read(&reference, ranged(100, 50)).await.unwrap();
+    let mut actual = Vec::new();
+    while let Some(chunk) = read.next().await {
+        actual.extend_from_slice(&chunk.unwrap());
+    }
+    assert_eq!(actual, bytes[100..150]);
+    assert_eq!(fake.media_ranges(), ["bytes=100-149"]);
+    // Zero-length ranges are served without downloading.
+    let media = fake.media_requests();
+    let mut read = storage.read(&reference, ranged(10, 0)).await.unwrap();
+    assert!(read.next().await.is_none());
+    assert_eq!(fake.media_requests(), media);
+    // A server ignoring Range must never stream the whole object.
+    fake.faults(|f| f.ignore_range = true);
+    assert!(matches!(
+        storage.read(&reference, ranged(0, 10)).await,
+        Err(StorageError::Io { .. })
+    ));
+    fake.faults(|f| f.unsatisfiable_range = true);
+    assert!(matches!(
+        storage.read(&reference, ranged(0, 10)).await,
+        Err(StorageError::InvalidInput(_))
+    ));
+    assert_eq!(fake.media_ranges(), ["bytes=100-149", "bytes=0-9", "bytes=0-9"]);
+}

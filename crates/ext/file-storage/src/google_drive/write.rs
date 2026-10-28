@@ -234,7 +234,7 @@ impl GoogleDriveStorage {
         self.request(request, "upload bytes").await
     }
 
-    async fn request(
+    pub(super) async fn request(
         &self,
         mut request: Request<common::Body>,
         operation: &'static str,
@@ -309,7 +309,7 @@ async fn response_bytes(response: Response) -> Result<Bytes, StorageError> {
         .map_err(|_| error::io("read Drive response"))
 }
 
-async fn response_error(response: Response, operation: &'static str) -> StorageError {
+pub(super) async fn response_error(response: Response, operation: &'static str) -> StorageError {
     let status = response.status().as_u16();
     match response_bytes(response)
         .await

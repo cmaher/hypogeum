@@ -33,6 +33,8 @@ pub struct Faults {
     pub final_partial_ack: Option<usize>,
     pub delete_failure: bool,
     pub foreign_location: bool,
+    pub ignore_range: bool,
+    pub unsatisfiable_range: bool,
 }
 
 struct File {
@@ -56,6 +58,7 @@ struct Data {
     requests: usize,
     media_requests: usize,
     metadata_requests: usize,
+    media_ranges: Vec<String>,
     ranges: Vec<String>,
     deleted: usize,
 }
@@ -172,6 +175,10 @@ impl FakeDrive {
     }
     pub fn metadata_requests(&self) -> usize {
         self.data.lock().unwrap().metadata_requests
+    }
+    /// `Range` headers sent on media downloads.
+    pub fn media_ranges(&self) -> Vec<String> {
+        self.data.lock().unwrap().media_ranges.clone()
     }
     pub fn ranges(&self) -> Vec<String> {
         self.data.lock().unwrap().ranges.clone()
@@ -394,7 +401,32 @@ async fn handle(State(components): State<Components>, request: Request) -> Respo
             if parts.uri.query().is_some_and(|q| q.contains("alt=media")) {
                 let bytes = file.bytes.clone();
                 data.media_requests += 1;
-                return Response::new(Body::from(bytes));
+                let Some(range) = parts.headers.get(header::RANGE) else {
+                    return Response::new(Body::from(bytes));
+                };
+                let range = range.to_str().unwrap().to_owned();
+                data.media_ranges.push(range.clone());
+                if std::mem::take(&mut data.faults.ignore_range) {
+                    return Response::new(Body::from(bytes));
+                }
+                let (start, end) = range
+                    .strip_prefix("bytes=")
+                    .and_then(|span| span.split_once('-'))
+                    .map(|(a, b)| (a.parse::<usize>().unwrap(), b.parse::<usize>().unwrap()))
+                    .unwrap();
+                if std::mem::take(&mut data.faults.unsatisfiable_range) || start >= bytes.len() {
+                    return StatusCode::RANGE_NOT_SATISFIABLE.into_response();
+                }
+                let end = end.min(bytes.len() - 1);
+                return (
+                    StatusCode::PARTIAL_CONTENT,
+                    [(
+                        header::CONTENT_RANGE,
+                        format!("bytes {start}-{end}/{}", bytes.len()),
+                    )],
+                    bytes[start..=end].to_vec(),
+                )
+                    .into_response();
             }
             data.metadata_requests += 1;
             let file = &data.files[id];
