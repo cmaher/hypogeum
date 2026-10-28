@@ -88,13 +88,22 @@ Enable `--features google-drive` to run the same contract cases against the Driv
 adapter using a local protocol fixture, without credentials. Both adapters use the
 same read accounting and opt-in integrity policy.
 
-## Google Drive ancestry cache
+## Google Drive ancestry and object caches
 
 The Drive adapter accepts files anywhere below its configured root folder,
 walking at most `GoogleDriveConfig::ancestry.max_depth` folders up (default 32).
-It caches verified ancestor folder IDs with Moka, bounded by
+It caches verified ancestor folder IDs and successful object guards (including
+the reported size) with Moka. Each cache is bounded by
 `ancestry.cache_capacity` (default 4,096 entries) and `ancestry.cache_ttl`
 (default ten minutes from insertion). Cache hits do not extend the TTL. A zero
-capacity or TTL disables the cache, and a TTL beyond 1,000 years is rejected.
+capacity or TTL disables both caches, and a TTL beyond 1,000 years is rejected.
+Repeated reads and inspections of a cached object skip its metadata request;
+ranged reads use the cached size for the beyond-end check. Rejections are never
+cached. Media responses of 404 or 416 evict the object guard so the next request
+checks metadata again.
+
 Ancestor moves and trash changes are not observed while cached ancestry is
-trusted; the target file's own metadata is checked on every operation.
+trusted. Likewise, a cached object's move outside the root, trash status, type,
+or size changes may remain unseen until its TTL expires. Delete always checks
+the target object's metadata, and observing a missing, trashed, folder or shortcut
+object during that check evicts its cached guard.

@@ -807,3 +807,175 @@ async fn ranged_reads_send_range_and_require_partial_content() {
         assert!(matches!(failure, Some(StorageError::Io { .. })));
     }
 }
+
+fn range_options(offset: u64, length: u64) -> ReadOptions {
+    ReadOptions {
+        range: Some(hypgmx_file_storage::ByteRange { offset, length }),
+        ..Default::default()
+    }
+}
+
+#[tokio::test]
+async fn object_guard_reuses_metadata_and_size_for_reads_and_inspection() {
+    let fake = FakeDrive::start().await;
+    let storage = storage(&fake).await;
+    let id = fake.insert_file(
+        vec!["folder".into()],
+        false,
+        "text/plain",
+        b"abcdef".to_vec(),
+    );
+    let reference = reference(&id);
+    let metadata = fake.metadata_requests();
+    let media = fake.media_requests();
+    for offset in 0..3 {
+        let mut read = storage
+            .read(&reference, range_options(offset, 1))
+            .await
+            .unwrap();
+        assert_eq!(
+            read.next().await.unwrap().unwrap(),
+            &b"abcdef"[offset as usize..offset as usize + 1]
+        );
+        assert!(read.next().await.is_none());
+    }
+    storage.inspect(&reference).await.unwrap();
+    assert_eq!(fake.metadata_requests() - metadata, 1);
+    assert_eq!(fake.media_requests() - media, 4);
+    assert!(matches!(
+        storage.read(&reference, range_options(6, 1)).await,
+        Err(StorageError::InvalidInput(_))
+    ));
+    assert_eq!(fake.metadata_requests() - metadata, 1);
+    assert_eq!(fake.media_requests() - media, 4);
+}
+
+#[tokio::test]
+async fn rejected_object_guards_are_never_cached() {
+    let fake = FakeDrive::start().await;
+    let storage = storage(&fake).await;
+    for trashed in [false, true] {
+        let id = fake.insert_file(vec!["other".into()], trashed, "text/plain", b"abc".to_vec());
+        assert!(matches!(
+            storage.read(&reference(&id), range_options(0, 1)).await,
+            Err(StorageError::NotFound(_))
+        ));
+        fake.set_parents(&id, vec!["folder".into()]);
+        fake.set_trashed(&id, false);
+        let _read = storage
+            .read(&reference(&id), range_options(0, 1))
+            .await
+            .unwrap();
+    }
+}
+
+#[tokio::test]
+async fn media_failures_evict_object_guards() {
+    for status in [404, 416] {
+        let fake = FakeDrive::start().await;
+        let storage = storage(&fake).await;
+        let id = fake.insert_file(vec!["folder".into()], false, "text/plain", b"abc".to_vec());
+        let reference = reference(&id);
+        let _read = storage.read(&reference, range_options(0, 1)).await.unwrap();
+        let metadata = fake.metadata_requests();
+        fake.faults(|f| f.range_status = Some((status, "notFound")));
+        assert!(storage.read(&reference, range_options(0, 1)).await.is_err());
+        assert_eq!(fake.metadata_requests(), metadata);
+        let _read = storage.read(&reference, range_options(0, 1)).await.unwrap();
+        assert_eq!(fake.metadata_requests() - metadata, 1);
+    }
+}
+
+#[tokio::test]
+async fn object_cache_can_be_disabled_by_capacity_or_ttl() {
+    for ancestry in [
+        DriveAncestryConfig {
+            cache_capacity: 0,
+            ..Default::default()
+        },
+        DriveAncestryConfig {
+            cache_ttl: Duration::ZERO,
+            ..Default::default()
+        },
+    ] {
+        let fake = FakeDrive::start().await;
+        let storage = GoogleDriveStorage::with_test_endpoint(
+            GoogleDriveConfig {
+                ancestry,
+                ..config("folder")
+            },
+            &fake.root_url,
+            "test-token",
+        )
+        .await
+        .unwrap();
+        let id = fake.insert_file(vec!["folder".into()], false, "text/plain", b"abc".to_vec());
+        let metadata = fake.metadata_requests();
+        for _ in 0..3 {
+            let _read = storage
+                .read(&reference(&id), range_options(0, 1))
+                .await
+                .unwrap();
+        }
+        assert_eq!(fake.metadata_requests() - metadata, 3);
+    }
+}
+
+#[tokio::test]
+async fn fresh_delete_guard_evicts_trashed_object() {
+    let fake = FakeDrive::start().await;
+    let storage = storage(&fake).await;
+    let id = fake.insert_file(vec!["folder".into()], false, "text/plain", b"abc".to_vec());
+    let reference = reference(&id);
+    storage.inspect(&reference).await.unwrap();
+    fake.set_trashed(&id, true);
+    storage.delete(&reference).await.unwrap();
+    assert!(matches!(
+        storage.inspect(&reference).await,
+        Err(StorageError::NotFound(_))
+    ));
+}
+
+#[tokio::test]
+async fn unranged_media_failures_evict_object_guards() {
+    for status in [404, 416] {
+        let fake = FakeDrive::start().await;
+        let storage = storage(&fake).await;
+        let id = fake.insert_file(vec!["folder".into()], false, "text/plain", b"abc".to_vec());
+        let reference = reference(&id);
+        storage.inspect(&reference).await.unwrap();
+        let metadata = fake.metadata_requests();
+        fake.faults(|f| f.media_status = Some((status, "notFound")));
+        assert!(storage.inspect(&reference).await.is_err());
+        assert_eq!(fake.metadata_requests(), metadata);
+        storage.inspect(&reference).await.unwrap();
+        assert_eq!(fake.metadata_requests() - metadata, 1);
+    }
+}
+
+#[tokio::test]
+async fn expired_object_guard_checks_metadata_again() {
+    let fake = FakeDrive::start().await;
+    let storage = GoogleDriveStorage::with_test_endpoint(
+        GoogleDriveConfig {
+            ancestry: DriveAncestryConfig {
+                cache_ttl: Duration::from_millis(50),
+                ..Default::default()
+            },
+            ..config("folder")
+        },
+        &fake.root_url,
+        "test-token",
+    )
+    .await
+    .unwrap();
+    let id = fake.insert_file(vec!["folder".into()], false, "text/plain", b"abc".to_vec());
+    let reference = reference(&id);
+    storage.inspect(&reference).await.unwrap();
+    fake.set_trashed(&id, true);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(matches!(
+        storage.inspect(&reference).await,
+        Err(StorageError::NotFound(_))
+    ));
+}

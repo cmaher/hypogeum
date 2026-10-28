@@ -35,6 +35,7 @@ pub struct Faults {
     pub foreign_location: bool,
     pub ignore_range: bool,
     pub unsatisfiable_range: bool,
+    pub media_status: Option<(u16, &'static str)>,
     pub range_status: Option<(u16, &'static str)>,
     pub wrong_content_range: bool,
     pub short_range_body: bool,
@@ -405,6 +406,9 @@ async fn handle(State(components): State<Components>, request: Request) -> Respo
             if parts.uri.query().is_some_and(|q| q.contains("alt=media")) {
                 let bytes = file.bytes.clone();
                 data.media_requests += 1;
+                if let Some((code, reason)) = data.faults.media_status.take() {
+                    return failure(code, reason);
+                }
                 let Some(range) = parts.headers.get(header::RANGE) else {
                     return Response::new(Body::from(bytes));
                 };
