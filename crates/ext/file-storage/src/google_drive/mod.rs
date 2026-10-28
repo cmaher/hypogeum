@@ -54,11 +54,12 @@ pub struct DriveAncestryConfig {
     /// Ancestor folders walked above an object before it is rejected. Zero
     /// accepts only objects directly inside the storage folder.
     pub max_depth: usize,
-    /// Folders remembered as proven descendants of the storage folder. Zero
-    /// disables the cache.
+    /// Maximum entries in each cache: proven ancestor folders and accepted
+    /// objects with their reported sizes. Zero disables both caches.
     pub cache_capacity: u64,
-    /// How long a proven descendant is trusted after insertion. Ancestor moves
-    /// and trash changes are not observed within it. Zero disables the cache.
+    /// How long cached ancestry and object guards are trusted after insertion.
+    /// Moves, trash changes and size changes may be stale within this window.
+    /// Zero disables both caches.
     pub cache_ttl: Duration,
 }
 
@@ -97,6 +98,8 @@ pub struct GoogleDriveStorage {
     max_ancestor_depth: usize,
     /// Proven descendants of the storage folder; `None` when caching is disabled.
     descendants: Option<Cache<String, ()>>,
+    /// Successful read guards, including an optional reported size.
+    objects: Option<Cache<String, Option<u64>>>,
 }
 
 impl GoogleDriveStorage {
@@ -193,6 +196,13 @@ impl GoogleDriveStorage {
             max_object_bytes: config.max_object_bytes,
             root_url,
             max_ancestor_depth: config.ancestry.max_depth,
+            objects: (config.ancestry.cache_capacity > 0 && !config.ancestry.cache_ttl.is_zero())
+                .then(|| {
+                    Cache::builder()
+                        .max_capacity(config.ancestry.cache_capacity)
+                        .time_to_live(config.ancestry.cache_ttl)
+                        .build()
+                }),
             descendants: (config.ancestry.cache_capacity > 0
                 && !config.ancestry.cache_ttl.is_zero())
             .then(|| {

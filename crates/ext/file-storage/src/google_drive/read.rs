@@ -95,6 +95,14 @@ impl GoogleDriveStorage {
     /// cached ancestry is trusted.
     /// Returns the object's size when Drive reports one.
     async fn guard(&self, id: &str) -> Result<Option<u64>, StorageError> {
+        let result = self.check_object(id).await;
+        if matches!(&result, Err(StorageError::NotFound(_))) {
+            self.forget_object(id).await;
+        }
+        result
+    }
+
+    async fn check_object(&self, id: &str) -> Result<Option<u64>, StorageError> {
         let file = self.metadata(id).await?;
         if file.trashed == Some(true)
             || matches!(file.mime_type.as_deref(), Some(FOLDER_MIME | SHORTCUT_MIME))
@@ -160,6 +168,25 @@ impl GoogleDriveStorage {
         }
     }
 
+    async fn forget_object(&self, id: &str) {
+        if let Some(cache) = &self.objects {
+            cache.invalidate(id).await;
+        }
+    }
+
+    async fn read_guard(&self, id: &str) -> Result<Option<u64>, StorageError> {
+        if let Some(cache) = &self.objects
+            && let Some(size) = cache.get(id).await
+        {
+            return Ok(size);
+        }
+        let size = self.guard(id).await?;
+        if let Some(cache) = &self.objects {
+            cache.insert(id.to_owned(), size).await;
+        }
+        Ok(size)
+    }
+
     async fn reader(
         &self,
         reference: &ObjectRef,
@@ -168,10 +195,10 @@ impl GoogleDriveStorage {
     ) -> Result<Reader, StorageError> {
         let id = self.resolve(reference)?;
         let state = ReadState::new(options, self.max_object_bytes, inspect)?;
-        let size = self.guard(id).await?;
+        let size = self.read_guard(id).await?;
         let body = match state.range() {
             None => {
-                let (response, _) = self
+                let response = self
                     .hub
                     .files()
                     .get(id)
@@ -179,8 +206,25 @@ impl GoogleDriveStorage {
                     .param("alt", "media")
                     .add_scope(self.scope.as_url())
                     .doit()
-                    .await
-                    .map_err(|e| error::api(e, "read Drive object"))?;
+                    .await;
+                let (response, _) = match response {
+                    Err(error) => {
+                        let code = match &error {
+                            google_drive3::Error::Failure(response) => {
+                                Some(u64::from(response.status().as_u16()))
+                            }
+                            google_drive3::Error::BadRequest(value) => {
+                                value.pointer("/error/code").and_then(|code| code.as_u64())
+                            }
+                            _ => None,
+                        };
+                        if matches!(code, Some(404 | 416)) {
+                            self.forget_object(id).await;
+                        }
+                        return Err(error::api(error, "read Drive object"));
+                    }
+                    Ok(response) => response,
+                };
                 response.into_body()
             }
             // ReadState rejects ranges whose end overflows.
@@ -210,6 +254,9 @@ impl GoogleDriveStorage {
         .body(common::to_body::<Bytes>(None))
         .map_err(|_| error::io(OPERATION))?;
         let response = self.request(request, OPERATION).await?;
+        if matches!(response.status().as_u16(), 404 | 416) {
+            self.forget_object(id).await;
+        }
         match response.status().as_u16() {
             206 => (),
             416 => return Err(beyond_end()),
