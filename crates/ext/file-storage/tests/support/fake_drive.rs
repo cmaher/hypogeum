@@ -35,6 +35,10 @@ pub struct Faults {
     pub foreign_location: bool,
     pub ignore_range: bool,
     pub unsatisfiable_range: bool,
+    pub range_status: Option<(u16, &'static str)>,
+    pub wrong_content_range: bool,
+    pub short_range_body: bool,
+    pub long_range_body: bool,
 }
 
 struct File {
@@ -417,14 +421,29 @@ async fn handle(State(components): State<Components>, request: Request) -> Respo
                 if std::mem::take(&mut data.faults.unsatisfiable_range) || start >= bytes.len() {
                     return StatusCode::RANGE_NOT_SATISFIABLE.into_response();
                 }
+                if let Some((code, reason)) = data.faults.range_status.take() {
+                    return failure(code, reason);
+                }
                 let end = end.min(bytes.len() - 1);
+                let label_start = if std::mem::take(&mut data.faults.wrong_content_range) {
+                    start + 1
+                } else {
+                    start
+                };
+                let mut body = bytes[start..=end].to_vec();
+                if std::mem::take(&mut data.faults.short_range_body) {
+                    body.pop();
+                }
+                if std::mem::take(&mut data.faults.long_range_body) {
+                    body.push(0);
+                }
                 return (
                     StatusCode::PARTIAL_CONTENT,
                     [(
                         header::CONTENT_RANGE,
-                        format!("bytes {start}-{end}/{}", bytes.len()),
+                        format!("bytes {label_start}-{end}/{}", bytes.len()),
                     )],
-                    bytes[start..=end].to_vec(),
+                    body,
                 )
                     .into_response();
             }

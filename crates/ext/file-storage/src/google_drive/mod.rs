@@ -1,9 +1,10 @@
 //! Personal Google Drive storage using an operator's OAuth grant.
 //!
 //! Objects are immutable files under the configured folder: new objects are
-//! written directly inside it, and existing files anywhere in its folder tree can
-//! be read, inspected and deleted. Domain managers own retries. Cancelled upload futures abandon their resumable session
-//! (Drive expires it); they never publish an incomplete object.
+//! written directly inside it, and existing files anywhere in its folder tree
+//! can be read, inspected and deleted. Domain managers own retries. Cancelled
+//! upload futures abandon their resumable session (Drive expires it); they never
+//! publish an incomplete object.
 mod error;
 mod read;
 #[cfg(test)]
@@ -44,6 +45,31 @@ pub struct GoogleDriveConfig {
     pub refresh_token: String,
     pub scope: DriveScope,
     pub max_object_bytes: u64,
+    pub ancestry: DriveAncestryConfig,
+}
+
+/// Bounds for accepting objects nested below the storage folder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DriveAncestryConfig {
+    /// Ancestor folders walked above an object before it is rejected. Zero
+    /// accepts only objects directly inside the storage folder.
+    pub max_depth: usize,
+    /// Folders remembered as proven descendants of the storage folder. Zero
+    /// disables the cache.
+    pub cache_capacity: u64,
+    /// How long a proven descendant is trusted after insertion. Ancestor moves
+    /// and trash changes are not observed within it. Zero disables the cache.
+    pub cache_ttl: Duration,
+}
+
+impl Default for DriveAncestryConfig {
+    fn default() -> Self {
+        Self {
+            max_depth: 32,
+            cache_capacity: 4096,
+            cache_ttl: Duration::from_secs(10 * 60),
+        }
+    }
 }
 
 impl fmt::Debug for GoogleDriveConfig {
@@ -56,6 +82,7 @@ impl fmt::Debug for GoogleDriveConfig {
             .field("refresh_token", &"[redacted]")
             .field("scope", &self.scope)
             .field("max_object_bytes", &self.max_object_bytes)
+            .field("ancestry", &self.ancestry)
             .finish()
     }
 }
@@ -67,8 +94,9 @@ pub struct GoogleDriveStorage {
     scope: DriveScope,
     max_object_bytes: u64,
     root_url: String,
-    /// Positive ancestry results expire ten minutes after insertion.
-    descendants: Cache<String, ()>,
+    max_ancestor_depth: usize,
+    /// Proven descendants of the storage folder; `None` when caching is disabled.
+    descendants: Option<Cache<String, ()>>,
 }
 
 impl GoogleDriveStorage {
@@ -137,6 +165,12 @@ impl GoogleDriveStorage {
                 "store ID and folder ID must be nonempty and maximum bytes positive".into(),
             ));
         }
+        // Moka panics on a time to live beyond 1,000 years.
+        if config.ancestry.cache_ttl > Duration::from_secs(1000 * 365 * 24 * 60 * 60) {
+            return Err(StorageError::InvalidInput(
+                "ancestry cache time to live must not exceed 1,000 years".into(),
+            ));
+        }
         Ok(())
     }
 
@@ -158,10 +192,15 @@ impl GoogleDriveStorage {
             scope: config.scope,
             max_object_bytes: config.max_object_bytes,
             root_url,
-            descendants: Cache::builder()
-                .max_capacity(4096)
-                .time_to_live(Duration::from_secs(10 * 60))
-                .build(),
+            max_ancestor_depth: config.ancestry.max_depth,
+            descendants: (config.ancestry.cache_capacity > 0
+                && !config.ancestry.cache_ttl.is_zero())
+            .then(|| {
+                Cache::builder()
+                    .max_capacity(config.ancestry.cache_capacity)
+                    .time_to_live(config.ancestry.cache_ttl)
+                    .build()
+            }),
         })
     }
 

@@ -9,6 +9,7 @@ fn config() -> GoogleDriveConfig {
         refresh_token: "refresh-sentinel".into(),
         scope: DriveScope::Full,
         max_object_bytes: 100,
+        ancestry: DriveAncestryConfig::default(),
     }
 }
 

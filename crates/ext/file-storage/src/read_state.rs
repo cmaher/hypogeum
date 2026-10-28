@@ -75,8 +75,16 @@ impl ReadState {
     }
 
     pub(crate) fn finish(&self) -> Result<(), StorageError> {
+        // Adapters check ranges against the object's size before streaming, so
+        // a short range is a downstream failure, not invalid input.
         if self.remaining().is_some_and(|remaining| remaining > 0) {
-            return Err(beyond_end());
+            return Err(StorageError::Io {
+                operation: "read object range",
+                source: io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "fewer bytes than the requested range",
+                ),
+            });
         }
         let expected = &self.options.expected;
         if expected.size_bytes.is_some_and(|size| size != self.size)
@@ -133,5 +141,21 @@ mod tests {
             state.finish().unwrap();
             assert!(state.hash.is_none());
         }
+    }
+
+    #[test]
+    fn ranged_reads_reject_short_and_long_bodies_as_io() {
+        let options = ReadOptions {
+            range: Some(ByteRange {
+                offset: 5,
+                length: 3,
+            }),
+            ..Default::default()
+        };
+        let mut short = ReadState::new(options.clone(), 100, false).unwrap();
+        short.update(b"ab").unwrap();
+        assert!(matches!(short.finish(), Err(StorageError::Io { .. })));
+        let mut long = ReadState::new(options, 100, false).unwrap();
+        assert!(matches!(long.update(b"abcd"), Err(StorageError::Io { .. })));
     }
 }

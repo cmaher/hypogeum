@@ -57,6 +57,23 @@ let verified = storage.read(&reference, ReadOptions {
 }).await?;
 ```
 
+Set `ReadOptions::range` to stream only `[offset, offset + length)`. The whole
+range must lie within the object; a range extending past the end returns
+`StorageError::InvalidInput`, and so does combining a range with `expected`
+checks, because a slice cannot verify full-object integrity. `max_bytes` and the
+adapter limit apply to `length`, and a zero `length` returns an empty stream. A
+body shorter or longer than the range returns `StorageError::Io`. The Drive
+adapter sends a `Range` header and streams only a `206` whose `Content-Range`
+matches; a server that ignores `Range` yields `StorageError::Io` rather than the
+whole object.
+
+```rust,ignore
+let slice = storage.read(&reference, ReadOptions {
+    range: Some(ByteRange { offset: 4_096, length: 1_024 }),
+    ..Default::default()
+}).await?;
+```
+
 Missing objects are distinct from malformed references, permission failures and corrupt
 bytes. A failure after installation or unlink may report uncertain completion;
 do not delete a potentially completed object as an automatic retry strategy.
@@ -73,8 +90,11 @@ same read accounting and opt-in integrity policy.
 
 ## Google Drive ancestry cache
 
-The Drive adapter accepts files anywhere below its configured root folder. It
-caches verified ancestor folder IDs with Moka, with a maximum capacity of 4,096
-entries and a ten-minute time to live from insertion. Cache hits do not extend
-the TTL. Ancestor moves and trash changes are not observed while cached ancestry
-is trusted; the target file's own metadata is checked on every operation.
+The Drive adapter accepts files anywhere below its configured root folder,
+walking at most `GoogleDriveConfig::ancestry.max_depth` folders up (default 32).
+It caches verified ancestor folder IDs with Moka, bounded by
+`ancestry.cache_capacity` (default 4,096 entries) and `ancestry.cache_ttl`
+(default ten minutes from insertion). Cache hits do not extend the TTL. A zero
+capacity or TTL disables the cache, and a TTL beyond 1,000 years is rejected.
+Ancestor moves and trash changes are not observed while cached ancestry is
+trusted; the target file's own metadata is checked on every operation.

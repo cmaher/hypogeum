@@ -412,6 +412,7 @@ fn drive_config(folder_id: String) -> hypgmx_file_storage::google_drive::GoogleD
         refresh_token: "refresh".into(),
         scope: DriveScope::Full,
         max_object_bytes: 2_000_000,
+        ancestry: Default::default(),
     }
 }
 

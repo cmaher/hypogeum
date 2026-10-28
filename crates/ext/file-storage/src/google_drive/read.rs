@@ -18,8 +18,6 @@ use http_body_util::BodyExt;
 use std::io;
 
 const READ_CHUNK_BYTES: usize = 64 * 1024;
-/// Ancestor folders walked above an object before it is rejected.
-const MAX_ANCESTOR_DEPTH: usize = 32;
 
 fn outside() -> StorageError {
     StorageError::NotFound(io::Error::new(
@@ -91,9 +89,10 @@ impl FileStorage for GoogleDriveStorage {
 impl GoogleDriveStorage {
     /// Accept a non-trashed, non-folder, non-shortcut file anywhere below the
     /// storage folder. Drive items have a single parent: the walk checks every
-    /// listed parent but follows only the first, at most `MAX_ANCESTOR_DEPTH`
-    /// folders up. Proven descendants are cached for ten minutes; ancestor moves
-    /// and trash changes are not observed while cached ancestry is trusted.
+    /// listed parent but follows only the first, at most the configured maximum
+    /// depth of folders up. Proven descendants are cached for the configured
+    /// time to live; ancestor moves and trash changes are not observed while
+    /// cached ancestry is trusted.
     /// Returns the object's size when Drive reports one.
     async fn guard(&self, id: &str) -> Result<Option<u64>, StorageError> {
         let file = self.metadata(id).await?;
@@ -113,7 +112,7 @@ impl GoogleDriveStorage {
             let Some(parent) = parents.first().cloned() else {
                 return Err(outside());
             };
-            if chain.len() == MAX_ANCESTOR_DEPTH {
+            if chain.len() == self.max_ancestor_depth {
                 return Err(outside());
             }
             let folder = match self.metadata(&parent).await {
@@ -143,14 +142,21 @@ impl GoogleDriveStorage {
     }
 
     fn contains_any(&self, parents: &[String]) -> bool {
-        parents
-            .iter()
-            .any(|parent| *parent == self.folder_id || self.descendants.contains_key(parent))
+        parents.iter().any(|parent| {
+            *parent == self.folder_id
+                || self
+                    .descendants
+                    .as_ref()
+                    .is_some_and(|cache| cache.contains_key(parent))
+        })
     }
 
     async fn remember(&self, folders: Vec<String>) {
+        let Some(cache) = &self.descendants else {
+            return;
+        };
         for folder in folders {
-            self.descendants.insert(folder, ()).await;
+            cache.insert(folder, ()).await;
         }
     }
 
