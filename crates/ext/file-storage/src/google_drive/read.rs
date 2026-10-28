@@ -1,4 +1,4 @@
-use super::{FOLDER_MIME, GoogleDriveStorage, error};
+use super::{FOLDER_MIME, GoogleDriveStorage, SHORTCUT_MIME, error};
 use crate::{
     ByteStream, ExpectedIntegrity, FileStorage, ObjectInfo, ObjectRef, StorageError, StoredObject,
 };
@@ -11,6 +11,16 @@ use http_body_util::BodyExt;
 use std::io;
 
 const READ_CHUNK_BYTES: usize = 64 * 1024;
+/// Ancestor folders walked above an object before it is rejected.
+const MAX_ANCESTOR_DEPTH: usize = 32;
+const ANCESTRY_CACHE_LIMIT: usize = 4096;
+
+fn outside() -> StorageError {
+    StorageError::NotFound(io::Error::new(
+        io::ErrorKind::NotFound,
+        "object outside storage folder",
+    ))
+}
 
 #[async_trait]
 impl FileStorage for GoogleDriveStorage {
@@ -71,7 +81,43 @@ impl FileStorage for GoogleDriveStorage {
 }
 
 impl GoogleDriveStorage {
+    /// Accept a non-trashed, non-folder, non-shortcut file anywhere below the
+    /// storage folder. Drive items have a single parent: the walk checks every
+    /// listed parent but follows only the first, at most `MAX_ANCESTOR_DEPTH`
+    /// folders up. Folders proven to be descendants are cached.
     async fn guard(&self, id: &str) -> Result<(), StorageError> {
+        let file = self.metadata(id).await?;
+        if file.trashed == Some(true)
+            || matches!(file.mime_type.as_deref(), Some(FOLDER_MIME | SHORTCUT_MIME))
+        {
+            return Err(outside());
+        }
+        let mut parents = file.parents.unwrap_or_default();
+        let mut chain = Vec::new();
+        loop {
+            if self.contains_any(&parents) {
+                self.remember(chain);
+                return Ok(());
+            }
+            let Some(parent) = parents.first().cloned() else {
+                return Err(outside());
+            };
+            if chain.len() == MAX_ANCESTOR_DEPTH {
+                return Err(outside());
+            }
+            let folder = match self.metadata(&parent).await {
+                Err(StorageError::NotFound(_)) => return Err(outside()),
+                result => result?,
+            };
+            if folder.trashed == Some(true) || folder.mime_type.as_deref() != Some(FOLDER_MIME) {
+                return Err(outside());
+            }
+            chain.push(parent);
+            parents = folder.parents.unwrap_or_default();
+        }
+    }
+
+    async fn metadata(&self, id: &str) -> Result<google_drive3::api::File, StorageError> {
         let (_, file) = self
             .hub
             .files()
@@ -82,19 +128,24 @@ impl GoogleDriveStorage {
             .doit()
             .await
             .map_err(|e| error::api(e, "guard Drive object"))?;
-        if file.trashed == Some(true)
-            || file.mime_type.as_deref() == Some(FOLDER_MIME)
-            || !file
-                .parents
-                .as_ref()
-                .is_some_and(|parents| parents.contains(&self.folder_id))
-        {
-            return Err(StorageError::NotFound(io::Error::new(
-                io::ErrorKind::NotFound,
-                "object outside storage folder",
-            )));
+        Ok(file)
+    }
+
+    fn contains_any(&self, parents: &[String]) -> bool {
+        let descendants = self.descendants.lock().expect("ancestry cache lock");
+        parents
+            .iter()
+            .any(|parent| *parent == self.folder_id || descendants.contains(parent))
+    }
+
+    fn remember(&self, folders: Vec<String>) {
+        let mut descendants = self.descendants.lock().expect("ancestry cache lock");
+        for folder in folders {
+            if descendants.len() >= ANCESTRY_CACHE_LIMIT {
+                descendants.clear();
+            }
+            descendants.insert(folder);
         }
-        Ok(())
     }
 
     async fn reader(

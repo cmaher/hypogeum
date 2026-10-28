@@ -1,7 +1,8 @@
 //! Personal Google Drive storage using an operator's OAuth grant.
 //!
-//! Objects are immutable files directly inside the configured folder. Domain
-//! managers own retries. Cancelled upload futures abandon their resumable session
+//! Objects are immutable files under the configured folder: new objects are
+//! written directly inside it, and existing files anywhere in its folder tree can
+//! be read, inspected and deleted. Domain managers own retries. Cancelled upload futures abandon their resumable session
 //! (Drive expires it); they never publish an incomplete object.
 mod error;
 mod read;
@@ -11,10 +12,11 @@ mod write;
 
 use crate::{ObjectRef, StorageError};
 use google_drive3::{DriveHub, hyper_rustls, hyper_util, yup_oauth2};
-use std::fmt;
+use std::{collections::HashSet, fmt, sync::Mutex};
 
 type Connector = hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>;
 const FOLDER_MIME: &str = "application/vnd.google-apps.folder";
+const SHORTCUT_MIME: &str = "application/vnd.google-apps.shortcut";
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum DriveScope {
@@ -64,6 +66,8 @@ pub struct GoogleDriveStorage {
     scope: DriveScope,
     max_object_bytes: u64,
     root_url: String,
+    /// Folders proven to lie below `folder_id`. Bounded; only positive results.
+    descendants: Mutex<HashSet<String>>,
 }
 
 impl GoogleDriveStorage {
@@ -153,6 +157,7 @@ impl GoogleDriveStorage {
             scope: config.scope,
             max_object_bytes: config.max_object_bytes,
             root_url,
+            descendants: Mutex::default(),
         })
     }
 

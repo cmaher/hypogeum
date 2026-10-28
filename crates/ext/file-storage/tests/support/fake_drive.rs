@@ -13,6 +13,7 @@ use std::{
 };
 
 pub const FOLDER: &str = "application/vnd.google-apps.folder";
+pub const SHORTCUT: &str = "application/vnd.google-apps.shortcut";
 
 #[derive(Default)]
 pub struct Faults {
@@ -54,6 +55,7 @@ struct Data {
     violations: usize,
     requests: usize,
     media_requests: usize,
+    metadata_requests: usize,
     ranges: Vec<String>,
     deleted: usize,
 }
@@ -127,6 +129,18 @@ impl FakeDrive {
     pub fn insert_folder(&self) -> String {
         self.insert_file(vec![], false, FOLDER, vec![])
     }
+    /// A chain of `depth` nested folders below `parent`; returns the deepest.
+    pub fn insert_folder_chain(&self, parent: &str, depth: usize) -> String {
+        (0..depth).fold(parent.to_owned(), |parent, _| {
+            self.insert_file(vec![parent], false, FOLDER, vec![])
+        })
+    }
+    pub fn set_parents(&self, id: &str, parents: Vec<String>) {
+        self.data.lock().unwrap().files.get_mut(id).unwrap().parents = parents;
+    }
+    pub fn set_trashed(&self, id: &str, trashed: bool) {
+        self.data.lock().unwrap().files.get_mut(id).unwrap().trashed = trashed;
+    }
     pub fn file_count(&self) -> usize {
         self.data
             .lock()
@@ -155,6 +169,9 @@ impl FakeDrive {
     }
     pub fn media_requests(&self) -> usize {
         self.data.lock().unwrap().media_requests
+    }
+    pub fn metadata_requests(&self) -> usize {
+        self.data.lock().unwrap().metadata_requests
     }
     pub fn ranges(&self) -> Vec<String> {
         self.data.lock().unwrap().ranges.clone()
@@ -379,6 +396,8 @@ async fn handle(State(components): State<Components>, request: Request) -> Respo
                 data.media_requests += 1;
                 return Response::new(Body::from(bytes));
             }
+            data.metadata_requests += 1;
+            let file = &data.files[id];
             return Json(json!({"id": id, "parents": file.parents, "trashed": file.trashed, "mimeType": file.mime, "size": file.bytes.len().to_string()})).into_response();
         }
     }

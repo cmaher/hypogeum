@@ -264,6 +264,117 @@ async fn folder_guard_hides_foreign_trashed_and_folder_objects() {
 }
 
 #[tokio::test]
+async fn folder_guard_accepts_files_nested_below_the_root() {
+    use sha2::{Digest, Sha256};
+    let fake = FakeDrive::start().await;
+    let storage = storage(&fake).await;
+    for depth in 1..=3 {
+        let parent = fake.insert_folder_chain("folder", depth);
+        let bytes = format!("nested {depth}").into_bytes();
+        let id = fake.insert_file(vec![parent], false, "text/plain", bytes.clone());
+        let reference = reference(&id);
+        let mut read = storage
+            .read(&reference, ReadOptions::default())
+            .await
+            .unwrap();
+        let mut actual = Vec::new();
+        while let Some(chunk) = read.next().await {
+            actual.extend_from_slice(&chunk.unwrap());
+        }
+        assert_eq!(actual, bytes);
+        let info = storage.inspect(&reference).await.unwrap();
+        assert_eq!(info.sha256, hex::encode(Sha256::digest(&bytes)));
+        storage.delete(&reference).await.unwrap();
+        assert!(fake.content(&id).is_none());
+    }
+}
+
+#[tokio::test]
+async fn folder_guard_rejects_nested_foreign_trashed_and_non_file_objects() {
+    let fake = FakeDrive::start().await;
+    let storage = storage(&fake).await;
+    let outside = fake.insert_folder();
+    let foreign = fake.insert_folder_chain(&outside, 2);
+    let trashed = fake.insert_folder_chain("folder", 1);
+    let below_trashed = fake.insert_folder_chain(&trashed, 1);
+    fake.set_trashed(&trashed, true);
+    let nested = fake.insert_folder_chain("folder", 2);
+    let ids = [
+        fake.insert_file(vec![foreign], false, "text/plain", b"foreign".to_vec()),
+        fake.insert_file(vec![below_trashed], false, "text/plain", b"x".to_vec()),
+        fake.insert_file(vec![nested.clone()], false, support::fake_drive::FOLDER, vec![]),
+        fake.insert_file(vec![nested.clone()], false, support::fake_drive::SHORTCUT, vec![]),
+        fake.insert_file(vec!["missing".into()], false, "text/plain", b"x".to_vec()),
+        fake.insert_file(vec![], false, "text/plain", b"x".to_vec()),
+    ];
+    for id in ids {
+        let reference = reference(&id);
+        assert!(matches!(
+            storage.read(&reference, ReadOptions::default()).await,
+            Err(StorageError::NotFound(_))
+        ));
+        assert!(matches!(
+            storage.inspect(&reference).await,
+            Err(StorageError::NotFound(_))
+        ));
+        storage.delete(&reference).await.unwrap();
+        assert!(fake.content(&id).is_some());
+    }
+    assert_eq!(fake.media_requests(), 0);
+    assert_eq!(fake.deleted(), 0);
+    // A trashed folder is never remembered as inside the root.
+    fake.set_trashed(&trashed, false);
+    let restored = fake.insert_file(
+        vec![trashed.clone()],
+        false,
+        "text/plain",
+        b"restored".to_vec(),
+    );
+    storage.inspect(&reference(&restored)).await.unwrap();
+}
+
+#[tokio::test]
+async fn folder_guard_caches_proven_ancestors() {
+    let fake = FakeDrive::start().await;
+    let storage = storage(&fake).await;
+    let parent = fake.insert_folder_chain("folder", 3);
+    let first = fake.insert_file(vec![parent.clone()], false, "text/plain", b"a".to_vec());
+    let second = fake.insert_file(vec![parent], false, "text/plain", b"b".to_vec());
+    let before = fake.metadata_requests();
+    storage.inspect(&reference(&first)).await.unwrap();
+    assert_eq!(fake.metadata_requests() - before, 4);
+    let before = fake.metadata_requests();
+    storage.inspect(&reference(&second)).await.unwrap();
+    assert_eq!(fake.metadata_requests() - before, 1);
+}
+
+#[tokio::test]
+async fn folder_guard_caps_walk_depth() {
+    let fake = FakeDrive::start().await;
+    let storage = storage(&fake).await;
+    let deepest = fake.insert_folder_chain("folder", 32);
+    let id = fake.insert_file(vec![deepest], false, "text/plain", b"a".to_vec());
+    storage.inspect(&reference(&id)).await.unwrap();
+    let too_deep = fake.insert_folder_chain("folder", 33);
+    let id = fake.insert_file(vec![too_deep], false, "text/plain", b"a".to_vec());
+    assert!(matches!(
+        storage.inspect(&reference(&id)).await,
+        Err(StorageError::NotFound(_))
+    ));
+    // Cycles end at the depth cap.
+    let (a, b) = (fake.insert_folder(), fake.insert_folder());
+    fake.set_parents(&a, vec![b.clone()]);
+    fake.set_parents(&b, vec![a.clone()]);
+    let id = fake.insert_file(vec![a], false, "text/plain", b"a".to_vec());
+    let before = fake.metadata_requests();
+    assert!(matches!(
+        storage.inspect(&reference(&id)).await,
+        Err(StorageError::NotFound(_))
+    ));
+    assert_eq!(fake.metadata_requests() - before, 33);
+}
+
+#[tokio::test]
 async fn invalid_references_make_no_requests() {
     let fake = FakeDrive::start().await;
     let storage = storage(&fake).await;
