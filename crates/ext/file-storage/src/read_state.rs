@@ -58,7 +58,11 @@ impl ReadState {
             .checked_add(bytes.len() as u64)
             .filter(|size| *size <= self.limit)
             .ok_or(StorageError::SizeLimit { limit: self.limit })?;
-        if self.options.range.is_some_and(|range| self.size > range.length) {
+        if self
+            .options
+            .range
+            .is_some_and(|range| self.size > range.length)
+        {
             return Err(StorageError::Io {
                 operation: "read object range",
                 source: io::Error::other("more bytes than the requested range"),

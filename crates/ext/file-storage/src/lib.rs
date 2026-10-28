@@ -10,9 +10,7 @@ pub mod google_drive;
 pub mod models;
 mod read_state;
 pub use hypgm_errors::StorageError;
-pub use models::{
-    ByteRange, ExpectedIntegrity, ObjectInfo, ObjectRef, ReadOptions, StoredObject,
-};
+pub use models::{ByteRange, ExpectedIntegrity, ObjectInfo, ObjectRef, ReadOptions, StoredObject};
 
 use async_trait::async_trait;
 use bytes::Bytes;

@@ -152,10 +152,9 @@ struct Reader {
 
 impl Reader {
     async fn next_chunk(&mut self) -> Result<Option<Bytes>, StorageError> {
-        let wanted = self
-            .state
-            .remaining()
-            .map_or(CHUNK_BYTES, |remaining| remaining.min(CHUNK_BYTES as u64) as usize);
+        let wanted = self.state.remaining().map_or(CHUNK_BYTES, |remaining| {
+            remaining.min(CHUNK_BYTES as u64) as usize
+        });
         if wanted == 0 {
             self.state.finish()?;
             return Ok(None);

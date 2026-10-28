@@ -302,8 +302,18 @@ async fn folder_guard_rejects_nested_foreign_trashed_and_non_file_objects() {
     let ids = [
         fake.insert_file(vec![foreign], false, "text/plain", b"foreign".to_vec()),
         fake.insert_file(vec![below_trashed], false, "text/plain", b"x".to_vec()),
-        fake.insert_file(vec![nested.clone()], false, support::fake_drive::FOLDER, vec![]),
-        fake.insert_file(vec![nested.clone()], false, support::fake_drive::SHORTCUT, vec![]),
+        fake.insert_file(
+            vec![nested.clone()],
+            false,
+            support::fake_drive::FOLDER,
+            vec![],
+        ),
+        fake.insert_file(
+            vec![nested.clone()],
+            false,
+            support::fake_drive::SHORTCUT,
+            vec![],
+        ),
         fake.insert_file(vec!["missing".into()], false, "text/plain", b"x".to_vec()),
         fake.insert_file(vec![], false, "text/plain", b"x".to_vec()),
     ];
@@ -704,5 +714,8 @@ async fn ranged_reads_send_range_and_require_partial_content() {
         storage.read(&reference, ranged(0, 10)).await,
         Err(StorageError::InvalidInput(_))
     ));
-    assert_eq!(fake.media_ranges(), ["bytes=100-149", "bytes=0-9", "bytes=0-9"]);
+    assert_eq!(
+        fake.media_ranges(),
+        ["bytes=100-149", "bytes=0-9", "bytes=0-9"]
+    );
 }

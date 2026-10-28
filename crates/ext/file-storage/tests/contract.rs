@@ -269,7 +269,9 @@ async fn range_contract(storage: Arc<dyn FileStorage>) {
     }
     for (offset, length) in [(len - 7, 8), (len + 1, 0), (len, 1), (u64::MAX, 2)] {
         assert!(matches!(
-            storage.read(&stored.object_ref, ranged(offset, length)).await,
+            storage
+                .read(&stored.object_ref, ranged(offset, length))
+                .await,
             Err(StorageError::InvalidInput(_))
         ));
     }
