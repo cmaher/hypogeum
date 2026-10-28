@@ -39,6 +39,16 @@ pub struct ReadOptions {
     /// Maximum bytes allowed, independent of expected size. The adapter's configured
     /// limit still applies; the smaller limit wins. Zero permits only empty objects.
     pub max_bytes: Option<u64>,
+    /// Stream only `[offset, offset + length)`. Ranged reads make no integrity
+    /// claim, so they reject `expected` checks; byte limits apply to `length`.
+    pub range: Option<ByteRange>,
+}
+
+/// A byte slice of an object. The whole slice must lie within the object.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ByteRange {
+    pub offset: u64,
+    pub length: u64,
 }
 
 impl ExpectedIntegrity {

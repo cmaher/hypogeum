@@ -13,6 +13,7 @@ use std::{
 };
 
 pub const FOLDER: &str = "application/vnd.google-apps.folder";
+pub const SHORTCUT: &str = "application/vnd.google-apps.shortcut";
 
 #[derive(Default)]
 pub struct Faults {
@@ -32,6 +33,12 @@ pub struct Faults {
     pub final_partial_ack: Option<usize>,
     pub delete_failure: bool,
     pub foreign_location: bool,
+    pub ignore_range: bool,
+    pub unsatisfiable_range: bool,
+    pub range_status: Option<(u16, &'static str)>,
+    pub wrong_content_range: bool,
+    pub short_range_body: bool,
+    pub long_range_body: bool,
 }
 
 struct File {
@@ -54,6 +61,8 @@ struct Data {
     violations: usize,
     requests: usize,
     media_requests: usize,
+    metadata_requests: usize,
+    media_ranges: Vec<String>,
     ranges: Vec<String>,
     deleted: usize,
 }
@@ -127,6 +136,18 @@ impl FakeDrive {
     pub fn insert_folder(&self) -> String {
         self.insert_file(vec![], false, FOLDER, vec![])
     }
+    /// A chain of `depth` nested folders below `parent`; returns the deepest.
+    pub fn insert_folder_chain(&self, parent: &str, depth: usize) -> String {
+        (0..depth).fold(parent.to_owned(), |parent, _| {
+            self.insert_file(vec![parent], false, FOLDER, vec![])
+        })
+    }
+    pub fn set_parents(&self, id: &str, parents: Vec<String>) {
+        self.data.lock().unwrap().files.get_mut(id).unwrap().parents = parents;
+    }
+    pub fn set_trashed(&self, id: &str, trashed: bool) {
+        self.data.lock().unwrap().files.get_mut(id).unwrap().trashed = trashed;
+    }
     pub fn file_count(&self) -> usize {
         self.data
             .lock()
@@ -155,6 +176,13 @@ impl FakeDrive {
     }
     pub fn media_requests(&self) -> usize {
         self.data.lock().unwrap().media_requests
+    }
+    pub fn metadata_requests(&self) -> usize {
+        self.data.lock().unwrap().metadata_requests
+    }
+    /// `Range` headers sent on media downloads.
+    pub fn media_ranges(&self) -> Vec<String> {
+        self.data.lock().unwrap().media_ranges.clone()
     }
     pub fn ranges(&self) -> Vec<String> {
         self.data.lock().unwrap().ranges.clone()
@@ -377,8 +405,50 @@ async fn handle(State(components): State<Components>, request: Request) -> Respo
             if parts.uri.query().is_some_and(|q| q.contains("alt=media")) {
                 let bytes = file.bytes.clone();
                 data.media_requests += 1;
-                return Response::new(Body::from(bytes));
+                let Some(range) = parts.headers.get(header::RANGE) else {
+                    return Response::new(Body::from(bytes));
+                };
+                let range = range.to_str().unwrap().to_owned();
+                data.media_ranges.push(range.clone());
+                if std::mem::take(&mut data.faults.ignore_range) {
+                    return Response::new(Body::from(bytes));
+                }
+                let (start, end) = range
+                    .strip_prefix("bytes=")
+                    .and_then(|span| span.split_once('-'))
+                    .map(|(a, b)| (a.parse::<usize>().unwrap(), b.parse::<usize>().unwrap()))
+                    .unwrap();
+                if std::mem::take(&mut data.faults.unsatisfiable_range) || start >= bytes.len() {
+                    return StatusCode::RANGE_NOT_SATISFIABLE.into_response();
+                }
+                if let Some((code, reason)) = data.faults.range_status.take() {
+                    return failure(code, reason);
+                }
+                let end = end.min(bytes.len() - 1);
+                let label_start = if std::mem::take(&mut data.faults.wrong_content_range) {
+                    start + 1
+                } else {
+                    start
+                };
+                let mut body = bytes[start..=end].to_vec();
+                if std::mem::take(&mut data.faults.short_range_body) {
+                    body.pop();
+                }
+                if std::mem::take(&mut data.faults.long_range_body) {
+                    body.push(0);
+                }
+                return (
+                    StatusCode::PARTIAL_CONTENT,
+                    [(
+                        header::CONTENT_RANGE,
+                        format!("bytes {label_start}-{end}/{}", bytes.len()),
+                    )],
+                    body,
+                )
+                    .into_response();
             }
+            data.metadata_requests += 1;
+            let file = &data.files[id];
             return Json(json!({"id": id, "parents": file.parents, "trashed": file.trashed, "mimeType": file.mime, "size": file.bytes.len().to_string()})).into_response();
         }
     }

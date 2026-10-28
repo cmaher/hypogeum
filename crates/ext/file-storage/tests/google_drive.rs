@@ -2,8 +2,9 @@
 mod support;
 use hypgmx_file_storage::{
     StorageError,
-    google_drive::{DriveScope, GoogleDriveConfig, GoogleDriveStorage},
+    google_drive::{DriveAncestryConfig, DriveScope, GoogleDriveConfig, GoogleDriveStorage},
 };
+use std::time::Duration;
 use support::fake_drive::FakeDrive;
 
 fn config(folder_id: &str) -> GoogleDriveConfig {
@@ -15,6 +16,7 @@ fn config(folder_id: &str) -> GoogleDriveConfig {
         refresh_token: "refresh".into(),
         scope: DriveScope::Full,
         max_object_bytes: 32 * 1024 * 1024,
+        ancestry: DriveAncestryConfig::default(),
     }
 }
 async fn storage(fake: &FakeDrive) -> GoogleDriveStorage {
@@ -261,6 +263,180 @@ async fn folder_guard_hides_foreign_trashed_and_folder_objects() {
     }
     assert_eq!(fake.media_requests(), 0);
     assert_eq!(fake.deleted(), 0);
+}
+
+#[tokio::test]
+async fn folder_guard_accepts_files_nested_below_the_root() {
+    use sha2::{Digest, Sha256};
+    let fake = FakeDrive::start().await;
+    let storage = storage(&fake).await;
+    for depth in 1..=3 {
+        let parent = fake.insert_folder_chain("folder", depth);
+        let bytes = format!("nested {depth}").into_bytes();
+        let id = fake.insert_file(vec![parent], false, "text/plain", bytes.clone());
+        let reference = reference(&id);
+        let mut read = storage
+            .read(&reference, ReadOptions::default())
+            .await
+            .unwrap();
+        let mut actual = Vec::new();
+        while let Some(chunk) = read.next().await {
+            actual.extend_from_slice(&chunk.unwrap());
+        }
+        assert_eq!(actual, bytes);
+        let info = storage.inspect(&reference).await.unwrap();
+        assert_eq!(info.sha256, hex::encode(Sha256::digest(&bytes)));
+        storage.delete(&reference).await.unwrap();
+        assert!(fake.content(&id).is_none());
+    }
+}
+
+#[tokio::test]
+async fn folder_guard_rejects_nested_foreign_trashed_and_non_file_objects() {
+    let fake = FakeDrive::start().await;
+    let storage = storage(&fake).await;
+    let outside = fake.insert_folder();
+    let foreign = fake.insert_folder_chain(&outside, 2);
+    let trashed = fake.insert_folder_chain("folder", 1);
+    let below_trashed = fake.insert_folder_chain(&trashed, 1);
+    fake.set_trashed(&trashed, true);
+    let nested = fake.insert_folder_chain("folder", 2);
+    let ids = [
+        fake.insert_file(vec![foreign], false, "text/plain", b"foreign".to_vec()),
+        fake.insert_file(vec![below_trashed], false, "text/plain", b"x".to_vec()),
+        fake.insert_file(
+            vec![nested.clone()],
+            false,
+            support::fake_drive::FOLDER,
+            vec![],
+        ),
+        fake.insert_file(
+            vec![nested.clone()],
+            false,
+            support::fake_drive::SHORTCUT,
+            vec![],
+        ),
+        fake.insert_file(vec!["missing".into()], false, "text/plain", b"x".to_vec()),
+        fake.insert_file(vec![], false, "text/plain", b"x".to_vec()),
+    ];
+    let under_trashed = reference(&ids[1]);
+    for id in ids {
+        let reference = reference(&id);
+        assert!(matches!(
+            storage.read(&reference, ReadOptions::default()).await,
+            Err(StorageError::NotFound(_))
+        ));
+        assert!(matches!(
+            storage.inspect(&reference).await,
+            Err(StorageError::NotFound(_))
+        ));
+        storage.delete(&reference).await.unwrap();
+        assert!(fake.content(&id).is_some());
+    }
+    assert_eq!(fake.media_requests(), 0);
+    assert_eq!(fake.deleted(), 0);
+    // Folders on a rejected walk are not remembered: a repeat walk still
+    // reaches the trashed folder (file, its parent, the trashed folder).
+    let before = fake.metadata_requests();
+    assert!(matches!(
+        storage.inspect(&under_trashed).await,
+        Err(StorageError::NotFound(_))
+    ));
+    assert_eq!(fake.metadata_requests() - before, 3);
+    // Rejections are not cached either: a restored folder is accepted.
+    fake.set_trashed(&trashed, false);
+    let restored = fake.insert_file(
+        vec![trashed.clone()],
+        false,
+        "text/plain",
+        b"restored".to_vec(),
+    );
+    storage.inspect(&reference(&restored)).await.unwrap();
+}
+
+#[tokio::test]
+async fn folder_guard_caches_proven_ancestors() {
+    let fake = FakeDrive::start().await;
+    let storage = storage(&fake).await;
+    let parent = fake.insert_folder_chain("folder", 3);
+    let first = fake.insert_file(vec![parent.clone()], false, "text/plain", b"a".to_vec());
+    let second = fake.insert_file(vec![parent], false, "text/plain", b"b".to_vec());
+    let before = fake.metadata_requests();
+    storage.inspect(&reference(&first)).await.unwrap();
+    assert_eq!(fake.metadata_requests() - before, 4);
+    let before = fake.metadata_requests();
+    storage.inspect(&reference(&second)).await.unwrap();
+    assert_eq!(fake.metadata_requests() - before, 1);
+}
+
+#[tokio::test]
+async fn folder_guard_caps_walk_depth() {
+    let fake = FakeDrive::start().await;
+    let storage = storage(&fake).await;
+    let deepest = fake.insert_folder_chain("folder", 32);
+    let id = fake.insert_file(vec![deepest], false, "text/plain", b"a".to_vec());
+    storage.inspect(&reference(&id)).await.unwrap();
+    let too_deep = fake.insert_folder_chain("folder", 33);
+    let id = fake.insert_file(vec![too_deep], false, "text/plain", b"a".to_vec());
+    assert!(matches!(
+        storage.inspect(&reference(&id)).await,
+        Err(StorageError::NotFound(_))
+    ));
+    // Cycles end at the depth cap.
+    let (a, b) = (fake.insert_folder(), fake.insert_folder());
+    fake.set_parents(&a, vec![b.clone()]);
+    fake.set_parents(&b, vec![a.clone()]);
+    let id = fake.insert_file(vec![a], false, "text/plain", b"a".to_vec());
+    let before = fake.metadata_requests();
+    assert!(matches!(
+        storage.inspect(&reference(&id)).await,
+        Err(StorageError::NotFound(_))
+    ));
+    assert_eq!(fake.metadata_requests() - before, 33);
+}
+
+#[tokio::test]
+async fn ancestry_depth_and_cache_are_configurable() {
+    let fake = FakeDrive::start().await;
+    let storage = GoogleDriveStorage::with_test_endpoint(
+        GoogleDriveConfig {
+            ancestry: DriveAncestryConfig {
+                max_depth: 1,
+                cache_ttl: Duration::ZERO,
+                ..Default::default()
+            },
+            ..config("folder")
+        },
+        &fake.root_url,
+        "test-token",
+    )
+    .await
+    .unwrap();
+    let parent = fake.insert_folder_chain("folder", 1);
+    let id = fake.insert_file(vec![parent], false, "text/plain", b"a".to_vec());
+    // With the cache disabled every walk fetches the parent again.
+    for _ in 0..2 {
+        let before = fake.metadata_requests();
+        storage.inspect(&reference(&id)).await.unwrap();
+        assert_eq!(fake.metadata_requests() - before, 2);
+    }
+    let too_deep = fake.insert_folder_chain("folder", 2);
+    let id = fake.insert_file(vec![too_deep], false, "text/plain", b"a".to_vec());
+    assert!(matches!(
+        storage.inspect(&reference(&id)).await,
+        Err(StorageError::NotFound(_))
+    ));
+    let invalid = GoogleDriveConfig {
+        ancestry: DriveAncestryConfig {
+            cache_ttl: Duration::MAX,
+            ..Default::default()
+        },
+        ..config("folder")
+    };
+    assert!(matches!(
+        GoogleDriveStorage::with_test_endpoint(invalid, &fake.root_url, "test-token").await,
+        Err(StorageError::InvalidInput(_))
+    ));
 }
 
 #[tokio::test]
@@ -551,4 +727,83 @@ async fn foreign_session_uri_is_never_followed() {
         Err(StorageError::Io { .. })
     ));
     assert!(fake.ranges().is_empty());
+}
+
+#[tokio::test]
+async fn ranged_reads_send_range_and_require_partial_content() {
+    use hypgmx_file_storage::ByteRange;
+    let fake = FakeDrive::start().await;
+    let storage = storage(&fake).await;
+    let bytes: Vec<u8> = (0..1_000u32).map(|i| (i % 251) as u8).collect();
+    let id = fake.insert_file(
+        vec!["folder".into()],
+        false,
+        "application/octet-stream",
+        bytes.clone(),
+    );
+    let reference = reference(&id);
+    let ranged = |offset, length| ReadOptions {
+        range: Some(ByteRange { offset, length }),
+        ..Default::default()
+    };
+    let mut read = storage.read(&reference, ranged(100, 50)).await.unwrap();
+    let mut actual = Vec::new();
+    while let Some(chunk) = read.next().await {
+        actual.extend_from_slice(&chunk.unwrap());
+    }
+    assert_eq!(actual, bytes[100..150]);
+    assert_eq!(fake.media_ranges(), ["bytes=100-149"]);
+    // Zero-length ranges are served without downloading.
+    let media = fake.media_requests();
+    let mut read = storage.read(&reference, ranged(10, 0)).await.unwrap();
+    assert!(read.next().await.is_none());
+    assert_eq!(fake.media_requests(), media);
+    // A server ignoring Range must never stream the whole object.
+    fake.faults(|f| f.ignore_range = true);
+    assert!(matches!(
+        storage.read(&reference, ranged(0, 10)).await,
+        Err(StorageError::Io { .. })
+    ));
+    fake.faults(|f| f.unsatisfiable_range = true);
+    assert!(matches!(
+        storage.read(&reference, ranged(0, 10)).await,
+        Err(StorageError::InvalidInput(_))
+    ));
+    assert_eq!(
+        fake.media_ranges(),
+        ["bytes=100-149", "bytes=0-9", "bytes=0-9"]
+    );
+    // A 206 for a different range is never streamed.
+    fake.faults(|f| f.wrong_content_range = true);
+    assert!(matches!(
+        storage.read(&reference, ranged(0, 10)).await,
+        Err(StorageError::Io { .. })
+    ));
+    // Other statuses map like unranged reads.
+    fake.faults(|f| f.range_status = Some((404, "notFound")));
+    assert!(matches!(
+        storage.read(&reference, ranged(0, 10)).await,
+        Err(StorageError::NotFound(_))
+    ));
+    fake.faults(|f| f.range_status = Some((403, "forbidden")));
+    assert!(matches!(
+        storage.read(&reference, ranged(0, 10)).await,
+        Err(StorageError::PermissionDenied(_))
+    ));
+    // Bodies shorter or longer than the range fail as downstream errors.
+    for fault in [
+        (|f: &mut support::fake_drive::Faults| f.short_range_body = true) as fn(&mut _),
+        |f| f.long_range_body = true,
+    ] {
+        fake.faults(fault);
+        let mut read = storage.read(&reference, ranged(0, 10)).await.unwrap();
+        let mut failure = None;
+        while let Some(chunk) = read.next().await {
+            if let Err(error) = chunk {
+                failure = Some(error);
+                break;
+            }
+        }
+        assert!(matches!(failure, Some(StorageError::Io { .. })));
+    }
 }
