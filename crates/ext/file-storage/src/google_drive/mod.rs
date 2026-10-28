@@ -12,7 +12,8 @@ mod write;
 
 use crate::{ObjectRef, StorageError};
 use google_drive3::{DriveHub, hyper_rustls, hyper_util, yup_oauth2};
-use std::{collections::HashSet, fmt, sync::Mutex};
+use moka::future::Cache;
+use std::{fmt, time::Duration};
 
 type Connector = hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>;
 const FOLDER_MIME: &str = "application/vnd.google-apps.folder";
@@ -66,8 +67,8 @@ pub struct GoogleDriveStorage {
     scope: DriveScope,
     max_object_bytes: u64,
     root_url: String,
-    /// Folders proven to lie below `folder_id`. Bounded; only positive results.
-    descendants: Mutex<HashSet<String>>,
+    /// Positive ancestry results expire ten minutes after insertion.
+    descendants: Cache<String, ()>,
 }
 
 impl GoogleDriveStorage {
@@ -157,7 +158,10 @@ impl GoogleDriveStorage {
             scope: config.scope,
             max_object_bytes: config.max_object_bytes,
             root_url,
-            descendants: Mutex::default(),
+            descendants: Cache::builder()
+                .max_capacity(4096)
+                .time_to_live(Duration::from_secs(10 * 60))
+                .build(),
         })
     }
 

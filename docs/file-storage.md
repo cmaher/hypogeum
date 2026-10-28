@@ -70,3 +70,11 @@ failures using temporary directories and synthetic bytes; it needs no database.
 Enable `--features google-drive` to run the same contract cases against the Drive
 adapter using a local protocol fixture, without credentials. Both adapters use the
 same read accounting and opt-in integrity policy.
+
+## Google Drive ancestry cache
+
+The Drive adapter accepts files anywhere below its configured root folder. It
+caches verified ancestor folder IDs with Moka, with a maximum capacity of 4,096
+entries and a ten-minute time to live from insertion. Cache hits do not extend
+the TTL. Ancestor moves and trash changes are not observed while cached ancestry
+is trusted; the target file's own metadata is checked on every operation.

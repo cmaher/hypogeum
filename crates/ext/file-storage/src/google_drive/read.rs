@@ -20,7 +20,6 @@ use std::io;
 const READ_CHUNK_BYTES: usize = 64 * 1024;
 /// Ancestor folders walked above an object before it is rejected.
 const MAX_ANCESTOR_DEPTH: usize = 32;
-const ANCESTRY_CACHE_LIMIT: usize = 4096;
 
 fn outside() -> StorageError {
     StorageError::NotFound(io::Error::new(
@@ -93,8 +92,9 @@ impl GoogleDriveStorage {
     /// Accept a non-trashed, non-folder, non-shortcut file anywhere below the
     /// storage folder. Drive items have a single parent: the walk checks every
     /// listed parent but follows only the first, at most `MAX_ANCESTOR_DEPTH`
-    /// folders up. Folders proven to be descendants are cached. Returns the
-    /// object's size when Drive reports one.
+    /// folders up. Proven descendants are cached for ten minutes; ancestor moves
+    /// and trash changes are not observed while cached ancestry is trusted.
+    /// Returns the object's size when Drive reports one.
     async fn guard(&self, id: &str) -> Result<Option<u64>, StorageError> {
         let file = self.metadata(id).await?;
         if file.trashed == Some(true)
@@ -107,7 +107,7 @@ impl GoogleDriveStorage {
         let mut chain = Vec::new();
         loop {
             if self.contains_any(&parents) {
-                self.remember(chain);
+                self.remember(chain).await;
                 return Ok(size);
             }
             let Some(parent) = parents.first().cloned() else {
@@ -143,19 +143,14 @@ impl GoogleDriveStorage {
     }
 
     fn contains_any(&self, parents: &[String]) -> bool {
-        let descendants = self.descendants.lock().expect("ancestry cache lock");
         parents
             .iter()
-            .any(|parent| *parent == self.folder_id || descendants.contains(parent))
+            .any(|parent| *parent == self.folder_id || self.descendants.contains_key(parent))
     }
 
-    fn remember(&self, folders: Vec<String>) {
-        let mut descendants = self.descendants.lock().expect("ancestry cache lock");
+    async fn remember(&self, folders: Vec<String>) {
         for folder in folders {
-            if descendants.len() >= ANCESTRY_CACHE_LIMIT {
-                descendants.clear();
-            }
-            descendants.insert(folder);
+            self.descendants.insert(folder, ()).await;
         }
     }
 
