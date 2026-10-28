@@ -95,17 +95,18 @@ impl GoogleDriveStorage {
     /// cached ancestry is trusted.
     /// Returns the object's size when Drive reports one.
     async fn guard(&self, id: &str) -> Result<Option<u64>, StorageError> {
-        let file = match self.metadata(id).await {
-            Err(error @ StorageError::NotFound(_)) => {
-                self.forget_object(id).await;
-                return Err(error);
-            }
-            result => result?,
-        };
+        let result = self.check_object(id).await;
+        if matches!(&result, Err(StorageError::NotFound(_))) {
+            self.forget_object(id).await;
+        }
+        result
+    }
+
+    async fn check_object(&self, id: &str) -> Result<Option<u64>, StorageError> {
+        let file = self.metadata(id).await?;
         if file.trashed == Some(true)
             || matches!(file.mime_type.as_deref(), Some(FOLDER_MIME | SHORTCUT_MIME))
         {
-            self.forget_object(id).await;
             return Err(outside());
         }
         let size = file.size.and_then(|size| u64::try_from(size).ok());

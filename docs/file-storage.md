@@ -105,5 +105,5 @@ checks metadata again.
 Ancestor moves and trash changes are not observed while cached ancestry is
 trusted. Likewise, a cached object's move outside the root, trash status, type,
 or size changes may remain unseen until its TTL expires. Delete always checks
-the target object's metadata, and observing a missing, trashed, folder or shortcut
-object during that check evicts its cached guard.
+the target object's metadata. Any definitive rejection during that check,
+including rejected ancestry, evicts its cached guard.

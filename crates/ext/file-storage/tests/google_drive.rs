@@ -922,6 +922,73 @@ async fn object_cache_can_be_disabled_by_capacity_or_ttl() {
 }
 
 #[tokio::test]
+async fn fresh_delete_guard_evicts_objects_with_rejected_ancestry() {
+    for case in [
+        "parentless",
+        "missing",
+        "foreign",
+        "trashed",
+        "non-folder",
+        "depth",
+    ] {
+        let fake = FakeDrive::start().await;
+        let storage = GoogleDriveStorage::with_test_endpoint(
+            GoogleDriveConfig {
+                ancestry: DriveAncestryConfig {
+                    max_depth: 1,
+                    ..Default::default()
+                },
+                ..config("folder")
+            },
+            &fake.root_url,
+            "test-token",
+        )
+        .await
+        .unwrap();
+        let id = fake.insert_file(vec!["folder".into()], false, "text/plain", b"abc".to_vec());
+        let reference = reference(&id);
+        storage.inspect(&reference).await.unwrap();
+        let parents = match case {
+            "parentless" => vec![],
+            "missing" => vec!["missing".into()],
+            _ => {
+                let grandparents = match case {
+                    "foreign" => vec![],
+                    "depth" => vec![fake.insert_file(
+                        vec!["folder".into()],
+                        false,
+                        "application/vnd.google-apps.folder",
+                        vec![],
+                    )],
+                    _ => vec!["folder".into()],
+                };
+                vec![fake.insert_file(
+                    grandparents,
+                    case == "trashed",
+                    if case == "non-folder" {
+                        "text/plain"
+                    } else {
+                        "application/vnd.google-apps.folder"
+                    },
+                    vec![],
+                )]
+            }
+        };
+        fake.set_parents(&id, parents);
+        storage.delete(&reference).await.unwrap();
+        let media = fake.media_requests();
+        assert!(
+            matches!(
+                storage.read(&reference, range_options(0, 1)).await,
+                Err(StorageError::NotFound(_))
+            ),
+            "cached guard survived {case} ancestry rejection"
+        );
+        assert_eq!(fake.media_requests(), media);
+    }
+}
+
+#[tokio::test]
 async fn fresh_delete_guard_evicts_trashed_object() {
     let fake = FakeDrive::start().await;
     let storage = storage(&fake).await;
