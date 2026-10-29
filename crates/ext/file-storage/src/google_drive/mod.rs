@@ -14,10 +14,15 @@ mod read;
 mod tests;
 mod write;
 
-use crate::StorageError;
+use crate::{ObjectKey, StorageError};
 use google_drive3::{DriveHub, hyper_rustls, hyper_util, yup_oauth2};
 use moka::future::Cache;
-use std::{fmt, time::Duration};
+use std::{
+    collections::HashMap,
+    fmt,
+    sync::{Mutex, Weak},
+    time::Duration,
+};
 
 type Connector = hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>;
 const FOLDER_MIME: &str = "application/vnd.google-apps.folder";
@@ -101,6 +106,9 @@ pub struct GoogleDriveStorage {
     /// Serializes this client's folder creation so concurrent writes never
     /// create duplicate folders. Other clients can still race.
     folders: tokio::sync::Mutex<()>,
+    /// Weak entries keep idle keys from accumulating. Each writer holds its
+    /// key lock from resolution through publication and cache update.
+    writes: Mutex<HashMap<ObjectKey, Weak<tokio::sync::Mutex<()>>>>,
 }
 
 impl GoogleDriveStorage {
@@ -205,6 +213,7 @@ impl GoogleDriveStorage {
                 },
             ),
             folders: tokio::sync::Mutex::new(()),
+            writes: Mutex::new(HashMap::new()),
         })
     }
 

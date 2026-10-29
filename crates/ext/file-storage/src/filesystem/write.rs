@@ -215,34 +215,44 @@ fn install(
 }
 
 /// Create missing directories between the root and `destination`, syncing each
-/// new entry. Existing segments must be real directories, never symlinks.
+/// ancestor entry, including entries left by failed or concurrent writes.
+/// Existing segments must be real directories, never symlinks.
 fn create_parents(root: &Path, destination: &Path, ops: &FsOps) -> Result<(), StorageError> {
     let not_directory =
         || StorageError::InvalidInput("object parents must be real directories".into());
     for parent in parents(root, destination) {
         match fs::symlink_metadata(parent) {
-            Ok(metadata) if metadata.file_type().is_dir() => continue,
+            Ok(metadata) if metadata.file_type().is_dir() => (),
             Ok(_) => return Err(not_directory()),
-            Err(e) if e.kind() == io::ErrorKind::NotFound => (),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                create_parent(parent, ops)?;
+            }
             Err(e) => return Err(StorageError::io("inspect object parent", e)),
         }
-        match ops
-            .check(Operation::CreateParent)
-            .and_then(|()| fs::create_dir(parent))
-        {
-            Ok(()) => (),
-            // A concurrent writer created it first.
-            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
-                require_directory(parent).map_err(|_| not_directory())?;
-                continue;
-            }
-            Err(e) => return Err(StorageError::io("create object parent", e)),
-        }
+        // Existing entries may come from a failed or concurrent writer whose
+        // directory sync has not completed. Settle every ancestor ourselves.
         ops.sync_dir(
             parent.parent().expect("object parent below root"),
             Operation::CreateParentSync,
         )
         .map_err(|e| StorageError::io("sync object parent", e))?;
+    }
+    Ok(())
+}
+
+fn create_parent(parent: &Path, ops: &FsOps) -> Result<(), StorageError> {
+    match ops
+        .check(Operation::CreateParent)
+        .and_then(|()| fs::create_dir(parent))
+    {
+        Ok(()) => (),
+        // A concurrent writer created it first.
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+            require_directory(parent).map_err(|_| {
+                StorageError::InvalidInput("object parents must be real directories".into())
+            })?;
+        }
+        Err(e) => return Err(StorageError::io("create object parent", e)),
     }
     Ok(())
 }

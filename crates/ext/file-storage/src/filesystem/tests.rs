@@ -951,3 +951,34 @@ async fn read_limit_cannot_override_adapter_limit() {
         assert!(read.next().await.is_none());
     }
 }
+
+#[tokio::test]
+async fn retry_syncs_existing_ancestors_before_installing() {
+    let root = tempfile::tempdir().unwrap();
+    let ops = Arc::new(FsOps::default());
+    let storage = FilesystemStorage::construct(config(root.path()), ops.clone())
+        .await
+        .unwrap();
+    let object = key("a/b/object");
+    for _ in 0..2 {
+        ops.failures
+            .lock()
+            .unwrap()
+            .push(Operation::CreateParentSync);
+        assert!(
+            storage
+                .write(&object, bytes(b"value"), ExpectedIntegrity::default())
+                .await
+                .is_err()
+        );
+        assert!(root.path().join("a").is_dir());
+        assert!(!root.path().join("a/b").exists());
+        assert!(!root.path().join("a/b/object").exists());
+        assert!(ops.failures.lock().unwrap().is_empty());
+    }
+    let stored = storage
+        .write(&object, bytes(b"value"), ExpectedIntegrity::default())
+        .await
+        .unwrap();
+    assert_eq!(content(&storage, &stored.object_ref).await, b"value");
+}

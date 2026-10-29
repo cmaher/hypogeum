@@ -1210,3 +1210,97 @@ async fn expired_paths_are_resolved_again() {
         Err(StorageError::NotFound(_))
     ));
 }
+
+#[tokio::test]
+async fn concurrent_writes_to_one_new_key_replace_instead_of_duplicate() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+    for path_cache in [
+        DrivePathCacheConfig::default(),
+        DrivePathCacheConfig {
+            capacity: 0,
+            ..Default::default()
+        },
+    ] {
+        let fake = FakeDrive::start().await;
+        let storage = storage_with_cache(&fake, path_cache).await;
+        let object = key("shared/object");
+        let ready = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let source = {
+            let ready = ready.clone();
+            let release = release.clone();
+            Box::pin(stream::once(async move {
+                ready.notify_one();
+                release.notified().await;
+                Ok(bytes::Bytes::from_static(b"first"))
+            }))
+        };
+        let first = storage.write(&object, source, ExpectedIntegrity::default());
+        tokio::pin!(first);
+        tokio::select! {
+            result = &mut first => panic!("write completed before release: {result:?}"),
+            _ = ready.notified() => {}
+        }
+        let consumed = Arc::new(AtomicBool::new(false));
+        let observed = consumed.clone();
+        let second = storage.write(
+            &object,
+            Box::pin(stream::once(async move {
+                observed.store(true, Ordering::SeqCst);
+                Ok(bytes::Bytes::from_static(b"second"))
+            })),
+            ExpectedIntegrity::default(),
+        );
+        tokio::pin!(second);
+        // Drive both operations until the first completes, allowing the second
+        // to race its lookup while the first upload is deliberately paused.
+        let release_first = async {
+            for _ in 0..100 {
+                tokio::task::yield_now().await;
+            }
+            assert!(!consumed.load(Ordering::SeqCst));
+            release.notify_one();
+        };
+        let (a, b, ()) = tokio::join!(first, second, release_first);
+        a.unwrap();
+        b.unwrap();
+        assert_eq!(fake.file_count(), 1);
+        let fresh = storage_with_cache(&fake, path_cache).await;
+        assert_eq!(
+            read_all(&fresh, &reference("shared/object"), ReadOptions::default()).await,
+            b"second"
+        );
+    }
+}
+
+#[tokio::test]
+async fn stale_cached_parent_is_retried_when_creating_nested_folders() {
+    let fake = FakeDrive::start().await;
+    let storage = storage(&fake).await;
+    storage
+        .write(
+            &key("a/b"),
+            input(b"first".to_vec()),
+            ExpectedIntegrity::default(),
+        )
+        .await
+        .unwrap();
+    fake.remove(&fake.id_at("a/b").unwrap());
+    fake.remove(&fake.id_at("a").unwrap());
+    fake.insert_folder("folder", "a");
+    storage
+        .write(
+            &key("a/new/child"),
+            input(b"second".to_vec()),
+            ExpectedIntegrity::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        read_all(&storage, &reference("a/new/child"), ReadOptions::default()).await,
+        b"second"
+    );
+}

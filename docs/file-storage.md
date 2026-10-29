@@ -141,7 +141,8 @@ last segment, so a file and a folder may share a name. Trashed items and items
 outside the storage folder never match; shortcuts are not objects, and a write
 to a key held by a shortcut is rejected. Duplicate names at one segment are
 ambiguous and return `StorageError::InvalidInput` rather than choosing one.
-This client serializes its own folder creation, but separate clients creating
+This client serializes its own folder creation and writes to the same key through
+upload completion, but separate clients creating
 the same new folder or file concurrently can still produce duplicates.
 
 Resolved folder IDs, file IDs and reported file sizes are cached with Moka,

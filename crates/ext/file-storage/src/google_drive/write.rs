@@ -44,17 +44,37 @@ impl GoogleDriveStorage {
                 limit: self.max_object_bytes,
             });
         }
+        let key_lock = {
+            let mut writes = self.writes.lock().expect("write lock registry poisoned");
+            writes.retain(|_, lock| lock.strong_count() > 0);
+            let entry = writes.entry(key.clone()).or_default();
+            match entry.upgrade() {
+                Some(lock) => lock,
+                None => {
+                    let lock = std::sync::Arc::new(tokio::sync::Mutex::new(()));
+                    *entry = std::sync::Arc::downgrade(&lock);
+                    lock
+                }
+            }
+        };
+        let _writing = key_lock.lock().await;
         // No input is consumed before a session starts, so a stale cached
         // target can be resolved again once.
         let mut fresh = false;
         let (session, target) = loop {
-            let (target, cached) = self.target(key, fresh).await?;
-            match self.start_upload(&target, paths::file_name(key)).await {
+            let mut cached = false;
+            let result = async {
+                let target = self.target(key, fresh, &mut cached).await?;
+                let session = self.start_upload(&target, paths::file_name(key)).await?;
+                Ok((session, target))
+            }
+            .await;
+            match result {
                 Err(StorageError::NotFound(_)) if cached && !fresh => {
                     self.forget_path(key).await;
                     fresh = true;
                 }
-                result => break (result?, target),
+                result => break result?,
             }
         };
         // Session URIs are bearer-like: keep them out of all error sources.
@@ -167,14 +187,19 @@ impl GoogleDriveStorage {
 
     /// The upload target for `key`, creating missing folders, and whether any
     /// part of it came from the path cache.
-    async fn target(&self, key: &ObjectKey, fresh: bool) -> Result<(Target, bool), StorageError> {
+    async fn target(
+        &self,
+        key: &ObjectKey,
+        fresh: bool,
+        cached: &mut bool,
+    ) -> Result<Target, StorageError> {
         if !fresh && let Some(file) = self.cached(key.as_str()).await {
-            return Ok((Target::Replace(file.id), true));
+            *cached = true;
+            return Ok(Target::Replace(file.id));
         }
-        let mut cached = false;
         let parent = {
             let _creating = self.folders.lock().await;
-            self.parent_folder(key, fresh, true, &mut cached)
+            self.parent_folder(key, fresh, true, cached)
                 .await?
                 .expect("folders are created")
         };
@@ -187,7 +212,7 @@ impl GoogleDriveStorage {
             Some(found) => Target::Replace(found.resolved.id),
             None => Target::Create(parent),
         };
-        Ok((target, cached))
+        Ok(target)
     }
 
     async fn start_upload(&self, target: &Target, name: &str) -> Result<String, StorageError> {
