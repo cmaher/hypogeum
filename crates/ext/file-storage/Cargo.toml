@@ -20,7 +20,7 @@ futures-core = "0.3"
 futures-util = "0.3"
 sha2 = "0.11"
 hex = "0.4"
-tokio = { version = "1", features = ["fs", "io-util", "rt", "macros"] }
+tokio = { version = "1", features = ["fs", "io-util", "rt", "macros", "sync"] }
 uuid = { version = "1", features = ["v4"] }
 serde = { version = "1", features = ["derive"] }
 

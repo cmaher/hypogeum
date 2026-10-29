@@ -2,6 +2,8 @@ name: Release tag
 
 # On every merge to main: bump the workspace patch version, commit it, and
 # push a matching vX.Y.Z tag so consumers can pin via `git = ..., tag = ...`.
+# A version bumped by hand in the merged change (e.g. a breaking minor release)
+# that has no tag yet is tagged as is, without a patch bump.
 #
 # No bump loop: pushes made with GITHUB_TOKEN never trigger workflows, and the
 # actor guard below is a second safety net.
@@ -37,8 +39,12 @@ jobs:
         run: |
           current=$(cargo metadata --no-deps --format-version 1 --manifest-path Cargo.toml \
             | jq -r '.packages[] | select(.name == "hypgm-errors") | .version')
-          IFS=. read -r major minor patch <<< "$current"
-          next="$major.$minor.$((patch + 1))"
+          if git rev-parse -q --verify "refs/tags/v$current" >/dev/null; then
+            IFS=. read -r major minor patch <<< "$current"
+            next="$major.$minor.$((patch + 1))"
+          else
+            next="$current"
+          fi
           if git rev-parse -q --verify "refs/tags/v$next" >/dev/null; then
             echo "Tag v$next already exists" >&2
             exit 1
@@ -64,6 +70,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -am "Release v$NEXT"
+          # A hand-bumped version may leave nothing to commit.
+          git diff --quiet || git commit -am "Release v$NEXT"
           git tag -a "v$NEXT" -m "Hypogeum $NEXT"
           git push --atomic origin HEAD:main "v$NEXT"

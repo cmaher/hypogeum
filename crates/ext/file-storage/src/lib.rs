@@ -1,16 +1,21 @@
-//! Immutable streamed byte storage, injected as `Arc<dyn FileStorage>`.
+//! Streamed byte storage addressed by caller-chosen keys, injected as
+//! `Arc<dyn FileStorage>`.
 //!
-//! Completion promises persistence under the adapter's documented profile. Domain
-//! managers own retries, validation, publication and deletion authorization; repos
-//! own metadata. Partial consumption never verifies integrity. There is no general
-//! rename, path, resume, listing or distributed transaction contract.
+//! Keys are path-shaped [`ObjectKey`]s with S3-like semantics: a write creates or
+//! atomically replaces the object at its key. Completion promises persistence
+//! under the adapter's documented profile. Domain managers own retries,
+//! validation, publication and deletion authorization; repos own metadata.
+//! Partial consumption never verifies integrity. There is no general rename,
+//! resume, listing or distributed transaction contract.
 pub mod filesystem;
 #[cfg(feature = "google-drive")]
 pub mod google_drive;
 pub mod models;
 mod read_state;
 pub use hypgm_errors::StorageError;
-pub use models::{ByteRange, ExpectedIntegrity, ObjectInfo, ObjectRef, ReadOptions, StoredObject};
+pub use models::{
+    ByteRange, ExpectedIntegrity, ObjectInfo, ObjectKey, ObjectRef, ReadOptions, StoredObject,
+};
 
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -24,9 +29,12 @@ pub type ByteStream = Pin<Box<dyn Stream<Item = Result<Bytes, StorageError>> + S
 
 #[async_trait]
 pub trait FileStorage: Send + Sync {
-    /// Returns only after completed persistence and supplied integrity checks.
+    /// Create or replace the object at `key`. Readers observe the previous or
+    /// the new object, never a partial one. Returns only after completed
+    /// persistence and supplied integrity checks, which run before installation.
     async fn write(
         &self,
+        key: &ObjectKey,
         input: ByteStream,
         expected: ExpectedIntegrity,
     ) -> Result<StoredObject, StorageError>;
@@ -53,11 +61,7 @@ mod tests {
 
     #[test]
     fn references_round_trip_and_integrity_rejects_invalid_hashes() {
-        let reference = ObjectRef {
-            version: 1,
-            store_id: "primary".into(),
-            key: "opaque".into(),
-        };
+        let reference = ObjectRef::new("primary", &ObjectKey::new("a/b.jpg").unwrap());
         let json = serde_json::to_string(&reference).unwrap();
         assert_eq!(serde_json::from_str::<ObjectRef>(&json).unwrap(), reference);
         assert!(

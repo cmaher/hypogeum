@@ -1,20 +1,28 @@
 //! Personal Google Drive storage using an operator's OAuth grant.
 //!
-//! Objects are immutable files under the configured folder: new objects are
-//! written directly inside it, and existing files anywhere in its folder tree
-//! can be read, inspected and deleted. Domain managers own retries. Cancelled
+//! The object at key `a/b/c.jpg` is the file named `c.jpg` in folder `b`, in
+//! folder `a`, in the configured storage folder. Writes create missing folders
+//! and either create the file or upload a new revision of the existing one.
+//! Paths resolve by name; duplicate names at a segment are rejected as
+//! ambiguous, never silently chosen. Domain managers own retries. Cancelled
 //! upload futures abandon their resumable session (Drive expires it); they never
 //! publish an incomplete object.
 mod error;
+mod paths;
 mod read;
 #[cfg(test)]
 mod tests;
 mod write;
 
-use crate::{ObjectRef, StorageError};
+use crate::{ObjectKey, StorageError};
 use google_drive3::{DriveHub, hyper_rustls, hyper_util, yup_oauth2};
 use moka::future::Cache;
-use std::{fmt, time::Duration};
+use std::{
+    collections::HashMap,
+    fmt,
+    sync::{Mutex, Weak},
+    time::Duration,
+};
 
 type Connector = hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>;
 const FOLDER_MIME: &str = "application/vnd.google-apps.folder";
@@ -45,30 +53,27 @@ pub struct GoogleDriveConfig {
     pub refresh_token: String,
     pub scope: DriveScope,
     pub max_object_bytes: u64,
-    pub ancestry: DriveAncestryConfig,
+    pub path_cache: DrivePathCacheConfig,
 }
 
-/// Bounds for accepting objects nested below the storage folder.
+/// Bounds the in-memory cache of resolved paths: folder IDs by key prefix and
+/// file IDs with reported sizes by key. A cached ID that Drive no longer finds
+/// is evicted and the path resolved again once.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DriveAncestryConfig {
-    /// Ancestor folders walked above an object before it is rejected. Zero
-    /// accepts only objects directly inside the storage folder.
-    pub max_depth: usize,
-    /// Maximum entries in each cache: proven ancestor folders and accepted
-    /// objects with their reported sizes. Zero disables both caches.
-    pub cache_capacity: u64,
-    /// How long cached ancestry and object guards are trusted after insertion.
-    /// Moves, trash changes and size changes may be stale within this window.
-    /// Zero disables both caches.
-    pub cache_ttl: Duration,
+pub struct DrivePathCacheConfig {
+    /// Maximum cached folders and files together. Zero disables the cache.
+    pub capacity: u64,
+    /// How long resolved paths are trusted after insertion. Renames, moves,
+    /// trash changes and size changes made by other clients may be stale
+    /// within this window. Zero disables the cache.
+    pub ttl: Duration,
 }
 
-impl Default for DriveAncestryConfig {
+impl Default for DrivePathCacheConfig {
     fn default() -> Self {
         Self {
-            max_depth: 32,
-            cache_capacity: 4096,
-            cache_ttl: Duration::from_secs(10 * 60),
+            capacity: 4096,
+            ttl: Duration::from_secs(10 * 60),
         }
     }
 }
@@ -83,7 +88,7 @@ impl fmt::Debug for GoogleDriveConfig {
             .field("refresh_token", &"[redacted]")
             .field("scope", &self.scope)
             .field("max_object_bytes", &self.max_object_bytes)
-            .field("ancestry", &self.ancestry)
+            .field("path_cache", &self.path_cache)
             .finish()
     }
 }
@@ -95,11 +100,15 @@ pub struct GoogleDriveStorage {
     scope: DriveScope,
     max_object_bytes: u64,
     root_url: String,
-    max_ancestor_depth: usize,
-    /// Proven descendants of the storage folder; `None` when caching is disabled.
-    descendants: Option<Cache<String, ()>>,
-    /// Successful read guards, including an optional reported size.
-    objects: Option<Cache<String, Option<u64>>>,
+    /// Resolved folders (keyed `prefix/`) and files (keyed by object key);
+    /// `None` when caching is disabled.
+    paths: Option<Cache<String, paths::Resolved>>,
+    /// Serializes this client's folder creation so concurrent writes never
+    /// create duplicate folders. Other clients can still race.
+    folders: tokio::sync::Mutex<()>,
+    /// Weak entries keep idle keys from accumulating. Each writer holds its
+    /// key lock from resolution through publication and cache update.
+    writes: Mutex<HashMap<ObjectKey, Weak<tokio::sync::Mutex<()>>>>,
 }
 
 impl GoogleDriveStorage {
@@ -169,9 +178,9 @@ impl GoogleDriveStorage {
             ));
         }
         // Moka panics on a time to live beyond 1,000 years.
-        if config.ancestry.cache_ttl > Duration::from_secs(1000 * 365 * 24 * 60 * 60) {
+        if config.path_cache.ttl > Duration::from_secs(1000 * 365 * 24 * 60 * 60) {
             return Err(StorageError::InvalidInput(
-                "ancestry cache time to live must not exceed 1,000 years".into(),
+                "path cache time to live must not exceed 1,000 years".into(),
             ));
         }
         Ok(())
@@ -195,22 +204,16 @@ impl GoogleDriveStorage {
             scope: config.scope,
             max_object_bytes: config.max_object_bytes,
             root_url,
-            max_ancestor_depth: config.ancestry.max_depth,
-            objects: (config.ancestry.cache_capacity > 0 && !config.ancestry.cache_ttl.is_zero())
-                .then(|| {
+            paths: (config.path_cache.capacity > 0 && !config.path_cache.ttl.is_zero()).then(
+                || {
                     Cache::builder()
-                        .max_capacity(config.ancestry.cache_capacity)
-                        .time_to_live(config.ancestry.cache_ttl)
+                        .max_capacity(config.path_cache.capacity)
+                        .time_to_live(config.path_cache.ttl)
                         .build()
-                }),
-            descendants: (config.ancestry.cache_capacity > 0
-                && !config.ancestry.cache_ttl.is_zero())
-            .then(|| {
-                Cache::builder()
-                    .max_capacity(config.ancestry.cache_capacity)
-                    .time_to_live(config.ancestry.cache_ttl)
-                    .build()
-            }),
+                },
+            ),
+            folders: tokio::sync::Mutex::new(()),
+            writes: Mutex::new(HashMap::new()),
         })
     }
 
@@ -231,21 +234,5 @@ impl GoogleDriveStorage {
             ));
         }
         Ok(())
-    }
-
-    fn resolve<'a>(&self, reference: &'a ObjectRef) -> Result<&'a str, StorageError> {
-        if reference.version != 1
-            || reference.store_id != self.store_id
-            || reference.key.is_empty()
-            || !reference
-                .key
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
-        {
-            return Err(StorageError::InvalidReference(
-                "unknown version, store or malformed Drive ID".into(),
-            ));
-        }
-        Ok(&reference.key)
     }
 }

@@ -1,5 +1,5 @@
 use super::*;
-use crate::{ByteStream, ObjectInfo, ObjectRef, StoredObject};
+use crate::{ByteStream, ObjectInfo, ObjectKey, ObjectRef, StoredObject};
 use futures_util::StreamExt;
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
@@ -52,9 +52,13 @@ struct PreparedObject {
 impl FilesystemStorage {
     pub async fn write(
         &self,
+        key: &ObjectKey,
         input: ByteStream,
         expected: ExpectedIntegrity,
     ) -> Result<StoredObject, StorageError> {
+        let destination = object_path(&self.root, key).ok_or_else(|| {
+            StorageError::InvalidInput("object key is reserved on this filesystem".into())
+        })?;
         expected.validate()?;
         if expected
             .size_bytes
@@ -64,10 +68,9 @@ impl FilesystemStorage {
                 limit: self.max_object_bytes,
             });
         }
-        let key = self.ops.key();
         let path = self
             .root
-            .join("staging")
+            .join(STAGING)
             .join(uuid::Uuid::new_v4().to_string());
         let ops = self.ops.clone();
         let (file, mut staging) = blocking(move || {
@@ -97,13 +100,9 @@ impl FilesystemStorage {
             }
         };
         let root = self.root.clone();
-        let object_ref = ObjectRef {
-            version: 1,
-            store_id: self.store_id.clone(),
-            key,
-        };
+        let object_ref = ObjectRef::new(self.store_id.clone(), key);
         blocking(move || {
-            let result = install(prepared.file, &mut staging, &root, &object_ref.key);
+            let result = install(prepared.file, &mut staging, &root, &destination);
             staging.cleanup_blocking();
             result?;
             Ok(StoredObject {
@@ -163,19 +162,28 @@ fn install(
     file: fs::File,
     staging: &mut Staging,
     root: &Path,
-    key: &str,
+    destination: &Path,
 ) -> Result<(), StorageError> {
     staging
         .ops
         .check(Operation::FileSync)
         .and_then(|()| file.sync_all())
         .map_err(|e| StorageError::io("sync object bytes", e))?;
-    let installed = staging
-        .ops
-        .install(&staging.path, &root.join("completed").join(key));
+    create_parents(root, destination, &staging.ops)?;
+    match fs::symlink_metadata(destination) {
+        Ok(metadata) if !metadata.file_type().is_file() => {
+            return Err(StorageError::InvalidInput(
+                "existing object must be a regular file".into(),
+            ));
+        }
+        Ok(_) => (),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => (),
+        Err(e) => return Err(StorageError::io("inspect object", e)),
+    }
+    let installed = staging.ops.install(&staging.path, destination);
     if let Err(source) = installed {
-        // On remote filesystems even AlreadyExists can follow a successful
-        // link whose reply was lost and whose RPC was replayed. Fail closed.
+        // On remote filesystems a failed reply can follow a successful rename
+        // whose RPC was replayed. Fail closed.
         return Err(match source.kind() {
             io::ErrorKind::Unsupported => StorageError::io("install object", source),
             _ => StorageError::UncertainCompletion {
@@ -184,21 +192,67 @@ fn install(
             },
         });
     }
+    // The staging link moved with the rename; there is nothing left to clean.
+    staging.cleanup_on_drop = false;
     staging
         .ops
-        .sync_dir(&root.join("completed"), Operation::CompletedSync)
+        .sync_dir(
+            destination.parent().expect("object parent"),
+            Operation::ParentSync,
+        )
         .map_err(|source| StorageError::UncertainCompletion {
             operation: "sync installed object",
             source,
         })?;
-    // Removal is best effort; the completed link is never removed on failure.
-    staging.cleanup_blocking();
     staging
         .ops
-        .sync_dir(&root.join("staging"), Operation::StagingSync)
+        .sync_dir(&root.join(STAGING), Operation::StagingSync)
         .map_err(|source| StorageError::UncertainCompletion {
             operation: "sync staging cleanup",
             source,
         })?;
+    Ok(())
+}
+
+/// Create missing directories between the root and `destination`, syncing each
+/// ancestor entry, including entries left by failed or concurrent writes.
+/// Existing segments must be real directories, never symlinks.
+fn create_parents(root: &Path, destination: &Path, ops: &FsOps) -> Result<(), StorageError> {
+    let not_directory =
+        || StorageError::InvalidInput("object parents must be real directories".into());
+    for parent in parents(root, destination) {
+        match fs::symlink_metadata(parent) {
+            Ok(metadata) if metadata.file_type().is_dir() => (),
+            Ok(_) => return Err(not_directory()),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                create_parent(parent, ops)?;
+            }
+            Err(e) => return Err(StorageError::io("inspect object parent", e)),
+        }
+        // Existing entries may come from a failed or concurrent writer whose
+        // directory sync has not completed. Settle every ancestor ourselves.
+        ops.sync_dir(
+            parent.parent().expect("object parent below root"),
+            Operation::CreateParentSync,
+        )
+        .map_err(|e| StorageError::io("sync object parent", e))?;
+    }
+    Ok(())
+}
+
+fn create_parent(parent: &Path, ops: &FsOps) -> Result<(), StorageError> {
+    match ops
+        .check(Operation::CreateParent)
+        .and_then(|()| fs::create_dir(parent))
+    {
+        Ok(()) => (),
+        // A concurrent writer created it first.
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+            require_directory(parent).map_err(|_| {
+                StorageError::InvalidInput("object parents must be real directories".into())
+            })?;
+        }
+        Err(e) => return Err(StorageError::io("create object parent", e)),
+    }
     Ok(())
 }

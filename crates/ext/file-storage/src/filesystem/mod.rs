@@ -1,12 +1,16 @@
 //! Filesystem adapter. The root and its parents must be application-controlled.
 //! Concurrent hostile filesystem mutation is outside this adapter's boundary.
+//!
+//! The object at key `a/b/c.jpg` is the regular file `<root>/a/b/c.jpg`. Writes
+//! stage below `<root>/staging/`, a reserved first key segment, and install by
+//! rename. Symlinks and non-regular files are never followed or replaced.
 mod read;
 mod write;
 
-use crate::{ExpectedIntegrity, StorageError};
+use crate::{ExpectedIntegrity, ObjectKey, StorageError};
 use std::{
     fs, io,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     sync::Arc,
 };
 
@@ -26,6 +30,8 @@ pub struct FilesystemStorage {
 }
 
 const CHUNK_BYTES: usize = 64 * 1024;
+/// Reserved for in-progress writes; never a key's first segment.
+const STAGING: &str = "staging";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Operation {
@@ -33,8 +39,10 @@ enum Operation {
     Create,
     Write,
     FileSync,
+    CreateParent,
+    CreateParentSync,
     Install,
-    CompletedSync,
+    ParentSync,
     StagingSync,
     Cleanup,
     Delete,
@@ -44,8 +52,6 @@ enum Operation {
 struct FsOps {
     #[cfg(test)]
     failures: std::sync::Mutex<Vec<Operation>>,
-    #[cfg(test)]
-    key: Option<String>,
     #[cfg(test)]
     install_then_error: Option<io::ErrorKind>,
     #[cfg(test)]
@@ -65,17 +71,11 @@ impl FsOps {
         Ok(())
     }
 
-    fn key(&self) -> String {
-        #[cfg(test)]
-        if let Some(key) = &self.key {
-            return key.clone();
-        }
-        uuid::Uuid::new_v4().to_string()
-    }
-
     fn install(&self, source: &Path, destination: &Path) -> io::Result<()> {
         self.check(Operation::Install)?;
-        fs::hard_link(source, destination)?;
+        // Atomically replaces an existing object: readers holding the previous
+        // file keep its bytes; new opens observe the new object.
+        fs::rename(source, destination)?;
         #[cfg(test)]
         if let Some(kind) = self.install_then_error {
             return Err(io::Error::new(kind, "injected lost installation reply"));
@@ -151,31 +151,29 @@ fn require_directory(path: &Path) -> Result<(), StorageError> {
 fn initialize(root: &Path, ops: &FsOps) -> Result<(), StorageError> {
     require_directory(root)?;
     let root = fs::canonicalize(root).map_err(|e| StorageError::io("resolve root", e))?;
-    for name in ["staging", "completed"] {
-        let path = root.join(name);
-        match fs::create_dir(&path) {
-            Ok(()) => (),
-            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => (),
-            Err(e) => return Err(StorageError::io("create layout", e)),
-        }
-        require_directory(&path)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::MetadataExt;
-            let device = |p| {
-                fs::metadata(p)
-                    .map(|m| m.dev())
-                    .map_err(|e| StorageError::io("inspect device", e))
-            };
-            if device(&path)? != device(&root)? {
-                return Err(StorageError::InvalidInput(
-                    "storage layout must share one filesystem".into(),
-                ));
-            }
-        }
-        ops.sync_dir(&path, Operation::LayoutSync)
-            .map_err(|e| StorageError::io("sync layout", e))?;
+    let path = root.join(STAGING);
+    match fs::create_dir(&path) {
+        Ok(()) => (),
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => (),
+        Err(e) => return Err(StorageError::io("create layout", e)),
     }
+    require_directory(&path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let device = |p| {
+            fs::metadata(p)
+                .map(|m| m.dev())
+                .map_err(|e| StorageError::io("inspect device", e))
+        };
+        if device(&path)? != device(&root)? {
+            return Err(StorageError::InvalidInput(
+                "storage layout must share one filesystem".into(),
+            ));
+        }
+    }
+    ops.sync_dir(&path, Operation::LayoutSync)
+        .map_err(|e| StorageError::io("sync layout", e))?;
     ops.sync_dir(&root, Operation::LayoutSync)
         .map_err(|e| StorageError::io("sync root", e))?;
     if let Some(parent) = root.parent() {
@@ -183,6 +181,35 @@ fn initialize(root: &Path, ops: &FsOps) -> Result<(), StorageError> {
             .map_err(|e| StorageError::io("sync root parent", e))?;
     }
     Ok(())
+}
+
+/// The object's path below `root`, or `None` for keys this adapter cannot
+/// store: the reserved staging area and segments that are not plain names on
+/// this platform.
+fn object_path(root: &Path, key: &ObjectKey) -> Option<PathBuf> {
+    let mut path = root.to_path_buf();
+    for (index, segment) in key.segments().enumerate() {
+        let mut components = Path::new(segment).components();
+        if (index == 0 && segment == STAGING)
+            || !matches!(components.next(), Some(Component::Normal(name)) if name == std::ffi::OsStr::new(segment))
+            || components.next().is_some()
+        {
+            return None;
+        }
+        path.push(segment);
+    }
+    Some(path)
+}
+
+/// Directories between `root` (exclusive) and `path` (exclusive), outermost first.
+fn parents<'a>(root: &Path, path: &'a Path) -> Vec<&'a Path> {
+    let mut parents: Vec<_> = path
+        .ancestors()
+        .skip(1)
+        .take_while(|parent| *parent != root)
+        .collect();
+    parents.reverse();
+    parents
 }
 
 async fn blocking<T: Send + 'static>(
