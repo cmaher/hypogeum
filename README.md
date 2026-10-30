@@ -117,8 +117,8 @@ Exemplum template carries the same settings so new projects start with them.
   framework and Exemplum workspaces share `target/` and reuse dependencies.
 - **Pruning.** Cargo never prunes `target/`. `cargo make sweep` removes
   artifacts unused for 7 days with [cargo-sweep](https://github.com/holmgr/cargo-sweep)
-  (`cargo install cargo-sweep`) and runs at the end of `cargo make ci`; it is
-  skipped when cargo-sweep is not installed. Run `cargo clean` occasionally to
+  (installed by `mise.toml`, or `cargo install cargo-sweep`) and runs at the end
+  of `cargo make ci`; it is skipped when cargo-sweep is not installed. Run `cargo clean` occasionally to
   drop stale copies of large dependency rlibs in `target/debug/deps`.
 
 [sccache](https://github.com/mozilla/sccache) is the recommended compiler

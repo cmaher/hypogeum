@@ -1,3 +1,4 @@
 [tools]
 rust = "1.94.0"
 "cargo:cargo-make" = "0.37"
+"cargo:cargo-sweep" = "0.8"
