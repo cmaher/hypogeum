@@ -142,12 +142,13 @@ The workspace keeps builds fast and `target/` bounded:
 - `.cargo/config.toml` disables incremental compilation, whose data is never
   pruned and which sccache cannot cache. Edit-rebuilds of one large crate are
   slower in exchange for bounded disk use and compiler-cache hits.
-- In CI, cargo-make also sets `CARGO_INCREMENTAL=0` and
-  `CARGO_PROFILE_DEV_DEBUG=0`.
+- In CI, cargo-make also sets `CARGO_INCREMENTAL=0`,
+  `CARGO_PROFILE_DEV_DEBUG=0`, and `CARGO_PROFILE_DEV_STRIP=none`.
 - Every CI cargo invocation uses `--locked --workspace --all-features` so
   artifacts are reused rather than rebuilt for a different feature set.
 - `cargo make sweep` runs at the end of `cargo make ci` and is skipped when
-  [cargo-sweep](https://github.com/holmgr/cargo-sweep) is not installed.
+  [cargo-sweep](https://github.com/holmgr/cargo-sweep) is not installed or
+  `SKIP_SWEEP` is set.
 
 When using [sccache](https://github.com/mozilla/sccache)
 (`RUSTC_WRAPPER=sccache`), raise its 10 GiB default cap with

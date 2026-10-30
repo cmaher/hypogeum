@@ -2,6 +2,6 @@
 # Incremental data is never pruned and sccache refuses to cache incremental
 # compiles; see "Build performance and disk usage" in README.md.
 incremental = false
-# Relative to this directory. Cargo also reads this file when run inside
+# Relative to the repository root (the parent of .cargo/). Cargo also reads this file when run inside
 # example/, so both workspaces share one target dir and reuse dependencies.
 target-dir = "target"

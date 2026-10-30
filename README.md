@@ -110,8 +110,8 @@ Exemplum template carries the same settings so new projects start with them.
   stops sccache from caching workspace crates. The tradeoff is a slower
   edit-rebuild of a single large crate in exchange for bounded disk use and
   cache hits.
-- **CI.** When cargo-make detects CI, it also sets `CARGO_INCREMENTAL=0` and
-  `CARGO_PROFILE_DEV_DEBUG=0`.
+- **CI.** When cargo-make detects CI, it also sets `CARGO_INCREMENTAL=0`,
+  `CARGO_PROFILE_DEV_DEBUG=0`, and `CARGO_PROFILE_DEV_STRIP=none`.
 - **Shared target directory.** The root `.cargo/config.toml` sets
   `target-dir = "target"`; cargo also reads it inside `example/`, so the
   framework and Exemplum workspaces share `target/` and reuse dependencies.
