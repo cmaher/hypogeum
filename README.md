@@ -78,7 +78,7 @@ The script `scripts/rename-project.py` customizes the `example/` reference appli
 Install Rust 1.94, Docker, Git, and Python 3.9+. With Docker running, all unit and integration tests run self-contained without pre-provisioning databases:
 
 ```sh
-# Root framework verification (runs fmt, clippy, build, test, test-rename, and example CI):
+# Root framework verification (runs fmt, clippy, test, test-rename, example CI, and sweep):
 cargo make ci
 
 # Run only root workspace unit and integration tests:
@@ -89,3 +89,44 @@ cargo make test-rename
 ```
 
 Database integration tests automatically provision isolated PostgreSQL containers via Testcontainers and SQLx.
+
+### Build performance and disk usage
+
+The workspace ships defaults that keep builds fast and `target/` bounded; the
+Exemplum template carries the same settings so new projects start with them.
+
+- **One compile per mode.** `cargo make ci` runs clippy (check mode) and then
+  `cargo test`, which builds every library, binary, and test target. There is
+  no separate `build` step (`cargo make build` remains for manual use). Every
+  pipeline invocation uses `--locked --workspace --all-features`, because a
+  different feature set makes cargo rebuild dependents instead of reusing them.
+- **Dev profile.** `[profile.dev]` keeps line tables in workspace crates for
+  backtraces and drops debug info from dependencies. `strip = "none"` is set
+  alongside it because macOS refuses to load stripped proc-macro dylibs
+  ("mis-aligned LINKEDIT string pool").
+- **No incremental compilation.** `.cargo/config.toml` sets
+  `incremental = false`. Incremental data under `target/debug/incremental` is
+  never pruned and every flag or feature change leaves another copy; it also
+  stops sccache from caching workspace crates. The tradeoff is a slower
+  edit-rebuild of a single large crate in exchange for bounded disk use and
+  cache hits.
+- **CI.** When cargo-make detects CI, it also sets `CARGO_INCREMENTAL=0`,
+  `CARGO_PROFILE_DEV_DEBUG=0`, and `CARGO_PROFILE_DEV_STRIP=none`.
+- **Shared target directory.** The root `.cargo/config.toml` sets
+  `target-dir = "target"`; cargo also reads it inside `example/`, so the
+  framework and Exemplum workspaces share `target/` and reuse dependencies.
+- **Pruning.** Cargo never prunes `target/`. `cargo make sweep` removes
+  artifacts unused for 7 days with [cargo-sweep](https://github.com/holmgr/cargo-sweep)
+  (installed by `mise.toml`, or `cargo install cargo-sweep`) and runs at the end
+  of `cargo make ci`; it is skipped when cargo-sweep is not installed. Run `cargo clean` occasionally to
+  drop stale copies of large dependency rlibs in `target/debug/deps`.
+
+[sccache](https://github.com/mozilla/sccache) is the recommended compiler
+cache (`RUSTC_WRAPPER=sccache`). Size and key it deliberately:
+
+- The default cache cap is 10 GiB, and a full cache evicts constantly. Raise it
+  with `SCCACHE_CACHE_SIZE` (for example `SCCACHE_CACHE_SIZE=50G`).
+- Entries are keyed on absolute paths, so separate checkouts or worktrees miss
+  each other's entries unless `SCCACHE_BASEDIRS` lists their parent directories.
+- `SCCACHE_IDLE_TIMEOUT=0` keeps the server alive so `sccache --show-stats`
+  reports totals across builds.

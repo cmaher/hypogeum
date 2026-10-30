@@ -37,3 +37,14 @@ thiserror = "2"
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
+
+# Keep enough debug info for backtraces in workspace crates and none for
+# dependencies. strip = "none" keeps proc-macro dylibs loadable on macOS, which
+# rejects stripped ones ("mis-aligned LINKEDIT string pool").
+[profile.dev]
+debug = "line-tables-only"
+strip = "none"
+
+[profile.dev.package."*"]
+debug = false
+strip = "none"

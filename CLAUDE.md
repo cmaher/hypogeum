@@ -48,12 +48,13 @@ Root framework crates and infrastructure namespaces (`hypgm-*`, `hypgmx-*`, `inf
 From repository root:
 
 ```sh
-cargo make ci          # Full CI: fmt, clippy, build, test, test-rename, and example CI
+cargo make ci          # Full CI: fmt, clippy, test, test-rename, example CI, and sweep
 cargo make fmt         # Check root workspace formatting
 cargo make fmt-fix     # Format root workspace
 cargo make clippy      # Lint root workspace
 cargo make test        # Run root unit and integration tests (Docker must be running)
 cargo make test-rename # Run isolated Python rename test suite
+cargo make sweep       # Prune target/ artifacts unused for 7 days (needs cargo-sweep)
 cargo make apalis-dashboard # Run standalone task dashboard
 ```
 
@@ -71,5 +72,5 @@ cargo make db-down      # Stop local PostgreSQL container
 cargo make app          # Run public HTTP application (127.0.0.1:8080)
 cargo make test         # Run example unit and integration tests
 cargo make test-browser # Run Playwright HTML view smoke checks (requires Node.js)
-cargo make ci           # Run full Exemplum CI (fmt, clippy, build, test)
+cargo make ci           # Run full Exemplum CI (fmt, clippy, test, sweep)
 ```

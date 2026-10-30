@@ -1,6 +1,13 @@
 [config]
 default_to_workspace = false
 
+# Incremental data and debug info do not help a full CI build. strip = "none"
+# keeps proc-macro dylibs loadable on macOS once debug info is off.
+[env]
+CARGO_INCREMENTAL = { value = "0", condition = { env_true = ["CARGO_MAKE_CI"] } }
+CARGO_PROFILE_DEV_DEBUG = { value = "0", condition = { env_true = ["CARGO_MAKE_CI"] } }
+CARGO_PROFILE_DEV_STRIP = { value = "none", condition = { env_true = ["CARGO_MAKE_CI"] } }
+
 [tasks.fmt]
 command = "cargo"
 args = ["fmt", "--all", "--", "--check"]
@@ -30,13 +37,19 @@ script = ['cd tests/browser && npm ci && npx playwright install chromium && npm 
 [tasks.test-browser-registration]
 description = "Real PostgreSQL/app registration flow in Chromium, JavaScript on and off"
 script_runner = "@shell"
-script = ['(cd tests/browser && npm ci && npx playwright install chromium) && EXEMPLUM_TEST_BROWSER=1 cargo test --locked -p exemplum-app-cli --test runtime']
+script = ['(cd tests/browser && npm ci && npx playwright install chromium) && EXEMPLUM_TEST_BROWSER=1 cargo test --locked --workspace --all-features --test runtime']
+
+[tasks.sweep]
+description = "Remove target/ artifacts unused for 7 days; skipped if cargo-sweep is missing or SKIP_SWEEP is set"
+condition = { env_not_set = ["SKIP_SWEEP"] }
+script_runner = "@shell"
+script = ['if cargo sweep --version >/dev/null 2>&1; then cargo sweep --time 7; else echo "cargo-sweep not installed; skipping sweep"; fi']
 
 [tasks.ci]
-dependencies = ["fmt", "clippy", "build", "test"]
+dependencies = ["fmt", "clippy", "test", "sweep"]
 
 [tasks.ci-fmt-fix]
-dependencies = ["fmt-fix", "clippy", "build", "test"]
+dependencies = ["fmt-fix", "clippy", "test", "sweep"]
 
 [tasks.db-up]
 script_runner = "@shell"
