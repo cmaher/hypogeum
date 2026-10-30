@@ -1,0 +1,4 @@
+[build]
+# Incremental data is never pruned and sccache refuses to cache incremental
+# compiles; see "Verification & CI" in README.md.
+incremental = false

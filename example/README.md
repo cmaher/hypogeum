@@ -128,10 +128,32 @@ cargo make test-browser
 cargo make fmt          # Verify source code formatting
 cargo make fmt-fix      # Automatically format source code
 cargo make clippy       # Run clippy with -D warnings
-cargo make build        # Build all workspace packages
+cargo make build        # Build all workspace packages (not part of ci; test builds everything)
 cargo make test         # Run unit and integration tests (Docker must be running)
-cargo make ci           # Run full CI suite (fmt, clippy, build, test)
+cargo make sweep        # Remove target/ artifacts unused for 7 days (needs cargo-sweep)
+cargo make ci           # Run full CI suite (fmt, clippy, test, sweep)
 ```
+
+The workspace keeps builds fast and `target/` bounded:
+
+- `[profile.dev]` in `Cargo.toml` keeps line tables for workspace crates and
+  drops debug info from dependencies; `strip = "none"` keeps proc-macro dylibs
+  loadable on macOS.
+- `.cargo/config.toml` disables incremental compilation, whose data is never
+  pruned and which sccache cannot cache. Edit-rebuilds of one large crate are
+  slower in exchange for bounded disk use and compiler-cache hits.
+- In CI, cargo-make also sets `CARGO_INCREMENTAL=0` and
+  `CARGO_PROFILE_DEV_DEBUG=0`.
+- Every CI cargo invocation uses `--locked --workspace --all-features` so
+  artifacts are reused rather than rebuilt for a different feature set.
+- `cargo make sweep` runs at the end of `cargo make ci` and is skipped when
+  [cargo-sweep](https://github.com/holmgr/cargo-sweep) is not installed.
+
+When using [sccache](https://github.com/mozilla/sccache)
+(`RUSTC_WRAPPER=sccache`), raise its 10 GiB default cap with
+`SCCACHE_CACHE_SIZE`, set `SCCACHE_BASEDIRS` so separate checkouts or worktrees
+share entries (they are keyed on absolute paths), and set
+`SCCACHE_IDLE_TIMEOUT=0` so `sccache --show-stats` stays meaningful.
 
 ## Template Customization
 

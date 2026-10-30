@@ -1,6 +1,12 @@
 [config]
 default_to_workspace = false
 
+# Incremental data and debug info do not help a full CI build.
+[env]
+CARGO_INCREMENTAL = { value = "0", condition = { env_true = ["CARGO_MAKE_CI"] } }
+CARGO_PROFILE_DEV_DEBUG = { value = "0", condition = { env_true = ["CARGO_MAKE_CI"] } }
+CARGO_PROFILE_DEV_STRIP = { value = "none", condition = { env_true = ["CARGO_MAKE_CI"] } }
+
 [tasks.exec]
 description = "Run a repository maintenance command"
 script_runner = "@shell"
@@ -37,11 +43,16 @@ description = "Run CI across the Exemplum reference project"
 command = "cargo"
 args = ["make", "--cwd", "example", "ci"]
 
+[tasks.sweep]
+description = "Remove target/ artifacts unused for 7 days; skipped if cargo-sweep is missing"
+script_runner = "@shell"
+script = ['if cargo sweep --version >/dev/null 2>&1; then cargo sweep --time 7; else echo "cargo-sweep not installed; skipping sweep"; fi']
+
 [tasks.ci]
-dependencies = ["fmt", "clippy", "build", "test", "test-rename", "example-ci"]
+dependencies = ["fmt", "clippy", "test", "test-rename", "example-ci", "sweep"]
 
 [tasks.ci-fmt-fix]
-dependencies = ["fmt-fix", "clippy", "build", "test", "test-rename", "example-ci"]
+dependencies = ["fmt-fix", "clippy", "test", "test-rename", "example-ci", "sweep"]
 
 [tasks.apalis-dashboard]
 command = "cargo"
