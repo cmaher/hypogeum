@@ -9,42 +9,114 @@ example/
 ├── Cargo.toml            # Independent Cargo workspace manifest
 ├── Makefile              # Development and CI task automation
 ├── README.md             # This documentation
-├── docker-compose.yml    # Local PostgreSQL service container
+├── docker-compose.yml    # Local PostgreSQL, Ory Kratos and Caddy
+├── env/local.env.example # Local configuration; copy to env/local.env before running
 ├── infra/
+│   ├── caddy/Caddyfile   # Single browser origin: /.ory/kratos/* to Kratos, the rest to the app
+│   ├── kratos/           # kratos.yml and identity.schema.json (username + display_name)
 │   └── postgres/
-│       ├── provision.sql # Database, role, and permission provisioning
-│       └── database.sql  # Database-level grants and defaults
+│       ├── provision.sql # Roles, database, and permission provisioning
+│       ├── database.sql  # Database-level grants and defaults
+│       └── kratos.sql    # Kratos login role and its own database
 ├── tests/
-│   └── browser/          # Playwright smoke checks for HTML views
+│   └── browser/          # Playwright smoke checks (HTML views; Kratos auth through Caddy)
 ├── cmd/
+│   ├── admin/            # Administrator bootstrap CLI (exemplum-admin / exemplum-admin-cli)
 │   ├── app/              # HTTP server executable (app / exemplum-app-cli)
 │   └── db/               # Database migration CLI (exemplum-db / exemplum-db-cli)
 └── crates/
     ├── app/              # Composed HTTP router (exemplum-app)
     └── domain/
-        ├── auth/         # Credential verification, sessions, and token exchange
+        ├── admin/        # Account approval pages and JSON API (exemplum-dmn-admin)
+        ├── auth/         # Kratos session gate, flow pages, logout (exemplum-dmn-auth)
         ├── hello-world/  # Greeting service, JSON API and HTML view (exemplum-dmn-hello-world)
-        └── users/        # User entity, SeaORM migrations, gRPC (exemplum-dmn-users)
+        └── users/        # Accounts, SeaORM migrations, gRPC (exemplum-dmn-users)
 ```
+
+## Authentication architecture
+
+[Ory Kratos](https://www.ory.sh/kratos/) (v1.3.1) owns identities, password
+credentials and hashing, sessions, and the self-service login, registration and
+settings flows. Caddy puts Kratos and the app on one browser origin so the Kratos
+session cookie reaches both; it only routes and has no security role.
+
+```text
+browser → Caddy :8080 ─┬─ /.ory/kratos/*  → Kratos public API :4433
+                       └─ everything else → app (host, 127.0.0.1:3000)
+app ── server-side ──→ Kratos :4433 /sessions/whoami (forwards only ory_kratos_session)
+```
+
+- Identities sign in with **username + password**. Recovery, verification, MFA,
+  social login and mail are disabled. Registration is one form (traits and
+  password) and signs the user in immediately.
+- The app's `session_gate` runs on every route. Without an `ory_kratos_session`
+  cookie the request is anonymous. Otherwise it calls whoami; an active session
+  provisions the account row on first sight (`exemplum.users`, keyed by the Kratos
+  identity id, with `username` and `display_name` copied from the traits). If
+  Kratos or the database is unavailable the request fails closed with a 500.
+- Approval status and `is_admin` live in the app database. New accounts are
+  pending: `/api` answers `401` and pages redirect to `/registration-pending`
+  until an administrator approves them through `/admin/users`,
+  `POST /api/admin/users/{id}/approve`, or `exemplum-admin promote`.
+- Pages `/login`, `/registration` and `/settings` render the Kratos flow UI nodes
+  with Askama; forms post straight to Kratos, which checks CSRF and redirects
+  back. `/error?id=` shows a Kratos error message, and `POST /logout` redirects
+  to the logout URL Kratos returns.
+- Kratos never calls the app. The app follows or renders only URLs beneath
+  `EXEMPLUM_APP_KRATOS_BROWSER_URL`.
+
+### Known limits
+
+- **Traits are immutable.** The Kratos `profile` settings method is off, so
+  settings only change the password and the copied username and display name
+  never drift.
+- **Secure cookies over http.** Kratos runs without `--dev`, so its cookies are
+  `Secure`. Chromium and Firefox accept them on `http://localhost`; Safari does
+  not, so sign-in does not stick there. Browse `localhost`, not `127.0.0.1`.
+- **Fixed origin.** `infra/kratos/kratos.yml` hardcodes `http://localhost:8080`
+  (base URL, flow UI URLs, allowed return URLs). Changing `EXEMPLUM_CADDY_PORT`
+  needs the same change there.
+- **Linux hosts.** Caddy reaches the app through `host.docker.internal`, mapped to
+  `host-gateway`. On Linux that is the Docker bridge address, which cannot reach
+  an app bound to `127.0.0.1`; bind the app to the bridge address instead (for
+  example `EXEMPLUM_APP_BIND=172.17.0.1:3000`). Docker Desktop and OrbStack
+  forward to the host loopback, so the default works on macOS.
 
 ## Environment Configuration
 
 Exemplum configuration uses the `EXEMPLUM_` prefix. Configuration precedence is:
-**Process Environment > Dotenv file > Defaults**.
+**Process Environment > Dotenv file > Defaults**. `env/local.env.example` lists
+the local values. Copy it to `env/local.env` before running anything locally: the
+database URLs (`EXEMPLUM_MIGRATION_DATABASE_URL`, `EXEMPLUM_APP_DATABASE_URL`) have
+no defaults, so `make db-migrate` and `make app` fail without them.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `EXEMPLUM_APP_BIND` | `127.0.0.1:8080` | Public HTTP server listen address |
+| `EXEMPLUM_APP_BIND` | `127.0.0.1:3000` | App listen address (Caddy proxies to it) |
 | `EXEMPLUM_APP_DATABASE_URL` | required | Runtime connection using the `exemplum_users` role |
-| `EXEMPLUM_APP_JWT_SECRET` | required | Private signing secret containing at least 32 bytes |
-| `EXEMPLUM_APP_MAX_PASSWORD_VERIFICATIONS` | `4` | Maximum concurrent password checks; must be positive and fit the semaphore capacity |
-| `EXEMPLUM_APP_SESSION_CLEANUP_INTERVAL_SECONDS` | `3600` | Positive interval between expired-session cleanup runs |
+| `EXEMPLUM_APP_KRATOS_PUBLIC_URL` | `http://127.0.0.1:4433` | Kratos public API as reached by the app (whoami, flows) |
+| `EXEMPLUM_APP_KRATOS_BROWSER_URL` | `http://localhost:8080/.ory/kratos` | Kratos public API as reached by browsers through Caddy |
+| `EXEMPLUM_APP_KRATOS_TIMEOUT_SECONDS` | `5` | Positive timeout for each Kratos request |
+| `EXEMPLUM_ADMIN_DATABASE_URL` | required by `exemplum-admin` | Restricted `exemplum_users` connection for administrator bootstrap |
+| `EXEMPLUM_MIGRATION_DATABASE_URL` | required by `exemplum-db` | Migration connection string (migrator credentials) |
+| `EXEMPLUM_USERS_DATABASE_URL` | - | Runtime database connection string for the Users gRPC service |
 | `EXEMPLUM_LOG` | `info` | Log level filter |
 | `EXEMPLUM_LOG_FORMAT` | `text` | Logging format (`text` or `json`) |
-| `EXEMPLUM_POSTGRES_PORT` | `5432` | Local PostgreSQL host port in Docker Compose |
-| `EXEMPLUM_MIGRATION_DATABASE_URL` | - | Migration connection string (migrator credentials) |
-| `EXEMPLUM_USERS_DATABASE_URL` | - | Runtime database connection string for Users domain |
 | `EXEMPLUM_ENV_FILE` | unset | Dotenv file path selector (`""` to disable file loading) |
+
+Docker Compose reads these (all optional, with development defaults):
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `EXEMPLUM_POSTGRES_PORT` | `5432` | PostgreSQL host port |
+| `EXEMPLUM_POSTGRES_PASSWORD`, `EXEMPLUM_MIGRATION_PASSWORD`, `EXEMPLUM_USERS_PASSWORD`, `EXEMPLUM_TASKS_PASSWORD` | `password` | Role passwords set by `make db-provision` |
+| `EXEMPLUM_KRATOS_DB_PASSWORD` | `password` | Password of the `kratos` database role |
+| `EXEMPLUM_KRATOS_COOKIE_SECRET` | dev value | Kratos cookie secret (at least 16 characters) |
+| `EXEMPLUM_KRATOS_CIPHER_SECRET` | dev value | Kratos cipher secret (exactly 32 characters) |
+| `EXEMPLUM_KRATOS_PORT` | `4433` | Kratos public API host port |
+| `EXEMPLUM_CADDY_PORT` | `8080` | Browser origin port (see Known limits) |
+| `EXEMPLUM_CADDY_APP_PORT` | `3000` | Host port Caddy proxies to; match `EXEMPLUM_APP_BIND` |
+| `EXEMPLUM_KRATOS_CONFIG_DIR` | `./infra/kratos` | Kratos config directory mounted into the containers |
 
 ## Development Commands
 
@@ -57,68 +129,75 @@ Database operations are executed by `exemplum-db`, which constructs an applicati
 ```sh
 make db-up        # Start PostgreSQL container in background
 make db-status    # Inspect container status
-make db-provision # Execute provision.sql to create roles and database
-make db-migrate   # Apply database migrations via exemplum-db
+make db-provision # Create roles and databases (including the kratos role and database)
+make db-migrate   # Apply migrations via exemplum-db, then Kratos migrations (one-shot container)
 make db-verify    # Verify database schema contracts
-make db-down      # Stop PostgreSQL container
+make db-down      # Stop all containers (PostgreSQL, Kratos, Caddy)
 ```
 
 `exemplum-db inspect --output json` reports each schema's contracts as an array
 under `data.contracts.<schema>`, preserving all tables registered in that schema.
+Kratos migrates its own database only through `make db-migrate`; `kratos serve`
+never migrates.
 
 ### Running the Application
 
+From `example/`, with Docker running:
+
 ```sh
-# From example/, configure local database credentials:
-cp env/local.env.example env/local.env
-# Set EXEMPLUM_APP_JWT_SECRET in env/local.env to a private value:
-openssl rand -hex 32
+cp env/local.env.example env/local.env   # required: exemplum-db and the app read their database URLs from it
 make db-up
 make db-provision
 make db-migrate
-make app
+make app          # starts Kratos and Caddy (auth-up), then the app on 127.0.0.1:3000
 ```
 
-The binary requires explicit database credentials and a signing secret. Before
-binding its listener, it checks the restricted runtime role, user schema,
-credential repository, and PostgreSQL session store. It never runs migrations.
-Sessions survive application restarts when using the same database. Policy files
-are loaded at startup; relative paths resolve from the process working directory.
-Default component factories are for tests and local composition and generate
-independent, ephemeral signing keys.
+Browse **http://localhost:8080**. The app checks database readiness and Kratos
+`/health/ready` before binding its listener, and never runs migrations.
 
-Authentication routes are `POST /api/auth/login`, `POST /api/auth/logout`, and
-`POST /api/auth/token`. `GET /api/hello/me` accepts a session cookie or signed
-Bearer token and resolves the stored user display name. Password verification
-runs on blocking workers with a configurable concurrency limit (four by default)
-shared by real and dummy checks. Unknown usernames still perform password verification.
-Expired sessions are deleted at startup and periodically; cleanup stops when the
-server finishes shutting down.
-The token endpoint accepts form or JSON credentials and HTTP Basic credentials;
-responses use OAuth error fields and prevent caching with `no-store`/`no-cache`.
-Other endpoints retain the shared JSON error envelope.
+#### Bootstrap an administrator
+
+No account is seeded. Register in the UI (http://localhost:8080/registration);
+you land on the pending page, which also creates the account row. Then:
+
+```sh
+EXEMPLUM_ADMIN_DATABASE_URL=postgres://exemplum_users:password@127.0.0.1:5432/exemplum \
+  cargo run --locked -p exemplum-admin-cli --bin exemplum-admin -- promote <username>
+```
+
+`promote` approves the account and makes it an administrator, printing one JSON
+object. It uses the restricted users role, never the migration account, and
+fails if nobody with that username has signed in yet. Administrators approve
+further registrations at `/admin/users` (filter with `?status=pending|approved`,
+page with `?after=`) or through `GET /api/admin/users` and
+`POST /api/admin/users/{id}/approve`. Approval is idempotent, and both HTML and
+JSON writes reject cross-site fetch metadata or a foreign Origin.
 
 Verify the running application:
+
 ```sh
-curl http://127.0.0.1:8080/healthz
-curl -X POST http://127.0.0.1:8080/api/hello -H "Content-Type: application/json" -d '{"name":"Ada"}'
-curl -X POST http://127.0.0.1:8080/hello -d 'name=Ada'
+curl http://localhost:8080/healthz
+curl -X POST http://localhost:8080/api/hello -H "Content-Type: application/json" -d '{"name":"Ada"}'
+curl -i http://localhost:8080/api/hello/me   # 401 without a session
 ```
 
-Open `http://127.0.0.1:8080/` for the server-rendered greeting page. The form
-works without JavaScript and is enhanced with the vendored HTMX served from
-`/assets`. Every path under `/api` keeps the JSON error envelope; page routes
-return safe HTML errors. See [HTML Views and HTMX](../docs/app.md#7-html-views-and-htmx).
+The greeting page at `/` works without JavaScript and is enhanced with the
+vendored HTMX served from `/assets`. Every path under `/api` keeps the JSON error
+envelope; page routes return safe HTML errors. See
+[HTML Views and HTMX](../docs/app.md#7-html-views-and-htmx).
+
+### Tests
+
+`make test` runs every suite with its own Testcontainers (Docker must be
+running); `cmd/app/tests/runtime.rs` includes an end-to-end run of the app
+against a real Kratos container (register, pending `401`, promote `200`, logout `401`).
 
 ### Browser Smoke Checks
 
-`tests/browser` runs Playwright with JavaScript enabled and disabled against a
-database-free server (`crates/app/examples/view_smoke_server.rs`). It requires
-Node.js:
-
-```sh
-make test-browser
-```
+`make test-browser` (Node.js and Docker) runs Playwright view checks
+(`make test-browser-views`) and a registration/login/logout run through Caddy
+(`make test-browser-auth`) on an isolated stack with free ports and a scratch
+Kratos config, set up and torn down by `tests/browser/auth-stack.mjs`.
 
 ### Verification & CI
 
@@ -157,82 +236,3 @@ share entries (they are keyed on absolute paths), and set
 ## Template Customization
 
 Exemplum serves as the target template for new project generation. The repository-level script `scripts/rename-project.py` is scoped to inspect and customize files within `example/`, replacing `exemplum` / `Exemplum` identities with your project's chosen identity.
-
-## Registration and account administration
-
-The composed app provides browser forms at `/register` and `/login`, with JSON
-registration at `POST /api/auth/register`. A username that is already taken fails
-validation with “Username unavailable”. Registrations remain pending until an
-administrator approves them through `/admin/users` or
-`POST /api/admin/users/{id}/approve`; `GET /api/admin/users` lists account state
-with each account's login username, newest registrations first. Both listings
-accept `status=pending` or `status=approved` to filter, and page with the `after`
-cursor returned as `next_after`. Passwords must contain 8 to 128 characters.
-Administrator access is a plain check in `exemplum-dmn-admin`: the account must
-be an approved administrator, and its flags are reloaded on every request.
-
-Approval locks the account row, so concurrent approvals apply once and approving
-an approved account changes nothing. Accounts that existed before the approval
-migration are approved; any account inserted without an explicit status starts
-pending. The app never applies migrations: startup checks the users schema,
-authentication storage, and session storage before listening.
-Both HTML and JSON writes reject cross-site fetch metadata or a foreign Origin.
-
-`AppComponentsFactory::default()` keeps transport tests database-free using focused
-user, authentication and approved-account fakes. Override `account_service` when a
-test needs registration, pending accounts, or administrator behavior. The
-`view_smoke_server` uses these defaults for greeting-page checks; use the real app
-for account lifecycle scenarios.
-
-### Run the registration demo
-
-From `example/`, with Docker running, create the local configuration and set a
-private `EXEMPLUM_APP_JWT_SECRET` (for example, `openssl rand -hex 32`):
-
-```sh
-cp env/local.env.example env/local.env
-make db-up
-make db-provision
-make db-migrate
-make db-verify
-EXEMPLUM_ADMIN_DATABASE_URL=postgres://exemplum_users:password@127.0.0.1:5432/exemplum \
-  cargo run --locked -p exemplum-admin-cli --bin exemplum-admin -- \
-  create --username admin --display-name Administrator
-```
-
-No account is an administrator by default and none is seeded; this command
-requires database access. It prompts for a password without echoing it; use
-`--password-stdin` to read one line from a secret provider for automation. If the
-username already belongs to an account, creation fails and changes nothing. To make
-an existing account an administrator, pass `--promote` instead of
-`--display-name`; promotion approves it and keeps its credentials and profile.
-The output reports `"action": "created"` or `"promoted"`. The command uses the
-restricted users role, never the migration account.
-
-Run `make app`, visit `http://127.0.0.1:8080/register`, and register an
-account. Logging in as that account fails until it is approved. Log in as
-`admin`, visit `/admin/users`, and click **Approve**; the account can then log in.
-
-### Verify the complete flow
-
-The process integration suite provisions its own PostgreSQL container and starts
-the real app executable; no local database or configuration is used:
-
-```sh
-cargo test --locked -p exemplum-app-cli --test runtime
-```
-
-For real Chromium registration/approval checks with JavaScript both enabled and
-disabled, install the browser dependencies once, then run the same isolated suite
-(or `make test-browser-registration`):
-
-```sh
-(cd tests/browser && npm ci && npx playwright install chromium)
-EXEMPLUM_TEST_BROWSER=1 cargo test --locked -p exemplum-app-cli --test runtime
-```
-
-The suite checks that registrations start pending, cannot log in before approval,
-and can after simultaneous administrator approvals. `make test-browser`
-also runs the database-free greeting smoke checks. Root `make ci` includes
-process/database suites and rename checks; the Chromium checks are an explicit
-additional command.

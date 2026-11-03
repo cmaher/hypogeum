@@ -357,9 +357,7 @@ async fn json_writes_share_page_origin_protection() {
     let server = Server::start().await;
     let client = reqwest::Client::new();
     for path in [
-        "/api/auth/register",
-        "/api/auth/login",
-        "/api/auth/logout",
+        "/api/hello",
         "/api/admin/users/00000000-0000-0000-0000-000000000000/approve",
     ] {
         for (header, value) in [
@@ -393,14 +391,14 @@ async fn json_writes_share_page_origin_protection() {
         .unwrap();
     assert_eq!(response.status(), 401);
     let response = client
-        .post(server.url("/api/auth/login"))
+        .post(server.url("/api/hello"))
         .header("origin", server.endpoint.as_str())
         .header("content-type", "application/json")
-        .body("{}")
+        .body(r#"{"name":"Ada"}"#)
         .send()
         .await
         .unwrap();
-    assert_eq!(response.status(), 400);
+    assert_eq!(response.status(), 200);
     server.shutdown().await;
 }
 
@@ -421,35 +419,55 @@ async fn admin_root_redirects_to_users() {
 }
 
 #[tokio::test]
-async fn failed_auth_forms_retain_safe_inputs() {
+async fn auth_pages_start_identity_flows_and_protect_logout() {
     let server = Server::start().await;
-    for (path, body, status) in [
-        (
-            "/register",
-            "display_name=Alice%3Cscript%3E&username=alice%26bob&password=short",
-            400,
-        ),
-        (
-            "/login",
-            "username=alice%26bob&password=private-password",
-            401,
-        ),
-    ] {
-        let response = reqwest::Client::new()
-            .post(server.url(path))
-            .header("content-type", FORM)
-            .body(body)
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    for kind in ["login", "registration", "settings"] {
+        let response = client
+            .get(server.url(&format!("/{kind}")))
             .send()
             .await
             .unwrap();
-        assert_html(&response, status);
-        let html = response.text().await.unwrap();
-        assert!(html.contains("<form"));
-        assert!(html.contains("value=\"alice&#38;bob\""));
-        assert!(!html.contains("private-password") && !html.contains("value=\"short\""));
-        if path == "/register" {
-            assert!(html.contains("value=\"Alice&#60;script&#62;\""));
-        }
+        assert_eq!(response.status(), 303);
+        assert_eq!(
+            header(&response, "location"),
+            format!("http://localhost:8080/.ory/kratos/self-service/{kind}/browser")
+        );
     }
+    let response = client
+        .post(server.url("/logout"))
+        .header("sec-fetch-site", "cross-site")
+        .header("cookie", "ory_kratos_session=session")
+        .send()
+        .await
+        .unwrap();
+    assert_html_error(response, 403, CROSS_SITE_FORM.message).await;
+    let response = client.post(server.url("/logout")).send().await.unwrap();
+    assert_eq!(response.status(), 303);
+    assert_eq!(header(&response, "location"), "/login");
+    let response = client
+        .get(server.url("/registration-pending"))
+        .send()
+        .await
+        .unwrap();
+    assert_html(&response, 200);
+    assert!(!response.text().await.unwrap().contains("/logout"));
+    // Anonymous visitors can find sign-in from the home page and from 401 pages.
+    let home = client
+        .get(server.url("/"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(home.contains("href=\"/login\"") && home.contains("href=\"/registration\""));
+    let response = client.get(server.url("/admin/users")).send().await.unwrap();
+    assert_html(&response, 401);
+    let html = response.text().await.unwrap();
+    assert!(html.contains("href=\"/login\"") && html.contains("href=\"/registration\""));
     server.shutdown().await;
 }

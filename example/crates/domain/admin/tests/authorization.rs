@@ -10,7 +10,7 @@ use exemplum_dmn_users::accounts::{
     Account, AccountError, AccountPage, AccountQuery, AccountService, ApprovalStatus,
     ManagedAccount,
 };
-use hypgm_authn::{AuthMethod, Principal};
+use hypgm_authn::Principal;
 use hypgm_errors::{PublicError, RepoError};
 use std::sync::{Arc, Mutex};
 use tower::ServiceExt;
@@ -33,7 +33,7 @@ impl Accounts {
 }
 #[async_trait]
 impl AccountService for Accounts {
-    async fn register(&self, _: &str, _: &str, _: &str) -> Result<Account, AccountError> {
+    async fn ensure_account(&self, _: Uuid, _: &str, _: &str) -> Result<Account, AccountError> {
         unreachable!()
     }
     async fn get(&self, _: Uuid) -> Result<Account, AccountError> {
@@ -54,7 +54,7 @@ impl AccountService for Accounts {
 struct FailingAccounts(fn() -> AccountError);
 #[async_trait]
 impl AccountService for FailingAccounts {
-    async fn register(&self, _: &str, _: &str, _: &str) -> Result<Account, AccountError> {
+    async fn ensure_account(&self, _: Uuid, _: &str, _: &str) -> Result<Account, AccountError> {
         unreachable!()
     }
     async fn get(&self, _: Uuid) -> Result<Account, AccountError> {
@@ -87,14 +87,14 @@ fn setup() -> (AdminComponents, Arc<Accounts>, Principal) {
     (
         AdminComponents::new(Arc::new(service)),
         accounts,
-        Principal::new(Uuid::new_v4(), id, AuthMethod::Session),
+        Principal::new(Uuid::new_v4(), id),
     )
 }
 #[tokio::test]
 async fn approved_admins_are_allowed_and_authority_reloads() {
     let (components, accounts, principal) = setup();
     let service = components.service;
-    assert_ne!(principal.auth_id, principal.user_id);
+    assert_ne!(principal.session_id, principal.user_id);
     assert!(
         service
             .list(&principal, AccountQuery::default())
@@ -127,7 +127,7 @@ async fn approved_admins_are_allowed_and_authority_reloads() {
 }
 #[tokio::test]
 async fn missing_accounts_are_forbidden_but_lookup_failures_are_internal() {
-    let principal = Principal::new(Uuid::new_v4(), Uuid::new_v4(), AuthMethod::Session);
+    let principal = Principal::new(Uuid::new_v4(), Uuid::new_v4());
     let missing =
         DefaultAdminService::new(Arc::new(FailingAccounts(|| RepoError::NotFound.into())));
     assert!(matches!(
@@ -167,7 +167,7 @@ async fn json_routes_authenticate_paginate_and_authorize_writes() {
         .oneshot(
             Request::builder()
                 .uri("/users?status=pending&limit=5")
-                .extension(principal.clone())
+                .extension(principal)
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -188,7 +188,7 @@ async fn json_routes_authenticate_paginate_and_authorize_writes() {
             .oneshot(
                 Request::builder()
                     .uri(format!("/users?{invalid}"))
-                    .extension(principal.clone())
+                    .extension(principal)
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -203,7 +203,7 @@ async fn json_routes_authenticate_paginate_and_authorize_writes() {
             Request::builder()
                 .method("POST")
                 .uri(format!("/users/{}/approve", principal.user_id))
-                .extension(principal.clone())
+                .extension(principal)
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -227,7 +227,7 @@ async fn json_routes_authenticate_paginate_and_authorize_writes() {
                 Request::builder()
                     .method(method)
                     .uri(uri)
-                    .extension(principal.clone())
+                    .extension(principal)
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -241,7 +241,7 @@ fn only_approved_admins_acting_as_themselves_may_administer() {
     let (_, accounts, principal) = setup();
     let mut account = accounts.account.lock().unwrap().clone();
     assert!(can_administer(&principal, &account));
-    let other = Principal::new(principal.auth_id, Uuid::new_v4(), AuthMethod::Session);
+    let other = Principal::new(principal.session_id, Uuid::new_v4());
     assert!(!can_administer(&other, &account));
     account.approval_status = ApprovalStatus::Pending;
     assert!(!can_administer(&principal, &account));
@@ -278,7 +278,7 @@ async fn browser_rows_escape_and_enforce_current_authority() {
         .oneshot(
             Request::builder()
                 .uri("/users?status=pending")
-                .extension(principal.clone())
+                .extension(principal)
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -315,7 +315,7 @@ async fn browser_rows_escape_and_enforce_current_authority() {
             Request::builder()
                 .method("POST")
                 .uri(&approve)
-                .extension(principal.clone())
+                .extension(principal)
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -329,7 +329,7 @@ async fn browser_rows_escape_and_enforce_current_authority() {
                 .method("POST")
                 .uri(&approve)
                 .header("hx-request", "true")
-                .extension(principal.clone())
+                .extension(principal)
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -352,7 +352,7 @@ async fn browser_rows_escape_and_enforce_current_authority() {
                 .method("POST")
                 .uri(&approve)
                 .header("sec-fetch-site", "cross-site")
-                .extension(principal.clone())
+                .extension(principal)
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -367,7 +367,7 @@ async fn browser_rows_escape_and_enforce_current_authority() {
                 Request::builder()
                     .method(method)
                     .uri(path)
-                    .extension(principal.clone())
+                    .extension(principal)
                     .body(Body::empty())
                     .unwrap(),
             )

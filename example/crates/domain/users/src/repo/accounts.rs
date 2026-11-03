@@ -1,19 +1,14 @@
-use crate::{
-    accounts::{
-        Account, AccountError, AccountPage, AccountQuery, AccountRepo, ApprovalStatus,
-        ManagedAccount, normalize_username,
-    },
-    models::validate_name,
+use crate::accounts::{
+    Account, AccountError, AccountPage, AccountQuery, AccountRepo, ApprovalStatus, ManagedAccount,
 };
 use async_trait::async_trait;
 use hypgm_errors::RepoError;
-use sea_orm::sea_query::{Alias, Expr, Query};
+use sea_orm::sea_query::OnConflict;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, Condition, ConnectionTrait, DatabaseConnection, EntityTrait,
-    ExprTrait, QueryFilter, QueryOrder, QuerySelect, Set, SqlxPostgresConnector, TransactionTrait,
+    ActiveModelTrait, ColumnTrait, Condition, DatabaseConnection, EntityTrait, ExprTrait,
+    QueryFilter, QueryOrder, QuerySelect, Set, SqlxPostgresConnector, TransactionTrait,
 };
 use sqlx::PgPool;
-use std::collections::HashMap;
 use uuid::Uuid;
 
 pub(crate) mod entity {
@@ -30,6 +25,7 @@ pub(crate) mod entity {
         pub approval_status: ApprovalStatus,
         pub is_admin: bool,
         pub approved_at: Option<DateTimeUtc>,
+        pub username: Option<String>,
     }
     #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
     pub enum Relation {}
@@ -48,6 +44,14 @@ impl From<entity::Model> for Account {
         }
     }
 }
+impl From<entity::Model> for ManagedAccount {
+    fn from(value: entity::Model) -> Self {
+        Self {
+            username: value.username.clone(),
+            account: value.into(),
+        }
+    }
+}
 pub struct PgAccountRepo {
     db: DatabaseConnection,
 }
@@ -57,148 +61,43 @@ impl PgAccountRepo {
             db: SqlxPostgresConnector::from_sqlx_postgres_pool(pool),
         }
     }
-    /// Atomically insert an account and its password identity. Administrators
-    /// start approved; registrations start pending.
-    async fn insert_account(
-        &self,
-        display_name: &str,
-        username: &str,
-        password_hash: &str,
-        is_admin: bool,
-    ) -> Result<Account, AccountError> {
-        validate_name(display_name).map_err(|_| AccountError::Validation)?;
-        if normalize_username(username)? != username
-            || password_hash.is_empty()
-            || password_hash.contains('\0')
-        {
-            return Err(AccountError::Validation);
-        }
-        let tx = self.db.begin().await.map_err(database)?;
-        let account = entity::ActiveModel {
-            id: Set(Uuid::new_v4()),
-            display_name: Set(display_name.to_owned()),
-            approval_status: Set(if is_admin {
-                ApprovalStatus::Approved
-            } else {
-                ApprovalStatus::Pending
-            }),
-            is_admin: Set(is_admin),
-            approved_at: Set(is_admin.then(chrono::Utc::now)),
-            ..Default::default()
-        }
-        .insert(&tx)
-        .await
-        .map_err(database)?;
-        let insert = Query::insert()
-            .into_table((Alias::new("exemplum"), Alias::new("auth_identities")))
-            .columns(
-                [
-                    "id",
-                    "user_id",
-                    "identity_type",
-                    "identifier",
-                    "secret_hash",
-                ]
-                .map(Alias::new),
-            )
-            .values_panic([
-                Uuid::new_v4().into(),
-                account.id.into(),
-                "password".into(),
-                username.into(),
-                password_hash.into(),
-            ])
-            .to_owned();
-        if let Err(error) = tx.execute(&insert).await {
-            let duplicate = match &error {
-                sea_orm::DbErr::Exec(sea_orm::RuntimeErr::SqlxError(error)) => {
-                    matches!(error.as_ref(), sqlx::Error::Database(error) if error.constraint() == Some("idx_auth_identities_identity_unique"))
-                }
-                _ => false,
-            };
-            tx.rollback().await.map_err(database)?;
-            return Err(if duplicate {
-                AccountError::DuplicateUsername
-            } else {
-                database(error)
-            });
-        }
-        tx.commit().await.map_err(database)?;
-        Ok(account.into())
-    }
 }
 fn database(error: sea_orm::DbErr) -> AccountError {
     RepoError::database(error).into()
 }
 
-/// Pair accounts with their active password usernames in one lookup.
-async fn with_usernames(
-    db: &impl ConnectionTrait,
-    accounts: Vec<entity::Model>,
-) -> Result<Vec<ManagedAccount>, AccountError> {
-    if accounts.is_empty() {
-        return Ok(Vec::new());
-    }
-    let lookup = Query::select()
-        .columns([Alias::new("user_id"), Alias::new("identifier")])
-        .from((Alias::new("exemplum"), Alias::new("auth_identities")))
-        .and_where(Expr::col(Alias::new("user_id")).is_in(accounts.iter().map(|a| a.id)))
-        .and_where(Expr::col(Alias::new("identity_type")).eq("password"))
-        .and_where(Expr::col(Alias::new("revoked_at")).is_null())
-        .to_owned();
-    let mut usernames = HashMap::new();
-    for row in db.query_all(&lookup).await.map_err(database)? {
-        let user_id: Uuid = row.try_get("", "user_id").map_err(database)?;
-        let identifier: String = row.try_get("", "identifier").map_err(database)?;
-        usernames.insert(user_id, identifier);
-    }
-    Ok(accounts
-        .into_iter()
-        .map(|account| ManagedAccount {
-            username: usernames.remove(&account.id),
-            account: account.into(),
-        })
-        .collect())
-}
-
 #[async_trait]
 impl AccountRepo for PgAccountRepo {
-    async fn register(
+    async fn ensure_account(
         &self,
-        display_name: &str,
+        id: Uuid,
         username: &str,
-        password_hash: &str,
-    ) -> Result<Account, AccountError> {
-        self.insert_account(display_name, username, password_hash, false)
-            .await
-    }
-    async fn create_admin(
-        &self,
         display_name: &str,
-        username: &str,
-        password_hash: &str,
     ) -> Result<Account, AccountError> {
-        let username = normalize_username(username)?;
-        self.insert_account(display_name.trim(), username, password_hash, true)
-            .await
+        // INSERT ... ON CONFLICT (id) DO NOTHING: concurrent first requests
+        // for one identity converge on a single pending row.
+        entity::Entity::insert(entity::ActiveModel {
+            id: Set(id),
+            display_name: Set(display_name.to_owned()),
+            username: Set(Some(username.to_owned())),
+            approval_status: Set(ApprovalStatus::Pending),
+            is_admin: Set(false),
+            ..Default::default()
+        })
+        .on_conflict(
+            OnConflict::column(entity::Column::Id)
+                .do_nothing()
+                .to_owned(),
+        )
+        .exec_without_returning(&self.db)
+        .await
+        .map_err(database)?;
+        self.get(id).await
     }
     async fn promote_admin(&self, username: &str) -> Result<Account, AccountError> {
-        let username = normalize_username(username)?;
         let tx = self.db.begin().await.map_err(database)?;
-        let lookup = Query::select()
-            .column(Alias::new("user_id"))
-            .from((Alias::new("exemplum"), Alias::new("auth_identities")))
-            .and_where(Expr::col(Alias::new("identity_type")).eq("password"))
-            .and_where(Expr::col(Alias::new("identifier")).eq(username))
-            .and_where(Expr::col(Alias::new("revoked_at")).is_null())
-            .to_owned();
-        let identity = tx
-            .query_one(&lookup)
-            .await
-            .map_err(database)?
-            .ok_or(RepoError::NotFound)?;
-        let id: Uuid = identity.try_get("", "user_id").map_err(database)?;
-        let account = entity::Entity::find_by_id(id)
+        let account = entity::Entity::find()
+            .filter(entity::Column::Username.eq(username))
             .lock_exclusive()
             .one(&tx)
             .await
@@ -233,9 +132,8 @@ impl AccountRepo for PgAccountRepo {
         } else {
             account
         };
-        let mut accounts = with_usernames(&tx, vec![account]).await?;
         tx.commit().await.map_err(database)?;
-        Ok(accounts.remove(0))
+        Ok(account.into())
     }
     async fn get(&self, id: Uuid) -> Result<Account, AccountError> {
         entity::Entity::find_by_id(id)
@@ -280,7 +178,7 @@ impl AccountRepo for PgAccountRepo {
             None
         };
         Ok(AccountPage {
-            accounts: with_usernames(&self.db, accounts).await?,
+            accounts: accounts.into_iter().map(Into::into).collect(),
             next_after,
         })
     }

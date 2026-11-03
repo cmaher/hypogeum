@@ -3,7 +3,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "playwright test"
+    "test": "playwright test && playwright test --config auth.config.mjs",
+    "test:views": "playwright test",
+    "test:auth": "playwright test --config auth.config.mjs"
   },
   "devDependencies": {
     "@playwright/test": "1.64.1"

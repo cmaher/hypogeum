@@ -9,6 +9,7 @@
 </head>
 <body>
 <main>
+<nav>{% if signed_in %}<a href="/settings">Settings</a> <form method="post" action="/logout"><button type="submit">Log out</button></form>{% else %}<a href="/login">Log in</a> <a href="/registration">Register</a>{% endif %}</nav>
 <h1>Hello World</h1>
 {% include "greeting.html" %}
 </main>

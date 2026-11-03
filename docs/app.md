@@ -2,7 +2,7 @@
 
 The `app` binary (`example/cmd/app`) is the public HTTP entry point for the Exemplum reference application. It replaces legacy public RPC with a modular, composed [Axum](https://docs.rs/axum) HTTP service providing JSON APIs, server-rendered HTML pages with progressive HTMX enhancement, structured health monitoring, bounded payload handling, typed error envelopes, and integrated distributed tracing.
 
-Internal services (such as User CRUD in `example/crates/domain/users`) retain internal gRPC over private listeners (`127.0.0.1:50051`), while public endpoints are exposed through `app` (`127.0.0.1:8080`).
+Internal services (such as User CRUD in `example/crates/domain/users`) retain internal gRPC over private listeners (`127.0.0.1:50051`), while public endpoints are exposed through `app` (`127.0.0.1:3000`). Browsers reach the app and Ory Kratos on one origin through Caddy (`http://localhost:8080`); see [Authentication](#authentication).
 
 ---
 
@@ -37,7 +37,7 @@ example/crates/domain/hello-world (service.rs)
    - Loads environment configuration via `hypgm-envconfig` (`crates/core/envconfig`) once at startup.
    - Initializes structured logging via `hypgm-logging` (`crates/core/logging`).
    - Constructs dependencies and injects them as trait objects (`Arc<dyn HelloWorldService>`).
-   - Binds the TCP listener (default `127.0.0.1:8080`).
+   - Checks database and Kratos readiness, then binds the TCP listener (default `127.0.0.1:3000`).
    - Handles graceful shutdown on `SIGINT` (Ctrl+C) and `SIGTERM`, draining in-flight requests.
 
 2. **`example/crates/app` (`exemplum-app` package):**
@@ -61,44 +61,26 @@ example/crates/domain/hello-world (service.rs)
 Routers are composed hierarchically using native Axum `.nest()`:
 
 ```rust
-pub fn router<S>(components: AppComponents<S>) -> Router<()>
-where
-    S: tower_sessions::SessionStore + Clone + Send + Sync + 'static,
-{
-    let admin_components = AdminComponents::new(Arc::new(DefaultAdminService::new(
-        components.account_service.clone(),
-    )));
-    let hello_components = HelloComponents::new(
-        components.hello_service,
-        components.user_service,
-    );
-    let hello = hello_world::controller::router(hello_components.clone());
-    let hello_pages = hello_world::view::router(hello_components);
-    // ... auth JSON routes and auth pages from AuthComponents ...
-    let backend = ExemplumAuthBackend::from_arc(components.auth_repo, components.account_service);
+pub fn router(components: AppComponents) -> Router<()> {
+    // ... admin, hello-world and auth components from AppComponents ...
+    let auth_pages = exemplum_dmn_auth::router(auth.clone());
 
-    // `/api` owns JSON errors for every path beneath it. Unsafe cross-site
-    // writes are rejected, and bearer tokens are revalidated against current
-    // account approval before handlers run.
+    // `/api` owns JSON errors for every path beneath it.
     let api = Router::new()
         .nest("/hello", hello)
-        .nest("/auth", auth_routes)
-        .nest("/admin", admin::api::router(admin_components.clone()))
+        .nest("/admin", admin)
         .fallback(not_found_handler)
-        .layer(axum::middleware::from_fn(api_same_origin))
-        .layer(axum::middleware::from_fn_with_state(backend.clone(), bearer_gate));
+        .layer(axum::middleware::from_fn(api_same_origin));
 
-    // Page routes own HTML errors and the same origin and bearer policies.
+    // Page routes own HTML errors and reject cross-site unsafe methods.
     let pages = Router::new()
         .merge(hello_pages)
         .merge(auth_pages)
-        .route("/registration-pending", get(auth::view::pending))
         .route("/admin", get(|| async { Redirect::to("/admin/users") }))
-        .nest("/admin", admin::view::router(admin_components))
+        .nest("/admin", admin_pages)
         .nest(hypgm_view::assets::ASSETS_MOUNT, hypgm_view::assets::router())
         .layer(axum::middleware::from_fn(html_error_middleware))
-        .layer(axum::middleware::from_fn(cross_site_middleware))
-        .layer(axum::middleware::from_fn_with_state(backend.clone(), html_bearer_gate));
+        .layer(axum::middleware::from_fn(cross_site_middleware));
 
     Router::new()
         .route("/healthz", get(healthz))
@@ -106,8 +88,8 @@ where
         .route("/api/", any(not_found_handler))
         .merge(pages)
         .fallback(html_not_found_handler)
-        .layer(auth_layer)
-        .layer(Extension(jwt_validator))
+        // Resolves the Kratos session for every route.
+        .layer(axum::middleware::from_fn_with_state(auth, exemplum_dmn_auth::session_gate))
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         .layer(trace_layer())
 }
@@ -120,18 +102,27 @@ where
   - `POST /api/hello` - Composed endpoint from `/api` -> `/hello` -> controller `POST /`.
   - `GET /` - Greeting page from `hello_world::view::router`.
   - `POST /hello` - Greeting form submission (`application/x-www-form-urlencoded`).
-  - `GET|POST /register`, `GET|POST /login`, `GET /registration-pending` - Browser registration and login forms.
-  - `POST /api/auth/register` - JSON registration; accounts start pending until approved.
+  - `GET /login`, `GET /registration`, `GET /settings` - Kratos self-service flow pages; without `?flow=` they redirect to Kratos to start a browser flow.
+  - `GET /error?id=` - Kratos self-service error page. `GET /registration-pending` - notice for accounts awaiting approval.
+  - `POST /logout` - Redirects to the Kratos logout URL for the current session.
+  - `GET /api/hello/me` - Greets the signed-in, approved user (`401` otherwise).
   - `GET /admin/users`, `POST /admin/users/{id}/approve` - Administrator user-management page; `?status=pending|approved` filters, `?after=<id>` pages.
   - `GET /api/admin/users`, `POST /api/admin/users/{id}/approve` - Administrator JSON API; `GET` accepts `status`, `after`, and `limit` (1-100, default 50).
   - `GET /assets/htmx-<version>.min.js`, `GET /assets/view.js` - Shared view assets.
+
+### Authentication
+
+Ory Kratos owns credentials, sessions and the self-service flows; Caddy puts it
+and the app on one origin. `exemplum-dmn-auth`'s `session_gate` checks every
+request with Kratos whoami and inserts a `hypgm_authn::Principal` for approved
+accounts. See [the example README](../example/README.md#authentication-architecture).
 
 ### Concrete Request / Response Example
 
 **Request:**
 ```http
 POST /api/hello HTTP/1.1
-Host: 127.0.0.1:8080
+Host: localhost:8080
 Content-Type: application/json
 Accept: application/json
 X-Request-Id: caller-client-id-123
@@ -217,9 +208,7 @@ JSON Error Envelope (Safe status, code, message) + Extensions (PublicErrorInfo)
 
 ### Uniform Error Response Format
 
-Application error responses adhere to the standard JSON envelope. The OAuth token
-endpoint uses `error` and `error_description` fields, supplies a matching challenge
-for failed HTTP authentication, and disables response caching:
+Application error responses adhere to the standard JSON envelope:
 
 ```json
 {
@@ -314,11 +303,11 @@ Every HTTP request traverses `trace_layer` (`TraceLayer`):
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `EXEMPLUM_APP_BIND` | `127.0.0.1:8080` | Socket address for public HTTP listener |
+| `EXEMPLUM_APP_BIND` | `127.0.0.1:3000` | Socket address for the HTTP listener (behind Caddy) |
 | `EXEMPLUM_APP_DATABASE_URL` | required | PostgreSQL URL using restricted `exemplum_users` credentials |
-| `EXEMPLUM_APP_JWT_SECRET` | required | Private signing secret, at least 32 bytes |
-| `EXEMPLUM_APP_MAX_PASSWORD_VERIFICATIONS` | `4` | Maximum concurrent password checks; must be positive and fit the semaphore capacity |
-| `EXEMPLUM_APP_SESSION_CLEANUP_INTERVAL_SECONDS` | `3600` | Positive interval between expired-session cleanup runs |
+| `EXEMPLUM_APP_KRATOS_PUBLIC_URL` | `http://127.0.0.1:4433` | Kratos public API as reached by the app |
+| `EXEMPLUM_APP_KRATOS_BROWSER_URL` | `http://localhost:8080/.ory/kratos` | Kratos public API as reached by browsers (through Caddy) |
+| `EXEMPLUM_APP_KRATOS_TIMEOUT_SECONDS` | `5` | Positive per-request timeout for Kratos calls |
 | `EXEMPLUM_LOG` | `info` | Tracing filter directive |
 | `EXEMPLUM_LOG_FORMAT` | `text` | Log format: `text` or `json` |
 | `EXEMPLUM_ENV_FILE` | *(unset)* | Selects `.env` file (e.g. `env/local.env`; empty disables) |
@@ -326,9 +315,10 @@ Every HTTP request traverses `trace_layer` (`TraceLayer`):
 ### Local Execution
 
 Follow [the example setup](../example/README.md#running-the-application) to
-provision and migrate PostgreSQL and configure a private signing secret. The
-binary checks the runtime adapters before opening its listener and never
-migrates on startup. Run from `example/` so the default policy paths resolve:
+provision and migrate PostgreSQL and Kratos. The binary checks the database and
+Kratos readiness before opening its listener and never migrates on startup.
+From `example/`, start Kratos and Caddy and run the app, then browse
+`http://localhost:8080`:
 
 ```sh
 make app
@@ -344,10 +334,10 @@ Test with curl:
 
 ```sh
 # Health check
-curl -i http://127.0.0.1:8080/healthz
+curl -i http://localhost:8080/healthz
 
 # JSON API
-curl -i -X POST http://127.0.0.1:8080/api/hello \
+curl -i -X POST http://localhost:8080/api/hello \
   -H "Content-Type: application/json" \
   -d '{"name": "World"}'
 ```
@@ -402,10 +392,10 @@ parsing only; there is no content-type dispatch between HTML and JSON adapters.
   either header (non-browser clients) are accepted. Page routers also install
   `cross_site_middleware`, which applies the same check to every unsafe
   method (anything but `GET`, `HEAD`, `OPTIONS` and `TRACE`) before routing,
-  so handlers without a form body are covered. Session cookies also
-  default to `SameSite=Strict` (`tower-sessions`); keep that default for
-  form-authenticated pages. Deployments behind a proxy that rewrites `Host`
-  must forward the original host.
+  so handlers without a form body are covered (including `POST /logout`).
+  The Kratos session cookie is `SameSite=Lax` (`infra/kratos/kratos.yml`).
+  Deployments behind a proxy that rewrites `Host` must forward the original
+  host; Caddy preserves it.
 - **HTML errors:** `HtmlError`, `html_error_response` and `html_error_middleware`
   reuse `PublicErrorInfo` classification and attach the same tracing extensions
   as JSON errors. Askama autoescapes all interpolated values; templates never
@@ -431,13 +421,17 @@ pushing are not enabled.
 
 ### Browser smoke checks
 
-`example/tests/browser` contains a Playwright suite that runs with JavaScript
-enabled and disabled against `example/crates/app/examples/view_smoke_server.rs`,
-which composes the real router with in-memory services and no database. It is
-the behavioural coverage for `view.js` and requires Node.js:
+`example/tests/browser` contains Playwright suites that run with JavaScript
+enabled and disabled. `views.spec.mjs` targets
+`example/crates/app/examples/view_smoke_server.rs`, which composes the real
+router with in-memory services and no database; it is the behavioural coverage
+for `view.js`. `auth.spec.mjs` registers, logs out and logs in through Caddy and
+Kratos on an isolated stack (see the example README). Both need Node.js; the auth
+suite also needs Docker:
 
 ```sh
-make -C example test-browser
+make -C example test-browser        # both
+make -C example test-browser-views  # views only
 ```
 
 The submitted name `server-error` makes the smoke server's injected service fail,

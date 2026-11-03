@@ -48,7 +48,7 @@ impl DefaultAdminService {
         Self { accounts }
     }
     async fn authorize(&self, principal: &Principal) -> Result<(), AdminError> {
-        // Always reload authority: sessions and JWT claims never supply roles.
+        // Always reload authority: identity sessions never supply roles.
         let account = match self.accounts.get(principal.user_id).await {
             Ok(account) => account,
             // A principal without an account has no authority; lookup failures stay visible.

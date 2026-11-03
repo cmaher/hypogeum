@@ -45,10 +45,22 @@ pub struct UserPage {
     pub next_after: Option<Uuid>,
 }
 
+/// Display names hold 1..=200 characters, no control characters, and no
+/// leading or trailing whitespace. This is exactly the identity schema's
+/// `display_name` pattern (`\s`, `\p{Z}` and `\p{Cc}` together are Unicode
+/// `White_Space` plus `Cc`), so a name Kratos accepts is always storable.
 pub fn validate_name(name: &str) -> Result<(), RepoError> {
-    if name.is_empty() || name.trim() != name || name.chars().count() > 200 || name.contains('\0') {
+    let edge = |c: char| c.is_whitespace() || c.is_control();
+    if name.is_empty()
+        || name.chars().count() > 200
+        || name.chars().any(char::is_control)
+        || name.starts_with(edge)
+        || name.ends_with(edge)
+    {
         return Err(RepoError::InvalidInput(
-            "Display name must be trimmed and contain 1..200 characters without NUL".into(),
+            "Display name must contain 1..200 characters without control characters \
+             or surrounding whitespace"
+                .into(),
         ));
     }
     Ok(())

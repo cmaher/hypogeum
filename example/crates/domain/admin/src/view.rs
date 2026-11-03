@@ -12,7 +12,7 @@ use exemplum_dmn_users::{
     accounts::{AccountQuery, ApprovalStatus, ManagedAccount},
     models::PageRequest,
 };
-use hypgm_authn::RequireAuth;
+use hypgm_authn::{OptionalAuth, PublicError};
 use hypgm_view::{HtmlError, HtmxRequest, render_template};
 use serde::Deserialize;
 use uuid::Uuid;
@@ -46,6 +46,16 @@ impl From<ManagedAccount> for UserRow {
             pending: account.approval_status == ApprovalStatus::Pending,
         }
     }
+}
+/// The 401 page for anonymous visitors, with ways to sign in.
+#[derive(Template)]
+#[template(path = "signin.html")]
+struct SignInPage;
+fn sign_in_required() -> Response {
+    hypgm_view::render_error_template(
+        hypgm_authn::AuthError::Unauthenticated.public_error(),
+        &SignInPage,
+    )
 }
 /// A status filter link; the current filter renders as plain text.
 struct Filter {
@@ -92,10 +102,12 @@ pub fn router(components: AdminComponents) -> Router<()> {
 }
 async fn list(
     State(components): State<AdminComponents>,
-    auth: Result<RequireAuth, hypgm_authn::extractor::AuthRejection>,
+    OptionalAuth(principal): OptionalAuth,
     query: Result<Query<ListQuery>, axum::extract::rejection::QueryRejection>,
 ) -> Result<Response, HtmlError> {
-    let RequireAuth(principal) = auth.map_err(|e| HtmlError::from(e.0))?;
+    let Some(principal) = principal else {
+        return Ok(sign_in_required());
+    };
     let Query(query) =
         query.map_err(|_| HtmlError::from_http(hypgm_http::HttpError::invalid_request()))?;
     let status = query.status;
@@ -126,11 +138,13 @@ async fn list(
 }
 async fn approve(
     State(components): State<AdminComponents>,
-    auth: Result<RequireAuth, hypgm_authn::extractor::AuthRejection>,
+    OptionalAuth(principal): OptionalAuth,
     htmx: HtmxRequest,
     id: Result<Path<Uuid>, axum::extract::rejection::PathRejection>,
 ) -> Result<Response, HtmlError> {
-    let RequireAuth(principal) = auth.map_err(|e| HtmlError::from(e.0))?;
+    let Some(principal) = principal else {
+        return Ok(sign_in_required());
+    };
     let Path(id) =
         id.map_err(|_| HtmlError::from_http(hypgm_http::HttpError::invalid_request()))?;
     let account = components.service.approve(&principal, id).await?;
