@@ -12,6 +12,6 @@
 
 	handle {
 		# The app runs on the host (`make app`), bound to 127.0.0.1:3000.
-		reverse_proxy host.docker.internal:3000
+		reverse_proxy host.docker.internal:{$APP_PORT:3000}
 	}
 }

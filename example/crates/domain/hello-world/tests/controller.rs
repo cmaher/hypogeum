@@ -247,7 +247,7 @@ async fn test_hello_me_requires_auth() {
 #[tokio::test]
 async fn test_hello_me_returns_authenticated_display_name() {
     let user_id = uuid::Uuid::new_v4();
-    let auth_id = uuid::Uuid::new_v4();
+    let session_id = uuid::Uuid::new_v4();
     let user_service = Arc::new(MockUserService {
         user: exemplum_dmn_users::models::User {
             id: user_id,
@@ -264,7 +264,7 @@ async fn test_hello_me_returns_authenticated_display_name() {
         ),
     );
 
-    let principal = hypgm_authn::Principal::new(auth_id, user_id);
+    let principal = hypgm_authn::Principal::new(session_id, user_id);
     let mut req = Request::builder()
         .method("GET")
         .uri("/me")

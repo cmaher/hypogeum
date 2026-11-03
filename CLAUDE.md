@@ -8,15 +8,15 @@ This repository is organized into a two-tier architecture:
 
 1. **Hypogeum Framework Foundation** (root workspace):
    - Foundation crates in `crates/core/` (`hypgm-*`): `authn`, `envconfig`, `errors`, `http`, `logging`, `rpc`, `test-support`, `view` (opt-in HTML/HTMX views).
-   - External driver and stateful adapters in `crates/ext/` (`hypgmx-*`): `file-storage`, `rdbms`, `tasks`.
+   - External driver and stateful adapters in `crates/ext/` (`hypgmx-*`): `file-storage`, `kratos` (Ory Kratos public-API client), `rdbms`, `tasks`.
    - Standalone framework operations UI: `cmd/apalis-dashboard`.
 2. **Exemplum Reference Implementation** (`example/` workspace):
    - Standalone reference project demonstrating consumption of Hypogeum framework crates.
    - Independent Cargo workspace (`example/Cargo.toml`) referencing framework crates via relative path dependencies.
    - App router in `example/crates/app` (`exemplum-app`).
-   - Domain crates in `example/crates/domain/`: `hello-world` (`exemplum-dmn-hello-world`), `users` (`exemplum-dmn-users`).
-   - Binaries in `example/cmd/`: `app` (`exemplum-app-cli`), `db` (`exemplum-db-cli`).
-   - Local database stack in `example/docker-compose.yml` and `example/infra/postgres/`.
+   - Domain crates in `example/crates/domain/`: `admin` (`exemplum-dmn-admin`), `auth` (`exemplum-dmn-auth`), `hello-world` (`exemplum-dmn-hello-world`), `users` (`exemplum-dmn-users`).
+   - Binaries in `example/cmd/`: `app` (`exemplum-app-cli`), `admin` (`exemplum-admin-cli`, binary `exemplum-admin`), `db` (`exemplum-db-cli`).
+   - Local stack (PostgreSQL, Ory Kratos, Caddy) in `example/docker-compose.yml` with config in `example/infra/{postgres,kratos,caddy}/`.
    - Dedicated task automation in `example/Makefile`.
 
 ## Template Naming & Scoped Customization
@@ -38,6 +38,7 @@ Root framework crates and infrastructure namespaces (`hypgm-*`, `hypgmx-*`, `inf
 - Repositories own application SQL. Build typed entity queries with SeaORM, integrating with SQLx pool ownership via `SqlxPostgresConnector`. Keep tables schema-qualified.
 - Define shared errors and the `PublicError` / `PublicErrorInfo` contract in `crates/core/errors` (`hypgm-errors`). Domain crates define domain-specific errors implementing `PublicError`. Use `anyhow` at binary boundaries. Database and internal details must not enter HTTP or gRPC responses.
 - Binaries load environment once via `hypgm-envconfig` (`crates/core/envconfig`, `EnvSource::load_for` with application prefix, or `EnvSource::load` for framework binaries), deserialize per-binary `Config` with `envy`, use `Secret` for credentials, and never mutate process env. Libraries receive typed values, pools and dependencies explicitly.
+- Browser authentication belongs to Ory Kratos behind Caddy (one origin, `http://localhost:8080`). The app's `session_gate` calls Kratos whoami with only the `ory_kratos_session` cookie and inserts a `hypgm_authn::Principal`; approval and admin flags live in `exemplum.users`. No passwords, tokens or API keys in app code.
 - Run migrations explicitly through `exemplum-db` (driving framework `hypgmx-rdbms` via `DatabaseConfig`); runtime processes never migrate on startup and check readiness using restricted credentials.
 - `crates/core/test-support` is a development dependency only. Its suite launcher runs ignored SQLx cases in child processes against Testcontainers, ensuring ordinary `cargo test` commands execute them and propagate failures.
 
@@ -64,13 +65,14 @@ From `example/` (or via `make -C example <task>`):
 
 ```sh
 make db-up        # Start local PostgreSQL container in background
-make db-status    # Check PostgreSQL container status
+make db-status    # Show status of all containers (PostgreSQL, Kratos, Caddy)
 make db-provision # Provision database, roles, and schema contracts
-make db-migrate   # Apply database migrations via exemplum-db
+make db-migrate   # Apply exemplum-db migrations, then Kratos migrations
 make db-verify    # Verify database schema contracts
-make db-down      # Stop local PostgreSQL container
-make app          # Run public HTTP application (127.0.0.1:8080)
-make test         # Run example unit and integration tests
-make test-browser # Run Playwright HTML view smoke checks (requires Node.js)
+make db-down      # Stop all containers (PostgreSQL, Kratos, Caddy)
+make auth-up      # Start Kratos and Caddy
+make app          # Run the app on 127.0.0.1:3000; browse http://localhost:8080 via Caddy
+make test         # Run example unit and integration tests (incl. Kratos e2e)
+make test-browser # Playwright views + auth smoke on an isolated stack (Node.js, Docker)
 make ci           # Run full Exemplum CI (fmt, clippy, test, sweep)
 ```

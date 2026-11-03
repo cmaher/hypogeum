@@ -2,7 +2,7 @@
 .DEFAULT_GOAL := help
 # `ci` relies on prerequisites running in order, even under -j.
 .NOTPARALLEL:
-.PHONY: help fmt fmt-fix clippy build test test-browser test-browser-registration sweep ci ci-fmt-fix \
+.PHONY: help fmt fmt-fix clippy build test test-browser test-browser-views test-browser-auth sweep ci ci-fmt-fix \
 	db-up db-down db-status db-provision db-migrate db-verify auth-up app
 
 # Incremental data and debug info do not help a full CI build. STRIP=none
@@ -40,11 +40,14 @@ build: ## Build all packages (not part of ci; test builds everything)
 test: ## Run all tests; Docker must be running for integration suites
 	cargo test --locked --workspace --all-features
 
-test-browser: ## Playwright smoke checks for HTML views, JavaScript on and off (needs Node.js)
+test-browser: ## Playwright smoke checks: HTML views, then Kratos auth through Caddy (needs Node.js and Docker)
 	$(BROWSER_DEPS) && npm test
 
-test-browser-registration: ## Real PostgreSQL/app registration flow in Chromium, JavaScript on and off
-	($(BROWSER_DEPS)) && EXEMPLUM_TEST_BROWSER=1 cargo test --locked --workspace --all-features --test runtime
+test-browser-views: ## Playwright HTML view checks against a database-free server, JavaScript on and off
+	$(BROWSER_DEPS) && npm run test:views
+
+test-browser-auth: ## Playwright registration/login/logout on an isolated stack with free ports (needs Docker)
+	$(BROWSER_DEPS) && npm run test:auth
 
 sweep: ## Remove target/ artifacts unused for 7 days (needs cargo-sweep; skipped if SKIP_SWEEP is set)
 ifdef SKIP_SWEEP

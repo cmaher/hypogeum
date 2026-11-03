@@ -30,7 +30,7 @@ services:
       SECRETS_COOKIE: ${EXEMPLUM_KRATOS_COOKIE_SECRET:-exemplum-local-cookie-secret-0123456789}
       SECRETS_CIPHER: ${EXEMPLUM_KRATOS_CIPHER_SECRET:-local-cipher-secret-0123456789ab}
     volumes:
-      - ./infra/kratos:/etc/config/kratos:ro
+      - ${EXEMPLUM_KRATOS_CONFIG_DIR:-./infra/kratos}:/etc/config/kratos:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -41,9 +41,9 @@ services:
     environment: *kratos-env
     ports:
       # Public API for the host app (whoami, flows). The admin API stays internal.
-      - "127.0.0.1:4433:4433"
+      - "127.0.0.1:${EXEMPLUM_KRATOS_PORT:-4433}:4433"
     volumes:
-      - ./infra/kratos:/etc/config/kratos:ro
+      - ${EXEMPLUM_KRATOS_CONFIG_DIR:-./infra/kratos}:/etc/config/kratos:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -56,7 +56,10 @@ services:
   caddy:
     image: caddy:2.11.7-alpine
     ports:
-      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:${EXEMPLUM_CADDY_PORT:-8080}:8080"
+    environment:
+      # Host port of the app that Caddy proxies to (EXEMPLUM_APP_BIND's port).
+      APP_PORT: ${EXEMPLUM_CADDY_APP_PORT:-3000}
     volumes:
       - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
     extra_hosts:

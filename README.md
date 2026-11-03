@@ -16,6 +16,7 @@ The repository uses a two-tier architecture cleanly separating framework foundat
 │   └── apalis-dashboard/         # Standalone framework background tasks dashboard
 ├── crates/
 │   ├── core/                     # Core runtime & cross-cutting foundations (hypgm-*)
+│   │   ├── authn/                # Principal and RequireAuth/OptionalAuth extractors
 │   │   ├── envconfig/            # Type-safe environment loading and secrets
 │   │   ├── errors/               # Shared typed error types and PublicError trait
 │   │   ├── http/                 # Axum middleware, error mapping, and body limits
@@ -25,6 +26,7 @@ The repository uses a two-tier architecture cleanly separating framework foundat
 │   │   └── view/                 # Opt-in HTML views, HTMX support, and vendored assets
 │   └── ext/                      # External driver & stateful adapters (hypgmx-*)
 │       ├── file-storage/         # Streamed byte storage at path-shaped keys
+│       ├── kratos/               # Ory Kratos public-API client (sessions, flows)
 │       ├── rdbms/
 │       │   ├── db/               # Migration runner, schema verification, inspection
 │       │   └── postgres/         # Database pool management
@@ -35,21 +37,23 @@ The repository uses a two-tier architecture cleanly separating framework foundat
 │       └── test_rename_project.py
 └── example/                      # Exemplum reference project (independent workspace)
     ├── Cargo.toml                # Example workspace manifest
-    ├── Makefile                  # Example tasks (db-up, db-migrate, app, test, ci)
+    ├── Makefile                  # Example tasks (db-up, db-migrate, auth-up, app, test, ci)
     ├── README.md                 # Exemplum documentation & onboarding guide
-    ├── docker-compose.yml        # Local PostgreSQL container for Exemplum
-    ├── infra/                    # PostgreSQL init & schema provisioning
-    ├── cmd/                      # Exemplum binaries (app, exemplum-db)
-    └── crates/                   # Exemplum libraries (exemplum-app, exemplum-dmn-*)
+    ├── docker-compose.yml        # Local PostgreSQL, Ory Kratos and Caddy
+    ├── infra/                    # postgres/ provisioning, kratos/ config, caddy/ Caddyfile
+    ├── cmd/                      # Exemplum binaries (app, exemplum-admin, exemplum-db)
+    ├── crates/                   # Exemplum libraries (exemplum-app, exemplum-dmn-*)
+    └── tests/browser/            # Playwright smoke checks (views; auth through Caddy)
 ```
 
 ## Exemplum Reference Application
 
 The `example/` directory houses **Exemplum**, an independent, self-contained workspace demonstrating consumption of the Hypogeum framework crates. Exemplum includes:
+- Browser sign-in through Ory Kratos behind Caddy, with account approval and administrators kept in the app database (`exemplum-dmn-auth`, `exemplum-dmn-admin`)
 - User CRUD service over SeaORM with gRPC interfaces (`exemplum-dmn-users`)
 - Public greeting API and composed Axum router (`exemplum-app`, `exemplum-dmn-hello-world`)
-- Executable entry points for the HTTP server (`app`) and database migration tool (`exemplum-db`)
-- Local PostgreSQL Docker Compose stack and dedicated `Makefile`
+- Executable entry points for the HTTP server (`app`), administrator bootstrap (`exemplum-admin`) and database migration tool (`exemplum-db`)
+- Local Docker Compose stack (PostgreSQL, Kratos, Caddy) and dedicated `Makefile`
 
 For detailed setup, environment variables, and local execution instructions, see [example/README.md](example/README.md).
 

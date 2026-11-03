@@ -107,6 +107,8 @@ class RenameProjectTests(unittest.TestCase):
             "example/crates/app/src/router.rs",
             "example/infra/postgres/provision.sql",
             "example/env/local.env.example",
+            "example/tests/browser/auth-stack.mjs",
+            "example/tests/browser/auth.spec.mjs",
         ]
         # Kratos and Caddy configuration is framework-neutral: the `kratos`
         # database and role keep their names, so these files never change.
@@ -152,7 +154,6 @@ class RenameProjectTests(unittest.TestCase):
         self.assertIn(f"${{{TARGET.upper()}_KRATOS_COOKIE_SECRET:-", compose)
         self.assertIn(f"${{{TARGET.upper()}_KRATOS_CIPHER_SECRET:-", compose)
         self.assertIn("postgres://kratos:", compose)
-        self.assertIn("./infra/kratos:/etc/config/kratos:ro", compose)
         self.assertIn("./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro", compose)
         self.assertIn(f'"{TARGET.upper()}_APP_"', app_main)
         app_env = (self.root / "example/env/local.env.example").read_text()

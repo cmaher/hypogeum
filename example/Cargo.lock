@@ -1230,6 +1230,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sqlx",
+ "testcontainers-modules",
  "tokio",
  "tracing",
  "uuid",

@@ -26,6 +26,7 @@ hypgm-test-support = { path = "../../../crates/core/test-support" }
 sqlx.workspace = true
 serde_json.workspace = true
 reqwest = { version = "0.12", default-features = false }
+testcontainers-modules = "0.15"
 uuid.workspace = true
 
 [lints]
