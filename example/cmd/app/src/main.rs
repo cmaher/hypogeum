@@ -2,12 +2,24 @@ use hypgm_envconfig::Secret;
 use hypgm_logging::LogFormat;
 use serde::Deserialize;
 use std::net::SocketAddr;
-use tower_sessions::SessionStore;
+use std::num::NonZeroU64;
 
 fn default_bind() -> SocketAddr {
-    "127.0.0.1:8080"
+    "127.0.0.1:3000"
         .parse()
         .expect("valid default bind address")
+}
+
+fn default_kratos_public_url() -> String {
+    "http://127.0.0.1:4433".into()
+}
+
+fn default_kratos_browser_url() -> String {
+    "http://localhost:8080/.ory/kratos".into()
+}
+
+fn default_kratos_timeout_seconds() -> NonZeroU64 {
+    NonZeroU64::new(hypgmx_kratos::DEFAULT_REQUEST_TIMEOUT.as_secs()).expect("positive default")
 }
 
 #[derive(Debug, Deserialize)]
@@ -15,47 +27,14 @@ struct AppConfig {
     #[serde(default = "default_bind")]
     bind: SocketAddr,
     database_url: Secret,
-    #[serde(deserialize_with = "deserialize_signing_secret")]
-    jwt_secret: Secret,
-    #[serde(
-        default = "default_max_password_verifications",
-        deserialize_with = "deserialize_max_password_verifications"
-    )]
-    max_password_verifications: std::num::NonZeroUsize,
-    #[serde(default = "default_session_cleanup_interval_seconds")]
-    session_cleanup_interval_seconds: std::num::NonZeroU64,
-}
-
-fn default_max_password_verifications() -> std::num::NonZeroUsize {
-    exemplum_app::PasswordConfig::default().max_verifications
-}
-
-fn deserialize_max_password_verifications<'de, D: serde::Deserializer<'de>>(
-    deserializer: D,
-) -> Result<std::num::NonZeroUsize, D::Error> {
-    let value = std::num::NonZeroUsize::deserialize(deserializer)?;
-    if value.get() > tokio::sync::Semaphore::MAX_PERMITS {
-        return Err(serde::de::Error::custom(
-            "Password verification limit exceeds semaphore capacity",
-        ));
-    }
-    Ok(value)
-}
-
-fn default_session_cleanup_interval_seconds() -> std::num::NonZeroU64 {
-    std::num::NonZeroU64::new(3600).expect("positive default")
-}
-
-fn deserialize_signing_secret<'de, D: serde::Deserializer<'de>>(
-    deserializer: D,
-) -> Result<Secret, D::Error> {
-    let secret = Secret::deserialize(deserializer)?;
-    if secret.expose().len() < 32 {
-        return Err(serde::de::Error::custom(
-            "JWT signing secret must contain at least 32 bytes",
-        ));
-    }
-    Ok(secret)
+    /// Kratos public API as reached by the app.
+    #[serde(default = "default_kratos_public_url")]
+    kratos_public_url: String,
+    /// Kratos public API as reached by browsers (through Caddy).
+    #[serde(default = "default_kratos_browser_url")]
+    kratos_browser_url: String,
+    #[serde(default = "default_kratos_timeout_seconds")]
+    kratos_timeout_seconds: NonZeroU64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -83,30 +62,30 @@ async fn main() -> anyhow::Result<()> {
         "app starting"
     );
 
+    let kratos = hypgmx_kratos::KratosClient::new(hypgmx_kratos::KratosConfig {
+        public_url: config
+            .kratos_public_url
+            .parse()
+            .context("Parse EXEMPLUM_APP_KRATOS_PUBLIC_URL")?,
+        request_timeout: std::time::Duration::from_secs(config.kratos_timeout_seconds.get()),
+    })
+    .context("Configure Kratos client")?;
+    let browser_url = exemplum_app::BrowserUrl::new(&config.kratos_browser_url)
+        .context("Parse EXEMPLUM_APP_KRATOS_BROWSER_URL")?;
+
     let pool =
         hypgmx_rdbms::create_pool(&hypgmx_rdbms::PoolConfig::new(config.database_url.expose()))
             .context("Create application database pool")?;
+    // Check dependencies before opening the listener; never migrate here.
     exemplum_dmn_users::repo::check_ready(&pool)
         .await
         .context("Check application database readiness; run explicit migrations first")?;
-    let components = exemplum_app::AppComponentsFactory::from_pool(
-        pool.clone(),
-        exemplum_app::TokenConfig::new(config.jwt_secret.expose().as_bytes().to_vec()),
-        exemplum_app::PasswordConfig {
-            max_verifications: config.max_password_verifications,
-        },
-    );
-    // Check the actual runtime adapters before opening the listener; never migrate here.
-    components
-        .auth_repo
-        .find_active_by_id(uuid::Uuid::nil())
+    kratos
+        .ready()
         .await
-        .context("Check authentication storage readiness")?;
-    components
-        .session_store
-        .load(&tower_sessions::session::Id::default())
-        .await
-        .context("Check session storage readiness")?;
+        .context("Check Kratos readiness; start it with `make auth-up`")?;
+    let components =
+        exemplum_app::AppComponentsFactory::from_pool(pool.clone(), kratos, browser_url);
 
     let listener = tokio::net::TcpListener::bind(config.bind)
         .await
@@ -114,27 +93,12 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!(bind = %config.bind, "app listening");
 
-    let session_store = components.session_store.clone();
-    let mut background = tokio::task::JoinSet::new();
-    background.spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(
-            config.session_cleanup_interval_seconds.get(),
-        ));
-        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        loop {
-            interval.tick().await;
-            if let Err(error) = session_store.delete_expired().await {
-                tracing::error!(%error, "Failed to clean up expired sessions");
-            }
-        }
-    });
     let result = axum::serve(listener, exemplum_app::router(components))
         .with_graceful_shutdown(async {
             shutdown().await;
             tracing::info!("app shutting down");
         })
         .await;
-    background.shutdown().await;
     pool.close().await;
     result.context("App server failed")?;
     tracing::info!("app stopped");
@@ -163,49 +127,59 @@ mod tests {
     use super::*;
     use hypgm_envconfig::EnvSource;
 
+    const DATABASE_URL: (&str, &str) = (
+        "EXEMPLUM_APP_DATABASE_URL",
+        "postgres://exemplum_users:password@localhost/db",
+    );
+
     #[test]
-    fn bind_defaults_with_explicit_authentication_configuration() {
-        let env = EnvSource::from_pairs([
-            (
-                "EXEMPLUM_APP_DATABASE_URL",
-                "postgres://exemplum_users:password@localhost/db",
-            ),
-            (
-                "EXEMPLUM_APP_JWT_SECRET",
-                "a-test-signing-secret-with-at-least-32-bytes",
-            ),
-        ]);
-        let config: AppConfig = env.deserialize("EXEMPLUM_APP_").unwrap();
-        assert_eq!(config.bind, "127.0.0.1:8080".parse::<SocketAddr>().unwrap());
+    fn defaults_need_only_database_credentials() {
+        assert!(
+            EnvSource::from_pairs(Vec::<(&str, &str)>::new())
+                .deserialize::<AppConfig>("EXEMPLUM_APP_")
+                .is_err()
+        );
+        let config: AppConfig = EnvSource::from_pairs([DATABASE_URL])
+            .deserialize("EXEMPLUM_APP_")
+            .unwrap();
+        assert_eq!(config.bind, "127.0.0.1:3000".parse::<SocketAddr>().unwrap());
+        assert_eq!(config.kratos_public_url, "http://127.0.0.1:4433");
+        assert_eq!(
+            config.kratos_browser_url,
+            "http://localhost:8080/.ory/kratos"
+        );
+        assert_eq!(config.kratos_timeout_seconds.get(), 5);
     }
 
     #[test]
-    fn bind_can_be_overridden_and_invalid_addresses_fail() {
-        let env = EnvSource::from_pairs([
+    fn settings_can_be_overridden_and_invalid_values_fail() {
+        let config: AppConfig = EnvSource::from_pairs([
+            DATABASE_URL,
             ("EXEMPLUM_APP_BIND", "127.0.0.1:9090"),
+            ("EXEMPLUM_APP_KRATOS_PUBLIC_URL", "http://kratos:4433"),
             (
-                "EXEMPLUM_APP_DATABASE_URL",
-                "postgres://exemplum_users:password@localhost/db",
+                "EXEMPLUM_APP_KRATOS_BROWSER_URL",
+                "http://app.test/.ory/kratos",
             ),
-            (
-                "EXEMPLUM_APP_JWT_SECRET",
-                "a-test-signing-secret-with-at-least-32-bytes",
-            ),
-        ]);
-        let config: AppConfig = env.deserialize("EXEMPLUM_APP_").unwrap();
+            ("EXEMPLUM_APP_KRATOS_TIMEOUT_SECONDS", "2"),
+        ])
+        .deserialize("EXEMPLUM_APP_")
+        .unwrap();
         assert_eq!(config.bind, "127.0.0.1:9090".parse::<SocketAddr>().unwrap());
-        let env = EnvSource::from_pairs([
+        assert_eq!(config.kratos_public_url, "http://kratos:4433");
+        assert_eq!(config.kratos_browser_url, "http://app.test/.ory/kratos");
+        assert_eq!(config.kratos_timeout_seconds.get(), 2);
+        for (key, value) in [
             ("EXEMPLUM_APP_BIND", "invalid"),
-            (
-                "EXEMPLUM_APP_DATABASE_URL",
-                "postgres://exemplum_users:password@localhost/db",
-            ),
-            (
-                "EXEMPLUM_APP_JWT_SECRET",
-                "a-test-signing-secret-with-at-least-32-bytes",
-            ),
-        ]);
-        assert!(env.deserialize::<AppConfig>("EXEMPLUM_APP_").is_err());
+            ("EXEMPLUM_APP_KRATOS_TIMEOUT_SECONDS", "0"),
+        ] {
+            assert!(
+                EnvSource::from_pairs([DATABASE_URL, (key, value)])
+                    .deserialize::<AppConfig>("EXEMPLUM_APP_")
+                    .is_err(),
+                "{key}={value}"
+            );
+        }
     }
 
     #[test]
@@ -220,111 +194,5 @@ mod tests {
 
         let env = EnvSource::from_pairs([("EXEMPLUM_LOG_FORMAT", "invalid")]);
         assert!(env.deserialize::<AppLogConfig>("EXEMPLUM_").is_err());
-    }
-}
-
-#[cfg(test)]
-mod configuration_regressions {
-    use super::AppConfig;
-    use hypgm_envconfig::EnvSource;
-    #[test]
-    fn startup_requires_database_credentials_and_a_signing_secret() {
-        for pairs in [
-            vec![],
-            vec![(
-                "EXEMPLUM_APP_DATABASE_URL",
-                "postgres://exemplum_users:password@localhost/db",
-            )],
-            vec![(
-                "EXEMPLUM_APP_JWT_SECRET",
-                "a-configured-secret-with-32-bytes-or-more",
-            )],
-        ] {
-            assert!(
-                EnvSource::from_pairs(pairs)
-                    .deserialize::<AppConfig>("EXEMPLUM_APP_")
-                    .is_err()
-            );
-        }
-    }
-    #[test]
-    fn startup_validates_signing_secret_length() {
-        for length in [0, 1, 31, 32, 64] {
-            let secret = "a".repeat(length);
-            let env = EnvSource::from_pairs([
-                (
-                    "EXEMPLUM_APP_DATABASE_URL",
-                    "postgres://exemplum_users:password@localhost/db",
-                ),
-                ("EXEMPLUM_APP_JWT_SECRET", secret.as_str()),
-            ]);
-            assert_eq!(
-                env.deserialize::<AppConfig>("EXEMPLUM_APP_").is_ok(),
-                length >= 32
-            );
-        }
-    }
-}
-
-#[cfg(test)]
-mod resource_configuration_tests {
-    #[test]
-    fn zero_resource_settings_are_rejected() {
-        for key in [
-            "EXEMPLUM_APP_MAX_PASSWORD_VERIFICATIONS",
-            "EXEMPLUM_APP_SESSION_CLEANUP_INTERVAL_SECONDS",
-        ] {
-            let env = hypgm_envconfig::EnvSource::from_pairs([
-                (
-                    "EXEMPLUM_APP_DATABASE_URL",
-                    "postgres://user:pass@localhost/db",
-                ),
-                (
-                    "EXEMPLUM_APP_JWT_SECRET",
-                    "private-test-secret-with-at-least-32-bytes",
-                ),
-                (key, "0"),
-            ]);
-            assert!(
-                env.deserialize::<super::AppConfig>("EXEMPLUM_APP_")
-                    .is_err(),
-                "{key} must be positive"
-            );
-        }
-    }
-
-    #[test]
-    fn resource_settings_have_defaults_and_accept_overrides() {
-        let base = [
-            (
-                "EXEMPLUM_APP_DATABASE_URL",
-                "postgres://user:pass@localhost/db",
-            ),
-            (
-                "EXEMPLUM_APP_JWT_SECRET",
-                "private-test-secret-with-at-least-32-bytes",
-            ),
-        ];
-        let defaults: super::AppConfig = hypgm_envconfig::EnvSource::from_pairs(base)
-            .deserialize("EXEMPLUM_APP_")
-            .unwrap();
-        assert_eq!(defaults.max_password_verifications.get(), 4);
-        assert_eq!(defaults.session_cleanup_interval_seconds.get(), 3600);
-        let env = hypgm_envconfig::EnvSource::from_pairs(base.into_iter().chain([
-            ("EXEMPLUM_APP_MAX_PASSWORD_VERIFICATIONS", "2"),
-            ("EXEMPLUM_APP_SESSION_CLEANUP_INTERVAL_SECONDS", "15"),
-        ]));
-        let config: super::AppConfig = env.deserialize("EXEMPLUM_APP_").unwrap();
-        assert_eq!(config.max_password_verifications.get(), 2);
-        assert_eq!(config.session_cleanup_interval_seconds.get(), 15);
-        let too_large = (tokio::sync::Semaphore::MAX_PERMITS + 1).to_string();
-        let env = hypgm_envconfig::EnvSource::from_pairs(base.into_iter().chain([(
-            "EXEMPLUM_APP_MAX_PASSWORD_VERIFICATIONS",
-            too_large.as_str(),
-        )]));
-        assert!(
-            env.deserialize::<super::AppConfig>("EXEMPLUM_APP_")
-                .is_err()
-        );
     }
 }

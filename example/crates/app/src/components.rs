@@ -1,107 +1,96 @@
-use exemplum_dmn_auth::PostgresSessionStore;
-use exemplum_dmn_auth::repo::{AuthRepo, InMemoryAuthRepo, PgAuthRepo};
-pub use exemplum_dmn_auth::{PasswordConfig, TokenConfig};
+use exemplum_dmn_auth::{BrowserUrl, FlowClient, SessionVerifier};
 use exemplum_dmn_hello_world::service::{DefaultHelloWorldService, HelloWorldService};
+use exemplum_dmn_users::accounts::{AccountService, DefaultAccountService};
 use exemplum_dmn_users::models::{PageRequest, User, UserPage};
-use exemplum_dmn_users::repo::PgUserRepo;
+use exemplum_dmn_users::repo::{PgAccountRepo, PgUserRepo};
 use exemplum_dmn_users::service::{DefaultUserService, UserError, UserService};
+use hypgmx_kratos::KratosClient;
 use sqlx::PgPool;
 use std::sync::Arc;
-use tower_sessions::SessionStore;
 use uuid::Uuid;
 
-pub struct AppComponents<S> {
+pub struct AppComponents {
     pub hello_service: Arc<dyn HelloWorldService>,
     pub user_service: Arc<dyn UserService>,
-    pub auth_repo: Arc<dyn AuthRepo>,
-    pub account_service: Arc<dyn exemplum_dmn_users::accounts::AccountService>,
-    pub session_store: S,
-    pub token_config: TokenConfig,
-    pub password_config: PasswordConfig,
+    pub account_service: Arc<dyn AccountService>,
+    pub sessions: Arc<dyn SessionVerifier>,
+    pub flows: Arc<dyn FlowClient>,
+    pub kratos_browser_url: BrowserUrl,
 }
 
-impl<S: SessionStore + Clone + Send + Sync + 'static> AppComponents<S> {
-    #[allow(clippy::too_many_arguments)] // Application composition explicitly names its dependencies.
+impl AppComponents {
     pub fn new(
         hello_service: Arc<dyn HelloWorldService>,
         user_service: Arc<dyn UserService>,
-        auth_repo: Arc<dyn AuthRepo>,
-        account_service: Arc<dyn exemplum_dmn_users::accounts::AccountService>,
-        session_store: S,
-        token_config: TokenConfig,
-        password_config: PasswordConfig,
+        account_service: Arc<dyn AccountService>,
+        sessions: Arc<dyn SessionVerifier>,
+        flows: Arc<dyn FlowClient>,
+        kratos_browser_url: BrowserUrl,
     ) -> Self {
         Self {
             hello_service,
             user_service,
-            auth_repo,
             account_service,
-            session_store,
-            token_config,
-            password_config,
+            sessions,
+            flows,
+            kratos_browser_url,
         }
     }
 }
 
-pub struct AppComponentsFactory<S = tower_sessions::MemoryStore> {
+/// In-memory defaults: no valid identity sessions and approved fixture accounts.
+pub struct AppComponentsFactory {
     pub hello_service: Arc<dyn HelloWorldService>,
     pub user_service: Arc<dyn UserService>,
-    pub auth_repo: Arc<dyn AuthRepo>,
-    pub account_service: Arc<dyn exemplum_dmn_users::accounts::AccountService>,
-    pub session_store: S,
-    pub token_config: TokenConfig,
-    pub password_config: PasswordConfig,
+    pub account_service: Arc<dyn AccountService>,
+    pub sessions: Arc<dyn SessionVerifier>,
+    pub flows: Arc<dyn FlowClient>,
+    pub kratos_browser_url: BrowserUrl,
 }
 
-impl Default for AppComponentsFactory<tower_sessions::MemoryStore> {
+impl Default for AppComponentsFactory {
     fn default() -> Self {
+        let auth = exemplum_dmn_auth::AuthComponentsFactory::default();
         Self {
             hello_service: Arc::new(DefaultHelloWorldService),
             user_service: Arc::new(DefaultMockUserService),
-            auth_repo: Arc::new(InMemoryAuthRepo::new()),
-            account_service: Arc::new(exemplum_dmn_auth::fixtures::ApprovedAccounts),
-            session_store: tower_sessions::MemoryStore::default(),
-            token_config: TokenConfig::default(),
-            password_config: PasswordConfig::default(),
+            account_service: auth.accounts,
+            sessions: auth.sessions,
+            flows: auth.flows,
+            kratos_browser_url: auth.browser_url,
         }
     }
 }
 
-impl<S: SessionStore + Clone + Send + Sync + 'static> AppComponentsFactory<S> {
-    pub fn build(self) -> AppComponents<S> {
+impl AppComponentsFactory {
+    pub fn build(self) -> AppComponents {
         AppComponents::new(
             self.hello_service,
             self.user_service,
-            self.auth_repo,
             self.account_service,
-            self.session_store,
-            self.token_config,
-            self.password_config,
+            self.sessions,
+            self.flows,
+            self.kratos_browser_url,
         )
     }
-}
 
-impl AppComponentsFactory<PostgresSessionStore> {
     pub fn from_pool(
         pool: PgPool,
-        token_config: TokenConfig,
-        password_config: PasswordConfig,
-    ) -> AppComponents<PostgresSessionStore> {
-        let session_store = PostgresSessionStore::new_with_schema(pool.clone(), "exemplum");
-        let auth_repo = Arc::new(PgAuthRepo::new(pool.clone()));
-        let account_service = Arc::new(exemplum_dmn_users::accounts::DefaultAccountService::new(
-            Arc::new(exemplum_dmn_users::repo::PgAccountRepo::new(pool.clone())),
-        ));
-        let user_repo = Arc::new(PgUserRepo::new(pool));
-        let user_service = Arc::new(DefaultUserService::new(user_repo));
+        kratos: KratosClient,
+        kratos_browser_url: BrowserUrl,
+    ) -> AppComponents {
+        let kratos = Arc::new(kratos);
         AppComponents::new(
             Arc::new(DefaultHelloWorldService),
-            user_service,
-            auth_repo,
-            account_service,
-            session_store,
-            token_config,
-            password_config,
+            Arc::new(DefaultUserService::new(Arc::new(PgUserRepo::new(
+                pool.clone(),
+            )))),
+            Arc::new(DefaultAccountService::new(Arc::new(PgAccountRepo::new(
+                pool,
+            )))),
+            kratos.clone(),
+            kratos,
+            kratos_browser_url,
         )
     }
 }

@@ -25,7 +25,7 @@
           "title": "Display name",
           "minLength": 1,
           "maxLength": 200,
-          "pattern": "^\\S(?:.*\\S)?$"
+          "pattern": "^[^\\s\\p{Z}\\p{Cc}](?:[^\\p{Cc}]*[^\\s\\p{Z}\\p{Cc}])?$"
         }
       },
       "required": ["username", "display_name"],

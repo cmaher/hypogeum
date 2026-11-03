@@ -1,0 +1,5 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{{ title }}</title></head>
+<body><main><nav><a href="/">Home</a> {% if signed_in %}<a href="/settings">Settings</a>{% else %}<a href="/login">Log in</a>{% endif %}</nav>
+<h1>{{ title }}</h1><p role="status">{{ message }}</p>
+{% if signed_in %}<form method="post" action="/logout"><button type="submit">Log out</button></form>{% endif %}</main></body></html>

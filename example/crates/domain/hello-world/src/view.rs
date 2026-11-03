@@ -12,6 +12,7 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::Response;
 use axum::routing::{get, post};
+use hypgm_authn::OptionalAuth;
 use hypgm_errors::{PublicError, PublicErrorInfo};
 use hypgm_view::{
     AppForm, HTMX_SCRIPT_URL, HtmlError, HtmxRequest, VIEW_SCRIPT_URL, ViewMode, html_response,
@@ -33,6 +34,7 @@ struct PageTemplate<'a> {
     name: &'a str,
     message: &'a str,
     error: &'a str,
+    signed_in: bool,
 }
 
 #[derive(Template)]
@@ -48,6 +50,7 @@ struct GreetingView {
     name: String,
     message: String,
     error: &'static str,
+    signed_in: bool,
 }
 
 pub fn router(components: HelloComponents) -> Router<()> {
@@ -57,12 +60,17 @@ pub fn router(components: HelloComponents) -> Router<()> {
         .with_state(components)
 }
 
-async fn page() -> Response {
-    render(ViewMode::FullPage, None, &GreetingView::default())
+async fn page(OptionalAuth(principal): OptionalAuth) -> Response {
+    let view = GreetingView {
+        signed_in: principal.is_some(),
+        ..Default::default()
+    };
+    render(ViewMode::FullPage, None, &view)
 }
 
 async fn greet(
     State(components): State<HelloComponents>,
+    OptionalAuth(principal): OptionalAuth,
     htmx: HtmxRequest,
     AppForm(form): AppForm<GreetingForm>,
 ) -> Result<Response, HtmlError> {
@@ -74,6 +82,7 @@ async fn greet(
                 name: form.name,
                 message,
                 error: "",
+                signed_in: principal.is_some(),
             },
         )),
         Err(err @ HelloWorldError::Validation(message)) => Ok(render(
@@ -83,6 +92,7 @@ async fn greet(
                 name: form.name,
                 message: String::new(),
                 error: message,
+                signed_in: principal.is_some(),
             },
         )),
         Err(err) => Err(HtmlError::from(err)),
@@ -99,6 +109,7 @@ fn render(mode: ViewMode, error: Option<PublicErrorInfo>, view: &GreetingView) -
                 name: &view.name,
                 message: &view.message,
                 error: view.error,
+                signed_in: view.signed_in,
             },
         ),
         ViewMode::Fragment => respond(

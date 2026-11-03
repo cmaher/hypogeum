@@ -264,13 +264,13 @@ async fn test_hello_me_returns_authenticated_display_name() {
         ),
     );
 
-    let principal = hypgm_authn::Principal::new(auth_id, user_id, hypgm_authn::AuthMethod::Session);
+    let principal = hypgm_authn::Principal::new(auth_id, user_id);
     let mut req = Request::builder()
         .method("GET")
         .uri("/me")
         .body(Body::empty())
         .unwrap();
-    req.extensions_mut().insert(principal.clone());
+    req.extensions_mut().insert(principal);
 
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
@@ -287,7 +287,6 @@ async fn default_factory_serves_the_authenticated_greeting() {
         .extension(hypgm_authn::Principal::new(
             uuid::Uuid::new_v4(),
             uuid::Uuid::new_v4(),
-            hypgm_authn::AuthMethod::Session,
         ))
         .body(Body::empty())
         .unwrap();

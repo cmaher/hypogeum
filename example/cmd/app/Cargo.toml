@@ -11,9 +11,8 @@ path = "src/main.rs"
 [dependencies]
 exemplum-app = { path = "../../crates/app" }
 exemplum-dmn-users = { path = "../../crates/domain/users" }
+hypgmx-kratos = { path = "../../../crates/ext/kratos" }
 hypgmx-rdbms = { path = "../../../crates/ext/rdbms" }
-tower-sessions = "0.14"
-uuid.workspace = true
 axum = { version = "0.8", features = ["http2"] }
 tokio.workspace = true
 anyhow = "1"
@@ -23,14 +22,11 @@ serde.workspace = true
 tracing = "0.1"
 
 [dev-dependencies]
-hypgm-authn = { path = "../../../crates/core/authn" }
 hypgm-test-support = { path = "../../../crates/core/test-support" }
-exemplum-dmn-auth = { path = "../../crates/domain/auth" }
 sqlx.workspace = true
 serde_json.workspace = true
 reqwest = { version = "0.12", default-features = false }
-jsonwebtoken = "9"
-chrono.workspace = true
+uuid.workspace = true
 
 [lints]
 workspace = true

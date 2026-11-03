@@ -1,0 +1,154 @@
+{
+ "display_names": [
+  {
+   "value": "Alice",
+   "valid": true
+  },
+  {
+   "value": "A",
+   "valid": true
+  },
+  {
+   "value": "Ada Lovelace",
+   "valid": true
+  },
+  {
+   "value": "\u754c",
+   "valid": true
+  },
+  {
+   "value": "Zo\u00eb O'Neil",
+   "valid": true
+  },
+  {
+   "value": "a  b",
+   "valid": true
+  },
+  {
+   "value": "A\u00a0B",
+   "valid": true
+  },
+  {
+   "value": "\ud83d\ude00",
+   "valid": true
+  },
+  {
+   "value": "\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c",
+   "valid": true
+  },
+  {
+   "value": "",
+   "valid": false
+  },
+  {
+   "value": " Alice",
+   "valid": false
+  },
+  {
+   "value": "Alice ",
+   "valid": false
+  },
+  {
+   "value": "\u00a0Alice",
+   "valid": false
+  },
+  {
+   "value": "Alice\u00a0",
+   "valid": false
+  },
+  {
+   "value": "\u3000Alice",
+   "valid": false
+  },
+  {
+   "value": "\tAlice",
+   "valid": false
+  },
+  {
+   "value": "\u000bAlice",
+   "valid": false
+  },
+  {
+   "value": "Alice\u2028",
+   "valid": false
+  },
+  {
+   "value": "\u0085Alice",
+   "valid": false
+  },
+  {
+   "value": "A\u0000B",
+   "valid": false
+  },
+  {
+   "value": "A\u0007B",
+   "valid": false
+  },
+  {
+   "value": "A\nB",
+   "valid": false
+  },
+  {
+   "value": "\u0000",
+   "valid": false
+  },
+  {
+   "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "valid": false
+  }
+ ],
+ "usernames": [
+  {
+   "value": "abc",
+   "valid": true
+  },
+  {
+   "value": "a.b-c_d",
+   "valid": true
+  },
+  {
+   "value": "0admin",
+   "valid": true
+  },
+  {
+   "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "valid": true
+  },
+  {
+   "value": "ab",
+   "valid": false
+  },
+  {
+   "value": "Alice",
+   "valid": false
+  },
+  {
+   "value": "_abc",
+   "valid": false
+  },
+  {
+   "value": "-abc",
+   "valid": false
+  },
+  {
+   "value": "ab c",
+   "valid": false
+  },
+  {
+   "value": "ab\u00e7",
+   "valid": false
+  },
+  {
+   "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "valid": false
+  },
+  {
+   "value": "abc\n",
+   "valid": false
+  },
+  {
+   "value": "",
+   "valid": false
+  }
+ ]
+}

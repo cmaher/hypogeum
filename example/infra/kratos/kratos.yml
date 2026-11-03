@@ -20,8 +20,10 @@ selfservice:
     password:
       enabled: true
     profile:
-      # Lets the settings flow update traits (display name).
-      enabled: true
+      # Traits (username, display_name) are immutable after registration: the
+      # app copies them into its own accounts table once and never re-syncs,
+      # so the settings flow offers password changes only.
+      enabled: false
     code:
       enabled: false
       passwordless_enabled: false
@@ -51,7 +53,7 @@ selfservice:
     registration:
       ui_url: http://localhost:8080/registration
       lifespan: 10m
-      # One form with traits and password instead of the two-step profile flow.
+      # One form with traits and password (the `profile` method is disabled).
       enable_legacy_one_step: true
       after:
         default_browser_return_url: http://localhost:8080/registration-pending

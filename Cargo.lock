@@ -173,18 +173,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "argon2"
-version = "0.5.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3c3610892ee6e0cbce8ae2700349fcf8f98adb0dbfbee85aec3c9179d29cc072"
-dependencies = [
- "base64ct",
- "blake2",
- "cpufeatures 0.2.17",
- "password-hash",
-]
-
-[[package]]
 name = "arrayvec"
 version = "0.7.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -552,25 +540,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "axum-login"
-version = "0.18.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "964ea6eb764a227baa8c3368e45c94d23b6863cc7b880c6c9e341c143c5a5ff7"
-dependencies = [
- "axum",
- "form_urlencoded",
- "serde",
- "subtle",
- "thiserror",
- "tower-cookies",
- "tower-layer",
- "tower-service",
- "tower-sessions",
- "tracing",
- "urlencoding",
-]
-
-[[package]]
 name = "base64"
 version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -581,12 +550,6 @@ name = "base64"
 version = "0.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
-
-[[package]]
-name = "base64ct"
-version = "1.8.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 
 [[package]]
 name = "bigdecimal"
@@ -615,15 +578,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ded4057c258ba199e2d26386d3af3780957ecaee6c4ef4041c6b4b8b97c0b06"
 dependencies = [
  "serde_core",
-]
-
-[[package]]
-name = "blake2"
-version = "0.10.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "46502ad458c9a52b69d4d4d32775c788b7a1b85e8bc9d482d92250fc0e3f8efe"
-dependencies = [
- "digest 0.10.7",
 ]
 
 [[package]]
@@ -846,17 +800,6 @@ dependencies = [
  "getrandom 0.2.17",
  "once_cell",
  "tiny-keccak",
-]
-
-[[package]]
-name = "cookie"
-version = "0.18.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a373e3602691c3cdea496d2f0ee5935151e6168fe87739483c463db1b2f2f87"
-dependencies = [
- "percent-encoding",
- "time",
- "version_check",
 ]
 
 [[package]]
@@ -1124,7 +1067,6 @@ checksum = "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292"
 dependencies = [
  "block-buffer 0.10.4",
  "crypto-common 0.1.6",
- "subtle",
 ]
 
 [[package]]
@@ -1426,10 +1368,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ff2abc00be7fca6ebc474524697ae276ad847ad0a6b3faa4bcb027e9a4614ad0"
 dependencies = [
  "cfg-if",
- "js-sys",
  "libc",
  "wasi",
- "wasm-bindgen",
 ]
 
 [[package]]
@@ -1783,24 +1723,13 @@ dependencies = [
 name = "hypgm-authn"
 version = "0.2.2"
 dependencies = [
- "argon2",
- "async-trait",
  "axum",
- "axum-login",
- "chrono",
- "hex",
- "http",
  "http-body-util",
  "hypgm-errors",
- "jsonwebtoken",
- "serde",
  "serde_json",
- "sha2 0.10.9",
- "subtle",
  "thiserror",
  "tokio",
  "tower",
- "tower-sessions",
  "uuid",
 ]
 
@@ -2265,21 +2194,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "jsonwebtoken"
-version = "9.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5a87cc7a48537badeae96744432de36f4be2b4a34a05a5ef32e9dd8a1c169dde"
-dependencies = [
- "base64 0.22.1",
- "js-sys",
- "pem",
- "ring",
- "serde",
- "serde_json",
- "simple_asn1",
-]
-
-[[package]]
 name = "lazy_static"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2383,7 +2297,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "224399e74b87b5f3557511d98dff8b14089b3dadafcab6bb93eab67d3aace965"
 dependencies = [
  "scopeguard",
- "serde",
 ]
 
 [[package]]
@@ -2757,27 +2670,6 @@ dependencies = [
  "regex-syntax",
  "structmeta",
  "syn 2.0.119",
-]
-
-[[package]]
-name = "password-hash"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "346f04948ba92c43e8469c1ee6736c7563d71012b17d40745260fe106aac2166"
-dependencies = [
- "base64ct",
- "rand_core 0.6.4",
- "subtle",
-]
-
-[[package]]
-name = "pem"
-version = "3.0.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d30c53c26bc5b31a98cd02d20f25a7c8567146caf63ed593a9d87b2775291be"
-dependencies = [
- "base64 0.22.1",
- "serde_core",
 ]
 
 [[package]]
@@ -3772,18 +3664,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "simple_asn1"
-version = "0.6.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d585997b0ac10be3c5ee635f1bab02d512760d14b7c468801ac8a01d9ae5f1d"
-dependencies = [
- "num-bigint 0.4.8",
- "num-traits",
- "thiserror",
- "time",
-]
-
-[[package]]
 name = "slab"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4479,22 +4359,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tower-cookies"
-version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "151b5a3e3c45df17466454bb74e9ecedecc955269bdedbf4d150dfa393b55a36"
-dependencies = [
- "axum-core",
- "cookie",
- "futures-util",
- "http",
- "parking_lot",
- "pin-project-lite",
- "tower-layer",
- "tower-service",
-]
-
-[[package]]
 name = "tower-http"
 version = "0.6.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4523,57 +4387,6 @@ name = "tower-service"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8df9b6e13f2d32c91b9bd719c00d1958837bc7dec474d94952798cc8e69eeec3"
-
-[[package]]
-name = "tower-sessions"
-version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "43a05911f23e8fae446005fe9b7b97e66d95b6db589dc1c4d59f6a2d4d4927d3"
-dependencies = [
- "async-trait",
- "http",
- "time",
- "tokio",
- "tower-cookies",
- "tower-layer",
- "tower-service",
- "tower-sessions-core",
- "tower-sessions-memory-store",
- "tracing",
-]
-
-[[package]]
-name = "tower-sessions-core"
-version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce8cce604865576b7751b7a6bc3058f754569a60d689328bb74c52b1d87e355b"
-dependencies = [
- "async-trait",
- "axum-core",
- "base64 0.22.1",
- "futures",
- "http",
- "parking_lot",
- "rand 0.8.8",
- "serde",
- "serde_json",
- "thiserror",
- "time",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "tower-sessions-memory-store"
-version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fb05909f2e1420135a831dd5df9f5596d69196d0a64c3499ca474c4bd3d33242"
-dependencies = [
- "async-trait",
- "time",
- "tokio",
- "tower-sessions-core",
-]
 
 [[package]]
 name = "tracing"
@@ -4764,12 +4577,6 @@ dependencies = [
  "serde",
  "serde_derive",
 ]
-
-[[package]]
-name = "urlencoding"
-version = "2.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "daf8dba3b7eb870caf1ddeed7bc9d2a049f3cfdfae7cb521b087cc33ae4c49da"
 
 [[package]]
 name = "utf8-zero"

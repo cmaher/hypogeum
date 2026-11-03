@@ -1,6 +1,9 @@
-use exemplum_dmn_auth::repo::{AuthRepo, PgAuthRepo};
-use exemplum_dmn_users::repo::{PgUserRepo, UserRepo};
+//! Runs the app executable against an isolated database and a stub of the
+//! Kratos public API (readiness and whoami only).
+use axum::http::{HeaderMap, StatusCode};
+use axum::routing::get;
 use hypgm_test_support::TestDatabase;
+use std::net::SocketAddr;
 use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
@@ -8,19 +11,42 @@ use tokio::net::TcpListener;
 use tokio::process::{Child, Command};
 use uuid::Uuid;
 
-const TEST_JWT_SECRET: &str = "runtime-test-secret-that-is-over-32-bytes";
-
-struct RunningApp {
-    process: Child,
-    endpoint: String,
-}
+const SESSION: &str = "ory_kratos_session=runtime-session";
 
 #[test]
 fn integration_suite() {
     hypgm_test_support::run_suite();
 }
 
-fn app_command(url: &str, bind: &str) -> Command {
+/// Serves `/health/ready` with `ready` and a whoami that accepts only
+/// [`SESSION`] for `identity`.
+async fn stub_kratos(ready: StatusCode, identity: Uuid) -> SocketAddr {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let app = axum::Router::new()
+        .route("/health/ready", get(move || async move { ready }))
+        .route(
+            "/sessions/whoami",
+            get(move |headers: HeaderMap| async move {
+                if headers.get("cookie").is_none_or(|cookie| cookie != SESSION) {
+                    return (StatusCode::UNAUTHORIZED, "{}".to_owned());
+                }
+                let session = serde_json::json!({
+                    "id": Uuid::new_v4(),
+                    "active": true,
+                    "identity": {
+                        "id": identity,
+                        "traits": {"username": "runtime-user", "display_name": "Runtime User"}
+                    }
+                });
+                (StatusCode::OK, session.to_string())
+            }),
+        );
+    tokio::spawn(async move { axum::serve(listener, app).await });
+    address
+}
+
+fn app_command(url: &str, kratos: SocketAddr, bind: &str) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_app"));
     command
         .current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))
@@ -28,20 +54,21 @@ fn app_command(url: &str, bind: &str) -> Command {
         .env("EXEMPLUM_ENV_FILE", "")
         .env("EXEMPLUM_APP_BIND", bind)
         .env("EXEMPLUM_APP_DATABASE_URL", url)
-        .env("EXEMPLUM_APP_JWT_SECRET", TEST_JWT_SECRET)
+        .env("EXEMPLUM_APP_KRATOS_PUBLIC_URL", format!("http://{kratos}"))
         .env("EXEMPLUM_LOG", "off")
-        .env("EXEMPLUM_APP_SESSION_CLEANUP_INTERVAL_SECONDS", "1")
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
     command
 }
 
-async fn start_app(url: &str) -> RunningApp {
+async fn start_app(url: &str, kratos: SocketAddr) -> (Child, String) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     drop(listener);
-    let mut process = app_command(url, &address.to_string()).spawn().unwrap();
+    let mut process = app_command(url, kratos, &address.to_string())
+        .spawn()
+        .unwrap();
     let endpoint = format!("http://{address}");
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(1))
@@ -63,15 +90,19 @@ async fn start_app(url: &str) -> RunningApp {
     })
     .await
     .expect("app did not become ready");
-    RunningApp { process, endpoint }
+    (process, endpoint)
 }
 
 #[sqlx::test(migrations = false)]
 #[ignore = "run by integration_suite"]
-async fn executable_uses_persisted_credentials_sessions_and_configured_signing_key(
+async fn executable_provisions_pending_accounts_and_serves_approved_sessions(
     _pool: sqlx::postgres::PgPoolOptions,
     options: sqlx::postgres::PgConnectOptions,
 ) {
+    use exemplum_dmn_users::{
+        accounts::{AccountRepo, ApprovalStatus},
+        repo::PgAccountRepo,
+    };
     let db = TestDatabase::provision(options).await;
     let config =
         hypgmx_rdbms::DatabaseConfig::new("exemplum_migrator", "exemplum_owner", "exemplum_tasks")
@@ -80,241 +111,62 @@ async fn executable_uses_persisted_credentials_sessions_and_configured_signing_k
                 exemplum_dmn_users::pg::migrations::Migrator,
             >());
     db.migrate_with(&config).await;
-    let pool = sqlx::PgPool::connect(&db.users_url).await.unwrap();
-    let user_id = Uuid::new_v4();
-    let auth_id = Uuid::new_v4();
-    PgUserRepo::new(pool.clone())
-        .create(user_id, "Runtime User")
-        .await
+    let identity = Uuid::new_v4();
+
+    // Startup fails closed while Kratos is not ready.
+    let unready = stub_kratos(StatusCode::SERVICE_UNAVAILABLE, identity).await;
+    let mut process = app_command(&db.users_url, unready, "127.0.0.1:0")
+        .spawn()
         .unwrap();
-    PgAuthRepo::new(pool.clone())
-        .create(
-            auth_id,
-            user_id,
-            "password",
-            "runtime-user",
-            &hypgm_authn::password::hash_password("password").unwrap(),
-            serde_json::json!({}),
-        )
+    let status = tokio::time::timeout(Duration::from_secs(10), process.wait())
         .await
+        .expect("app started without a ready Kratos")
         .unwrap();
-    // Accounts start pending; this scenario exercises an approved login.
-    {
-        use exemplum_dmn_users::accounts::AccountRepo;
-        exemplum_dmn_users::repo::PgAccountRepo::new(pool.clone())
-            .approve(user_id)
-            .await
-            .unwrap();
-    }
-    let RunningApp {
-        mut process,
-        endpoint,
-    } = start_app(&db.users_url).await;
-    sqlx::query("INSERT INTO exemplum.sessions (id, data, expiry_date) VALUES ('expired', $1, now() - interval '1 hour'), ('unexpired', $1, now() + interval '1 hour')")
-        .bind(vec![0u8]).execute(&pool).await.unwrap();
-    tokio::time::timeout(Duration::from_secs(3), async {
-        loop {
-            let exists: bool = sqlx::query_scalar(
-                "SELECT EXISTS(SELECT FROM exemplum.sessions WHERE id='expired')",
-            )
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-            if !exists {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(20)).await;
+    assert!(!status.success());
+
+    let kratos = stub_kratos(StatusCode::OK, identity).await;
+    let (mut process, endpoint) = start_app(&db.users_url, kratos).await;
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    let me = |cookie: Option<&str>| {
+        let mut request = client.get(format!("{endpoint}/api/hello/me"));
+        if let Some(cookie) = cookie {
+            request = request.header("cookie", cookie);
         }
-    })
-    .await
-    .expect("executable did not delete expired sessions");
-    let exists: bool =
-        sqlx::query_scalar("SELECT EXISTS(SELECT FROM exemplum.sessions WHERE id='unexpired')")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-    assert!(exists, "cleanup removed an active session");
-    let client = reqwest::Client::new();
-    let response = client
-        .post(format!("{endpoint}/api/auth/login"))
-        .header("content-type", "application/json")
-        .body(r#"{"username":"runtime-user","password":"password"}"#)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(response.status(), reqwest::StatusCode::OK);
-    let cookie = response.headers()["set-cookie"]
-        .to_str()
-        .unwrap()
-        .split(';')
-        .next()
-        .unwrap()
-        .to_string();
-    let response = client
-        .get(format!("{endpoint}/api/hello/me"))
-        .header("cookie", &cookie)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(response.status(), reqwest::StatusCode::OK);
-    let body: serde_json::Value = serde_json::from_slice(&response.bytes().await.unwrap()).unwrap();
-    assert_eq!(body["message"], "Hello, Runtime User!");
-    let claims = hypgm_authn::Claims::new(
-        auth_id,
-        user_id,
-        chrono::Utc::now().timestamp() as usize + 3600,
-    );
-    for (secret, expected) in [
-        (
-            b"exemplum-default-secret-key-32bytes!".as_slice(),
-            reqwest::StatusCode::UNAUTHORIZED,
-        ),
-        (TEST_JWT_SECRET.as_bytes(), reqwest::StatusCode::OK),
-    ] {
-        let token = jsonwebtoken::encode(
-            &jsonwebtoken::Header::default(),
-            &claims,
-            &jsonwebtoken::EncodingKey::from_secret(secret),
-        )
-        .unwrap();
-        assert_eq!(
-            client
-                .get(format!("{endpoint}/api/hello/me"))
-                .bearer_auth(token)
-                .send()
-                .await
-                .unwrap()
-                .status(),
-            expected
-        );
-    }
-    process.kill().await.unwrap();
-    process.wait().await.unwrap();
-    let RunningApp {
-        mut process,
-        endpoint,
-    } = start_app(&db.users_url).await;
+        request.send()
+    };
+    assert_eq!(me(None).await.unwrap().status(), 401);
     assert_eq!(
-        client
-            .get(format!("{endpoint}/api/hello/me"))
-            .header("cookie", cookie)
-            .send()
+        me(Some("ory_kratos_session=unknown"))
             .await
             .unwrap()
             .status(),
-        reqwest::StatusCode::OK
+        401
     );
-    process.kill().await.unwrap();
-    process.wait().await.unwrap();
-    // An old/incomplete schema must fail startup rather than serving with broken sessions.
-    let admin = sqlx::PgPool::connect(&db.admin_url).await.unwrap();
-    sqlx::query("DROP TABLE exemplum.sessions")
-        .execute(&admin)
-        .await
-        .unwrap();
-    let mut missing_sessions = app_command(&db.users_url, "127.0.0.1:0").spawn().unwrap();
-    let status = tokio::time::timeout(Duration::from_secs(5), missing_sessions.wait())
-        .await
-        .expect("app kept serving with a missing session table")
-        .unwrap();
-    assert!(!status.success());
-    admin.close().await;
-    pool.close().await;
-}
-
-#[sqlx::test(migrations = false)]
-#[ignore = "run by integration_suite"]
-async fn executable_registers_pending_accounts_until_administrator_approval(
-    _pool: sqlx::postgres::PgPoolOptions,
-    options: sqlx::postgres::PgConnectOptions,
-) {
-    use exemplum_dmn_users::{accounts::AccountRepo, repo::PgAccountRepo};
-    let db = TestDatabase::provision(options).await;
-    let config =
-        hypgmx_rdbms::DatabaseConfig::new("exemplum_migrator", "exemplum_owner", "exemplum_tasks")
-            .with_app_schema("exemplum")
-            .with_domain_migrator(<dyn hypgmx_rdbms::DomainMigrator>::from_sea_orm::<
-                exemplum_dmn_users::pg::migrations::Migrator,
-            >());
-    db.migrate_with(&config).await;
+    // The first signed-in request provisions a pending account.
+    assert_eq!(me(Some(SESSION)).await.unwrap().status(), 401);
     let pool = sqlx::PgPool::connect(&db.users_url).await.unwrap();
     let repo = PgAccountRepo::new(pool.clone());
-    repo.create_admin(
-        "Administrator",
-        "admin",
-        &hypgm_authn::password::hash_password("admin-password-123").unwrap(),
-    )
-    .await
-    .unwrap();
-    let RunningApp {
-        mut process,
-        endpoint,
-    } = start_app(&db.users_url).await;
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(2))
-        .build()
-        .unwrap();
-    let post = |path: &str, body: serde_json::Value| {
-        client
-            .post(format!("{endpoint}{path}"))
-            .header("content-type", "application/json")
-            .body(body.to_string())
-    };
-    let user_login =
-        serde_json::json!({"username":"process-user","password":"process-password-123"});
-    let registered = post(
-        "/api/auth/register",
-        serde_json::json!({"display_name":"Process User","username":"process-user","password":"process-password-123"}),
-    )
-    .send()
-    .await
-    .unwrap();
-    assert_eq!(registered.status(), reqwest::StatusCode::CREATED);
-    let registered: serde_json::Value =
-        serde_json::from_slice(&registered.bytes().await.unwrap()).unwrap();
-    assert_eq!(registered["approval_status"], "pending");
-    let id: Uuid = registered["id"].as_str().unwrap().parse().unwrap();
-    // Pending accounts cannot authenticate.
-    let pending = post("/api/auth/login", user_login.clone())
+    let account = repo.get(identity).await.unwrap();
+    assert_eq!(account.display_name, "Runtime User");
+    assert_eq!(account.approval_status, ApprovalStatus::Pending);
+    let page = client
+        .get(format!("{endpoint}/"))
+        .header("cookie", SESSION)
         .send()
         .await
         .unwrap();
-    assert_eq!(pending.status(), reqwest::StatusCode::UNAUTHORIZED);
-    let login = post(
-        "/api/auth/login",
-        serde_json::json!({"username":"admin","password":"admin-password-123"}),
-    )
-    .send()
-    .await
-    .unwrap();
-    assert!(login.status().is_success());
-    let cookie = login.headers()["set-cookie"]
-        .to_str()
-        .unwrap()
-        .split(';')
-        .next()
-        .unwrap()
-        .to_owned();
-    let approval = format!("{endpoint}/api/admin/users/{id}/approve");
-    let approve = || client.post(&approval).header("cookie", &cookie).send();
-    let (a, b) = tokio::join!(approve(), approve());
-    assert!(a.unwrap().status().is_success());
-    assert!(b.unwrap().status().is_success());
-    let approved = repo.get(id).await.unwrap();
-    assert!(approved.approved_at.is_some());
-    let login = post("/api/auth/login", user_login).send().await.unwrap();
-    assert!(login.status().is_success());
-    // Optional real-browser run against this same isolated database and app.
-    if std::env::var_os("EXEMPLUM_TEST_BROWSER").is_some() {
-        let status = Command::new("npx")
-            .args(["playwright", "test", "--config", "registration.config.mjs"])
-            .current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/browser"))
-            .env("REGISTRATION_BASE_URL", &endpoint)
-            .status()
-            .await
-            .unwrap();
-        assert!(status.success(), "registration browser checks failed");
-    }
+    assert_eq!(page.status(), 303);
+    assert_eq!(page.headers()["location"], "/registration-pending");
+
+    repo.approve(identity).await.unwrap();
+    let response = me(Some(SESSION)).await.unwrap();
+    assert_eq!(response.status(), 200);
+    let body: serde_json::Value = serde_json::from_slice(&response.bytes().await.unwrap()).unwrap();
+    assert_eq!(body["message"], "Hello, Runtime User!");
     process.kill().await.unwrap();
+    process.wait().await.unwrap();
     pool.close().await;
 }
