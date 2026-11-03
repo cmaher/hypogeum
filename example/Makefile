@@ -3,7 +3,7 @@
 # `ci` relies on prerequisites running in order, even under -j.
 .NOTPARALLEL:
 .PHONY: help fmt fmt-fix clippy build test test-browser test-browser-registration sweep ci ci-fmt-fix \
-	db-up db-down db-status db-provision db-migrate db-verify app
+	db-up db-down db-status db-provision db-migrate db-verify auth-up app
 
 # Incremental data and debug info do not help a full CI build. STRIP=none
 # keeps proc-macro dylibs loadable on macOS once debug info is off.
@@ -58,22 +58,26 @@ ci: fmt clippy test sweep ## Full CI: fmt, clippy, test, sweep
 ci-fmt-fix: fmt-fix clippy test sweep ## Like ci, but formats instead of checking
 
 db-up: ## Start the PostgreSQL container in the background
-	@$(COMPOSE) up --detach --wait
+	@$(COMPOSE) up --detach --wait postgres
 
-db-down: ## Stop the PostgreSQL container
+db-down: ## Stop all containers (PostgreSQL, Kratos, Caddy)
 	@$(COMPOSE) down
 
-db-status: ## Show PostgreSQL container status
+db-status: ## Show container status
 	@$(COMPOSE) ps
 
 db-provision: ## Create roles, database, and schema contracts
 	@$(COMPOSE) exec -T postgres psql -X -U admin -d exemplum -f /provision/provision.sql
 
-db-migrate: ## Apply database migrations via exemplum-db
+db-migrate: ## Apply database migrations via exemplum-db, then Kratos migrations
 	cargo run --locked -p exemplum-db-cli --bin exemplum-db -- migrate
+	@$(COMPOSE) run --rm kratos-migrate
 
 db-verify: ## Verify database schema contracts
 	cargo run --locked -p exemplum-db-cli --bin exemplum-db -- verify
 
-app: ## Run the public HTTP application against provisioned PostgreSQL
+auth-up: ## Start Kratos and Caddy (after db-provision and db-migrate)
+	@$(COMPOSE) up --detach --wait kratos caddy
+
+app: auth-up ## Run the app on 127.0.0.1:3000; browse http://localhost:8080 (via Caddy)
 	cargo run --locked -p exemplum-app-cli --bin app

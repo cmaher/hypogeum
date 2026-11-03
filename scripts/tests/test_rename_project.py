@@ -104,16 +104,17 @@ class RenameProjectTests(unittest.TestCase):
             "example/crates/domain/users/src/pg/migrations/m20260101_000002_create_auth_identities.rs",
             "example/crates/domain/auth/Cargo.toml",
             "example/crates/domain/auth/src/lib.rs",
-            "example/crates/domain/auth/src/models.rs",
-            "example/crates/domain/auth/src/backend.rs",
-            "example/crates/domain/auth/src/controller.rs",
-            "example/crates/domain/auth/src/repo/mod.rs",
-            "example/crates/domain/auth/src/repo/postgres.rs",
-            "example/crates/domain/auth/src/session.rs",
-            "example/crates/app/src/components.rs",
             "example/crates/app/src/router.rs",
             "example/infra/postgres/provision.sql",
             "example/env/local.env.example",
+        ]
+        # Kratos and Caddy configuration is framework-neutral: the `kratos`
+        # database and role keep their names, so these files never change.
+        neutral_paths = [
+            "example/infra/postgres/kratos.sql",
+            "example/infra/kratos/kratos.yml",
+            "example/infra/kratos/identity.schema.json",
+            "example/infra/caddy/Caddyfile",
         ]
         root_paths = [
             "Cargo.toml",
@@ -121,7 +122,7 @@ class RenameProjectTests(unittest.TestCase):
             "crates/ext/rdbms/src/lib.rs",
             "crates/core/envconfig/src/lib.rs",
         ]
-        for relative in paths + root_paths:
+        for relative in paths + neutral_paths + root_paths:
             source = repository / relative
             self.assertTrue(source.is_file(), f"missing surface: {relative}")
             target = self.root / relative
@@ -139,26 +140,26 @@ class RenameProjectTests(unittest.TestCase):
         migration = (self.root / "example/crates/domain/users/src/pg/migrations/m20260101_000001_create_users.rs").read_text()
         migration_auth = (self.root / "example/crates/domain/users/src/pg/migrations/m20260101_000002_create_auth_identities.rs").read_text()
         auth_cargo = (self.root / "example/crates/domain/auth/Cargo.toml").read_text()
-        auth_backend = (self.root / "example/crates/domain/auth/src/backend.rs").read_text()
-        auth_models = (self.root / "example/crates/domain/auth/src/models.rs").read_text()
-        auth_session = (self.root / "example/crates/domain/auth/src/session.rs").read_text()
-        app_components = (self.root / "example/crates/app/src/components.rs").read_text()
         provision = (self.root / "example/infra/postgres/provision.sql").read_text()
 
         self.assertIn(f"{TARGET}-app", app_cargo)
         self.assertIn(f"{TARGET}-dmn-auth", auth_cargo)
-        self.assertIn(f"pub struct {display(TARGET)}AuthBackend", auth_backend)
-        self.assertIn(f'schema_name = "{TARGET}"', auth_models)
-        self.assertIn(f'new_with_schema(pool, "{TARGET}")', auth_session)
-        self.assertIn(f'new_with_schema(pool.clone(), "{TARGET}")', app_components)
         self.assertIn(f'GRANT SELECT, INSERT, UPDATE, DELETE ON {TARGET}.auth_identities TO {TARGET}_users', migration_auth)
         self.assertIn(f'GRANT SELECT, INSERT, UPDATE, DELETE ON {TARGET}.sessions TO {TARGET}_users', migration_auth)
         self.assertIn(f"POSTGRES_DB: {TARGET}", compose)
         self.assertIn(f"{TARGET.upper()}_POSTGRES_PASSWORD", compose)
+        self.assertIn(f"KRATOS_PASSWORD: ${{{TARGET.upper()}_KRATOS_DB_PASSWORD:-password}}", compose)
+        self.assertIn(f"${{{TARGET.upper()}_KRATOS_COOKIE_SECRET:-", compose)
+        self.assertIn(f"${{{TARGET.upper()}_KRATOS_CIPHER_SECRET:-", compose)
+        self.assertIn("postgres://kratos:", compose)
+        self.assertIn("./infra/kratos:/etc/config/kratos:ro", compose)
+        self.assertIn("./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro", compose)
         self.assertIn(f'"{TARGET.upper()}_APP_"', app_main)
         app_env = (self.root / "example/env/local.env.example").read_text()
         self.assertIn(f"{TARGET.upper()}_APP_DATABASE_URL=postgres://{TARGET}_users", app_env)
-        self.assertIn(f"{TARGET.upper()}_APP_JWT_SECRET=", app_env)
+        self.assertIn(f"{TARGET.upper()}_APP_KRATOS_PUBLIC_URL=http://127.0.0.1:4433", app_env)
+        self.assertIn(f"{TARGET.upper()}_APP_KRATOS_BROWSER_URL=http://localhost:8080/.ory/kratos", app_env)
+        self.assertIn(f"{TARGET.upper()}_KRATOS_DB_PASSWORD=", app_env)
         self.assertIn(f'"{TARGET.upper()}_MIGRATION_"', db_main)
         self.assertIn(f"Usage: {TARGET}-db", db_main)
         self.assertIn(f'schema_name = "{TARGET}"', entity)
@@ -170,11 +171,12 @@ class RenameProjectTests(unittest.TestCase):
         self.assertIn(f"{TARGET}_migrator", provision)
         self.assertIn(f"{TARGET}_users", provision)
         self.assertIn(f"{TARGET}_tasks", provision)
+        self.assertIn("\\ir kratos.sql", provision)
 
         for relative in paths:
             self.assertNotIn(SOURCE, (self.root / relative).read_text().lower())
 
-        for relative in root_paths:
+        for relative in neutral_paths + root_paths:
             self.assertEqual(
                 (self.root / relative).read_bytes(),
                 (repository / relative).read_bytes(),

@@ -8,6 +8,7 @@ services:
       MIGRATION_PASSWORD: ${EXEMPLUM_MIGRATION_PASSWORD:-password}
       USERS_PASSWORD: ${EXEMPLUM_USERS_PASSWORD:-password}
       TASKS_PASSWORD: ${EXEMPLUM_TASKS_PASSWORD:-password}
+      KRATOS_PASSWORD: ${EXEMPLUM_KRATOS_DB_PASSWORD:-password}
     ports:
       - "127.0.0.1:${EXEMPLUM_POSTGRES_PORT:-5432}:5432"
     volumes:
@@ -18,5 +19,51 @@ services:
       interval: 2s
       timeout: 5s
       retries: 30
+
+  # One-shot schema migration (`make db-migrate`); `kratos serve` never migrates.
+  kratos-migrate:
+    image: oryd/kratos:v1.3.1
+    profiles: ["migrate"]
+    command: ["migrate", "sql", "--read-from-env", "--yes"]
+    environment: &kratos-env
+      DSN: postgres://kratos:${EXEMPLUM_KRATOS_DB_PASSWORD:-password}@postgres:5432/kratos?sslmode=disable&max_conns=20&max_idle_conns=4
+      SECRETS_COOKIE: ${EXEMPLUM_KRATOS_COOKIE_SECRET:-exemplum-local-cookie-secret-0123456789}
+      SECRETS_CIPHER: ${EXEMPLUM_KRATOS_CIPHER_SECRET:-local-cipher-secret-0123456789ab}
+    volumes:
+      - ./infra/kratos:/etc/config/kratos:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  kratos:
+    image: oryd/kratos:v1.3.1
+    command: ["serve", "--config", "/etc/config/kratos/kratos.yml"]
+    environment: *kratos-env
+    ports:
+      # Public API for the host app (whoami, flows). The admin API stays internal.
+      - "127.0.0.1:4433:4433"
+    volumes:
+      - ./infra/kratos:/etc/config/kratos:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:4434/admin/health/ready"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  caddy:
+    image: caddy:2.11.7-alpine
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      kratos:
+        condition: service_healthy
+
 volumes:
   postgres-data:

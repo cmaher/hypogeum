@@ -28,3 +28,4 @@ SELECT format('REVOKE %I FROM %I', parent.rolname, member.rolname)
 GRANT exemplum_owner TO exemplum_migrator WITH INHERIT FALSE, SET TRUE;
 COMMIT;
 \ir database.sql
+\ir kratos.sql

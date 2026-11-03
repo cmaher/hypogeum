@@ -1,0 +1,35 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Account",
+  "type": "object",
+  "properties": {
+    "traits": {
+      "type": "object",
+      "properties": {
+        "username": {
+          "type": "string",
+          "title": "Username",
+          "minLength": 3,
+          "maxLength": 64,
+          "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+          "ory.sh/kratos": {
+            "credentials": {
+              "password": {
+                "identifier": true
+              }
+            }
+          }
+        },
+        "display_name": {
+          "type": "string",
+          "title": "Display name",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^\\S(?:.*\\S)?$"
+        }
+      },
+      "required": ["username", "display_name"],
+      "additionalProperties": false
+    }
+  }
+}

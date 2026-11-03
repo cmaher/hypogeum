@@ -1,0 +1,17 @@
+# Single browser origin (http://localhost:8080) for the app and Kratos.
+# Caddy only routes; the app verifies sessions with Kratos itself.
+{
+	auto_https off
+	admin off
+}
+
+:8080 {
+	handle_path /.ory/kratos/* {
+		reverse_proxy kratos:4433
+	}
+
+	handle {
+		# The app runs on the host (`make app`), bound to 127.0.0.1:3000.
+		reverse_proxy host.docker.internal:3000
+	}
+}
