@@ -11,6 +11,7 @@ members = [
     "crates/core/test-support",
     "crates/core/view",
     "crates/ext/file-storage",
+    "crates/ext/kratos",
     "crates/ext/rdbms",
     "crates/ext/tasks",
 ]
