@@ -30,10 +30,7 @@ where
     S: tower_sessions::SessionStore + Clone + Send + Sync + 'static,
 {
     let admin_components = exemplum_dmn_admin::AdminComponents::new(Arc::new(
-        exemplum_dmn_admin::DefaultAdminService::new(
-            components.account_service.clone(),
-            components.authorizer,
-        ),
+        exemplum_dmn_admin::DefaultAdminService::new(components.account_service.clone()),
     ));
     let admin = exemplum_dmn_admin::api::router(admin_components.clone());
     let admin_pages = exemplum_dmn_admin::view::router(admin_components);
@@ -113,7 +110,8 @@ where
 async fn api_same_origin(request: Request, next: Next) -> Response {
     let (parts, body) = request.into_parts();
     if !parts.method.is_safe() && hypgm_view::is_cross_site_request(&parts) {
-        return hypgm_http::HttpError::from(hypgm_authz::AuthzError::Forbidden).into_response();
+        return hypgm_http::HttpError::from(hypgm_errors::PublicErrorInfo::FORBIDDEN)
+            .into_response();
     }
     next.run(Request::from_parts(parts, body)).await
 }

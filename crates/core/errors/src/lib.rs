@@ -43,6 +43,12 @@ impl PublicErrorInfo {
         message: "Conflict",
     };
 
+    pub const FORBIDDEN: Self = Self {
+        status: StatusCode::FORBIDDEN,
+        code: "forbidden",
+        message: "Access denied",
+    };
+
     pub const INTERNAL_ERROR: Self = Self {
         status: StatusCode::INTERNAL_SERVER_ERROR,
         code: "internal_error",
@@ -133,6 +139,14 @@ impl PublicErrorInfo {
         Self {
             status: StatusCode::CONFLICT,
             code: "conflict",
+            message,
+        }
+    }
+
+    pub const fn forbidden(message: &'static str) -> Self {
+        Self {
+            status: StatusCode::FORBIDDEN,
+            code: "forbidden",
             message,
         }
     }

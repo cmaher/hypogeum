@@ -11,7 +11,6 @@ use exemplum_dmn_users::accounts::{
     ManagedAccount,
 };
 use hypgm_authn::{AuthMethod, Principal};
-use hypgm_authz::{Authorizer, AuthzError};
 use hypgm_errors::{PublicError, RepoError};
 use std::sync::{Arc, Mutex};
 use tower::ServiceExt;
@@ -68,14 +67,6 @@ impl AccountService for FailingAccounts {
         unreachable!()
     }
 }
-fn checked_in_authorizer() -> Arc<Authorizer> {
-    let (schema, policies) = hypgm_authz::load_schema_and_policies(
-        include_str!("../../../../config/schema.cedarschema"),
-        include_str!("../../../../config/policies.cedar"),
-    )
-    .unwrap();
-    Arc::new(Authorizer::new(schema, policies).unwrap())
-}
 fn setup() -> (AdminComponents, Arc<Accounts>, Principal) {
     let id = Uuid::new_v4();
     let now = chrono::Utc::now();
@@ -92,7 +83,7 @@ fn setup() -> (AdminComponents, Arc<Accounts>, Principal) {
         queries: Mutex::default(),
         approved: Mutex::default(),
     });
-    let service = DefaultAdminService::new(accounts.clone(), checked_in_authorizer());
+    let service = DefaultAdminService::new(accounts.clone());
     (
         AdminComponents::new(Arc::new(service)),
         accounts,
@@ -100,7 +91,7 @@ fn setup() -> (AdminComponents, Arc<Accounts>, Principal) {
     )
 }
 #[tokio::test]
-async fn checked_in_policy_allows_admin_actions_and_reloads_authority() {
+async fn approved_admins_are_allowed_and_authority_reloads() {
     let (components, accounts, principal) = setup();
     let service = components.service;
     assert_ne!(principal.auth_id, principal.user_id);
@@ -116,7 +107,7 @@ async fn checked_in_policy_allows_admin_actions_and_reloads_authority() {
     accounts.account.lock().unwrap().is_admin = false;
     assert!(matches!(
         service.list(&principal, AccountQuery::default()).await,
-        Err(AdminError::Authz(AuthzError::Forbidden))
+        Err(AdminError::Forbidden)
     ));
     assert!(
         service
@@ -137,20 +128,15 @@ async fn checked_in_policy_allows_admin_actions_and_reloads_authority() {
 #[tokio::test]
 async fn missing_accounts_are_forbidden_but_lookup_failures_are_internal() {
     let principal = Principal::new(Uuid::new_v4(), Uuid::new_v4(), AuthMethod::Session);
-    let missing = DefaultAdminService::new(
-        Arc::new(FailingAccounts(|| RepoError::NotFound.into())),
-        checked_in_authorizer(),
-    );
+    let missing =
+        DefaultAdminService::new(Arc::new(FailingAccounts(|| RepoError::NotFound.into())));
     assert!(matches!(
         missing.list(&principal, AccountQuery::default()).await,
-        Err(AdminError::Authz(AuthzError::Forbidden))
+        Err(AdminError::Forbidden)
     ));
-    let broken = DefaultAdminService::new(
-        Arc::new(FailingAccounts(|| {
-            RepoError::database(std::io::Error::other("connection reset")).into()
-        })),
-        checked_in_authorizer(),
-    );
+    let broken = DefaultAdminService::new(Arc::new(FailingAccounts(|| {
+        RepoError::database(std::io::Error::other("connection reset")).into()
+    })));
     let error = broken
         .approve(&principal, principal.user_id)
         .await
@@ -251,27 +237,17 @@ async fn json_routes_authenticate_paginate_and_authorize_writes() {
     }
 }
 #[test]
-fn missing_attributes_and_unknown_actions_deny() {
+fn only_approved_admins_acting_as_themselves_may_administer() {
     let (_, accounts, principal) = setup();
-    let authorizer = checked_in_authorizer();
-    assert!(
-        authorizer
-            .authorize(
-                &principal,
-                (ACTION_TYPE, VIEW_ADMIN_USERS),
-                (RESOURCE_TYPE, ADMIN_USERS)
-            )
-            .is_err()
-    );
-    assert!(
-        authorize(
-            &authorizer,
-            &principal,
-            &accounts.account.lock().unwrap(),
-            "unknown"
-        )
-        .is_err()
-    );
+    let mut account = accounts.account.lock().unwrap().clone();
+    assert!(can_administer(&principal, &account));
+    let other = Principal::new(principal.auth_id, Uuid::new_v4(), AuthMethod::Session);
+    assert!(!can_administer(&other, &account));
+    account.approval_status = ApprovalStatus::Pending;
+    assert!(!can_administer(&principal, &account));
+    account.approval_status = ApprovalStatus::Approved;
+    account.is_admin = false;
+    assert!(!can_administer(&principal, &account));
 }
 
 #[tokio::test]

@@ -113,8 +113,6 @@ class RenameProjectTests(unittest.TestCase):
             "example/crates/app/src/components.rs",
             "example/crates/app/src/router.rs",
             "example/infra/postgres/provision.sql",
-            "example/config/schema.cedarschema",
-            "example/config/policies.cedar",
             "example/env/local.env.example",
         ]
         root_paths = [
@@ -161,7 +159,6 @@ class RenameProjectTests(unittest.TestCase):
         app_env = (self.root / "example/env/local.env.example").read_text()
         self.assertIn(f"{TARGET.upper()}_APP_DATABASE_URL=postgres://{TARGET}_users", app_env)
         self.assertIn(f"{TARGET.upper()}_APP_JWT_SECRET=", app_env)
-        self.assertIn(f"{TARGET.upper()}_APP_CEDAR_POLICIES=config/policies.cedar", app_env)
         self.assertIn(f'"{TARGET.upper()}_MIGRATION_"', db_main)
         self.assertIn(f"Usage: {TARGET}-db", db_main)
         self.assertIn(f'schema_name = "{TARGET}"', entity)

@@ -5,7 +5,6 @@ use exemplum_dmn_hello_world::service::{DefaultHelloWorldService, HelloWorldServ
 use exemplum_dmn_users::models::{PageRequest, User, UserPage};
 use exemplum_dmn_users::repo::PgUserRepo;
 use exemplum_dmn_users::service::{DefaultUserService, UserError, UserService};
-use hypgm_authz::Authorizer;
 use sqlx::PgPool;
 use std::sync::Arc;
 use tower_sessions::SessionStore;
@@ -16,7 +15,6 @@ pub struct AppComponents<S> {
     pub user_service: Arc<dyn UserService>,
     pub auth_repo: Arc<dyn AuthRepo>,
     pub account_service: Arc<dyn exemplum_dmn_users::accounts::AccountService>,
-    pub authorizer: Arc<Authorizer>,
     pub session_store: S,
     pub token_config: TokenConfig,
     pub password_config: PasswordConfig,
@@ -29,7 +27,6 @@ impl<S: SessionStore + Clone + Send + Sync + 'static> AppComponents<S> {
         user_service: Arc<dyn UserService>,
         auth_repo: Arc<dyn AuthRepo>,
         account_service: Arc<dyn exemplum_dmn_users::accounts::AccountService>,
-        authorizer: Arc<Authorizer>,
         session_store: S,
         token_config: TokenConfig,
         password_config: PasswordConfig,
@@ -39,7 +36,6 @@ impl<S: SessionStore + Clone + Send + Sync + 'static> AppComponents<S> {
             user_service,
             auth_repo,
             account_service,
-            authorizer,
             session_store,
             token_config,
             password_config,
@@ -52,7 +48,6 @@ pub struct AppComponentsFactory<S = tower_sessions::MemoryStore> {
     pub user_service: Arc<dyn UserService>,
     pub auth_repo: Arc<dyn AuthRepo>,
     pub account_service: Arc<dyn exemplum_dmn_users::accounts::AccountService>,
-    pub authorizer: Arc<Authorizer>,
     pub session_store: S,
     pub token_config: TokenConfig,
     pub password_config: PasswordConfig,
@@ -65,7 +60,6 @@ impl Default for AppComponentsFactory<tower_sessions::MemoryStore> {
             user_service: Arc::new(DefaultMockUserService),
             auth_repo: Arc::new(InMemoryAuthRepo::new()),
             account_service: Arc::new(exemplum_dmn_auth::fixtures::ApprovedAccounts),
-            authorizer: default_authorizer(),
             session_store: tower_sessions::MemoryStore::default(),
             token_config: TokenConfig::default(),
             password_config: PasswordConfig::default(),
@@ -80,7 +74,6 @@ impl<S: SessionStore + Clone + Send + Sync + 'static> AppComponentsFactory<S> {
             self.user_service,
             self.auth_repo,
             self.account_service,
-            self.authorizer,
             self.session_store,
             self.token_config,
             self.password_config,
@@ -91,7 +84,6 @@ impl<S: SessionStore + Clone + Send + Sync + 'static> AppComponentsFactory<S> {
 impl AppComponentsFactory<PostgresSessionStore> {
     pub fn from_pool(
         pool: PgPool,
-        authorizer: Arc<Authorizer>,
         token_config: TokenConfig,
         password_config: PasswordConfig,
     ) -> AppComponents<PostgresSessionStore> {
@@ -107,21 +99,11 @@ impl AppComponentsFactory<PostgresSessionStore> {
             user_service,
             auth_repo,
             account_service,
-            authorizer,
             session_store,
             token_config,
             password_config,
         )
     }
-}
-
-pub fn default_authorizer() -> Arc<Authorizer> {
-    const DEFAULT_SCHEMA: &str = include_str!("../../../config/schema.cedarschema");
-    const DEFAULT_POLICIES: &str = include_str!("../../../config/policies.cedar");
-    let (schema, policies) =
-        hypgm_authz::load_schema_and_policies(DEFAULT_SCHEMA, DEFAULT_POLICIES)
-            .expect("embedded Cedar schema and policies are valid");
-    Arc::new(Authorizer::new(schema, policies).expect("valid authorization entities"))
 }
 
 struct DefaultMockUserService;

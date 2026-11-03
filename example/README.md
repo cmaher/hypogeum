@@ -39,8 +39,6 @@ Exemplum configuration uses the `EXEMPLUM_` prefix. Configuration precedence is:
 | `EXEMPLUM_APP_JWT_SECRET` | required | Private signing secret containing at least 32 bytes |
 | `EXEMPLUM_APP_MAX_PASSWORD_VERIFICATIONS` | `4` | Maximum concurrent password checks; must be positive and fit the semaphore capacity |
 | `EXEMPLUM_APP_SESSION_CLEANUP_INTERVAL_SECONDS` | `3600` | Positive interval between expired-session cleanup runs |
-| `EXEMPLUM_APP_CEDAR_SCHEMA` | `config/schema.cedarschema` | Cedar schema loaded at startup |
-| `EXEMPLUM_APP_CEDAR_POLICIES` | `config/policies.cedar` | Cedar policies loaded at startup |
 | `EXEMPLUM_LOG` | `info` | Log level filter |
 | `EXEMPLUM_LOG_FORMAT` | `text` | Logging format (`text` or `json`) |
 | `EXEMPLUM_POSTGRES_PORT` | `5432` | Local PostgreSQL host port in Docker Compose |
@@ -170,7 +168,8 @@ administrator approves them through `/admin/users` or
 with each account's login username, newest registrations first. Both listings
 accept `status=pending` or `status=approved` to filter, and page with the `after`
 cursor returned as `next_after`. Passwords must contain 8 to 128 characters.
-Administrator authorization reloads account flags on every request.
+Administrator access is a plain check in `exemplum-dmn-admin`: the account must
+be an approved administrator, and its flags are reloaded on every request.
 
 Approval locks the account row, so concurrent approvals apply once and approving
 an approved account changes nothing. Accounts that existed before the approval

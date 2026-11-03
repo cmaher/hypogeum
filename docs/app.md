@@ -67,7 +67,6 @@ where
 {
     let admin_components = AdminComponents::new(Arc::new(DefaultAdminService::new(
         components.account_service.clone(),
-        components.authorizer,
     )));
     let hello_components = HelloComponents::new(
         components.hello_service,
@@ -320,8 +319,6 @@ Every HTTP request traverses `trace_layer` (`TraceLayer`):
 | `EXEMPLUM_APP_JWT_SECRET` | required | Private signing secret, at least 32 bytes |
 | `EXEMPLUM_APP_MAX_PASSWORD_VERIFICATIONS` | `4` | Maximum concurrent password checks; must be positive and fit the semaphore capacity |
 | `EXEMPLUM_APP_SESSION_CLEANUP_INTERVAL_SECONDS` | `3600` | Positive interval between expired-session cleanup runs |
-| `EXEMPLUM_APP_CEDAR_SCHEMA` | `config/schema.cedarschema` | Schema loaded at startup |
-| `EXEMPLUM_APP_CEDAR_POLICIES` | `config/policies.cedar` | Policies loaded at startup |
 | `EXEMPLUM_LOG` | `info` | Tracing filter directive |
 | `EXEMPLUM_LOG_FORMAT` | `text` | Log format: `text` or `json` |
 | `EXEMPLUM_ENV_FILE` | *(unset)* | Selects `.env` file (e.g. `env/local.env`; empty disables) |

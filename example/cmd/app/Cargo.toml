@@ -12,7 +12,6 @@ path = "src/main.rs"
 exemplum-app = { path = "../../crates/app" }
 exemplum-dmn-users = { path = "../../crates/domain/users" }
 hypgmx-rdbms = { path = "../../../crates/ext/rdbms" }
-hypgm-authz = { path = "../../../crates/core/authz" }
 tower-sessions = "0.14"
 uuid.workspace = true
 axum = { version = "0.8", features = ["http2"] }

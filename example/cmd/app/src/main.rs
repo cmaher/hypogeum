@@ -2,8 +2,6 @@ use hypgm_envconfig::Secret;
 use hypgm_logging::LogFormat;
 use serde::Deserialize;
 use std::net::SocketAddr;
-use std::path::PathBuf;
-use std::sync::Arc;
 use tower_sessions::SessionStore;
 
 fn default_bind() -> SocketAddr {
@@ -26,10 +24,6 @@ struct AppConfig {
     max_password_verifications: std::num::NonZeroUsize,
     #[serde(default = "default_session_cleanup_interval_seconds")]
     session_cleanup_interval_seconds: std::num::NonZeroU64,
-    #[serde(default = "default_cedar_schema")]
-    cedar_schema: PathBuf,
-    #[serde(default = "default_cedar_policies")]
-    cedar_policies: PathBuf,
 }
 
 fn default_max_password_verifications() -> std::num::NonZeroUsize {
@@ -50,14 +44,6 @@ fn deserialize_max_password_verifications<'de, D: serde::Deserializer<'de>>(
 
 fn default_session_cleanup_interval_seconds() -> std::num::NonZeroU64 {
     std::num::NonZeroU64::new(3600).expect("positive default")
-}
-
-fn default_cedar_schema() -> PathBuf {
-    "config/schema.cedarschema".into()
-}
-
-fn default_cedar_policies() -> PathBuf {
-    "config/policies.cedar".into()
 }
 
 fn deserialize_signing_secret<'de, D: serde::Deserializer<'de>>(
@@ -103,14 +89,8 @@ async fn main() -> anyhow::Result<()> {
     exemplum_dmn_users::repo::check_ready(&pool)
         .await
         .context("Check application database readiness; run explicit migrations first")?;
-    let (schema, policies) = hypgm_authz::load_schema_and_policies_from_files(
-        &config.cedar_schema,
-        &config.cedar_policies,
-    )
-    .context("Load Cedar schema and policies")?;
     let components = exemplum_app::AppComponentsFactory::from_pool(
         pool.clone(),
-        Arc::new(hypgm_authz::Authorizer::new(schema, policies)?),
         exemplum_app::TokenConfig::new(config.jwt_secret.expose().as_bytes().to_vec()),
         exemplum_app::PasswordConfig {
             max_verifications: config.max_password_verifications,

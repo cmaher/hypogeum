@@ -13,7 +13,6 @@ axum = { version = "0.8", default-features = false, features = ["tokio", "http2"
 hypgm-http = { path = "../../../crates/core/http" }
 hypgm-view = { path = "../../../crates/core/view" }
 hypgm-authn = { path = "../../../crates/core/authn" }
-hypgm-authz = { path = "../../../crates/core/authz" }
 hypgm-errors = { path = "../../../crates/core/errors" }
 hypgmx-rdbms = { path = "../../../crates/ext/rdbms", features = ["postgres"] }
 sqlx.workspace = true

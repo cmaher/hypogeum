@@ -3,7 +3,6 @@ members = [
     "cmd/apalis-dashboard",
     "cmd/gdrive-authorize",
     "crates/core/authn",
-    "crates/core/authz",
     "crates/core/envconfig",
     "crates/core/errors",
     "crates/core/http",
@@ -44,7 +43,6 @@ serde_json = "1"
 dotenvy = "0.15"
 envy = "0.4"
 thiserror = "2"
-cedar-policy = "4.14"
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

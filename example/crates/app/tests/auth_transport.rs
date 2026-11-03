@@ -8,7 +8,6 @@ use hypgm_authn::password::hash_password;
 use reqwest::StatusCode;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, COOKIE, SET_COOKIE};
 use std::collections::HashMap;
-use std::path::Path;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use tokio::net::TcpListener;
@@ -79,18 +78,7 @@ struct TestHarness {
 }
 
 impl TestHarness {
-    async fn start_with_policy(policies: &str) -> Self {
-        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let schema_path = manifest_dir.join("../../config/schema.cedarschema");
-        let schema_content = std::fs::read_to_string(&schema_path)
-            .unwrap_or_else(|_| panic!("Failed to read {}", schema_path.display()));
-
-        let (schema, policies) = hypgm_authz::load_schema_and_policies(&schema_content, policies)
-            .expect("Failed to load Cedar schema and policies");
-        let authorizer = Arc::new(
-            hypgm_authz::Authorizer::new(schema, policies).expect("valid authorization entities"),
-        );
-
+    async fn start() -> Self {
         let user_service = Arc::new(InMemoryUserService::new());
         let auth_repo = Arc::new(InMemoryAuthRepo::new());
         let token_config =
@@ -102,7 +90,6 @@ impl TestHarness {
             user_service.clone(),
             auth_repo.clone(),
             Arc::new(exemplum_dmn_auth::fixtures::ApprovedAccounts),
-            authorizer,
             session_store,
             token_config,
             Default::default(),
@@ -128,14 +115,6 @@ impl TestHarness {
             auth_repo,
             user_service,
         }
-    }
-
-    async fn start() -> Self {
-        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let policies_path = manifest_dir.join("../../config/policies.cedar");
-        let policy_content = std::fs::read_to_string(&policies_path)
-            .unwrap_or_else(|_| panic!("Failed to read {}", policies_path.display()));
-        Self::start_with_policy(&policy_content).await
     }
 
     async fn shutdown(self) {
@@ -436,57 +415,6 @@ async fn test_token_exchange_and_jwt_bearer_auth() {
 }
 
 #[tokio::test]
-async fn test_greeting_authentication_is_independent_of_admin_policy() {
-    let forbid_policy = r#"
-permit(principal, action, resource);
-forbid(principal, action, resource);
-"#;
-    let harness = TestHarness::start_with_policy(forbid_policy).await;
-    let client = reqwest::Client::new();
-
-    let user_id = Uuid::new_v4();
-    let auth_id = Uuid::new_v4();
-    harness.user_service.add_user(user_id, "Forbidden User");
-    let GeneratedApiKey {
-        raw_key,
-        secret_hash: key_hash,
-    } = generate_api_key("exmpl_key");
-    harness
-        .auth_repo
-        .create(
-            auth_id,
-            user_id,
-            "api_key",
-            &key_hash,
-            &key_hash,
-            serde_json::json!({}),
-        )
-        .await
-        .unwrap();
-
-    let token_resp = client
-        .post(format!("{}/api/auth/token", harness.endpoint))
-        .header(CONTENT_TYPE, "application/json")
-        .body(format!(r#"{{"api_key":"{raw_key}"}}"#))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(token_resp.status(), StatusCode::OK);
-    let bytes = token_resp.bytes().await.unwrap();
-    let token_res: TokenResponse = serde_json::from_slice(&bytes).unwrap();
-
-    let resp = client
-        .get(format!("{}/api/hello/me", harness.endpoint))
-        .header(AUTHORIZATION, format!("Bearer {}", token_res.access_token))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-
-    harness.shutdown().await;
-}
-
-#[tokio::test]
 async fn test_logout_invalidates_session_and_clears_cookie() {
     let harness = TestHarness::start().await;
     let client = reqwest::Client::new();
@@ -583,26 +511,11 @@ async fn postgres_e2e_auth_transport(
 
     let pool = sqlx::PgPool::connect(&db.users_url).await.unwrap();
 
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let schema_path = manifest_dir.join("../../config/schema.cedarschema");
-    let schema_content = std::fs::read_to_string(&schema_path)
-        .unwrap_or_else(|_| panic!("Failed to read {}", schema_path.display()));
-    let policies_path = manifest_dir.join("../../config/policies.cedar");
-    let policy_content = std::fs::read_to_string(&policies_path)
-        .unwrap_or_else(|_| panic!("Failed to read {}", policies_path.display()));
-
-    let (schema, policies) =
-        hypgm_authz::load_schema_and_policies(&schema_content, &policy_content)
-            .expect("Failed to load Cedar schema and policies");
-    let authorizer = Arc::new(
-        hypgm_authz::Authorizer::new(schema, policies).expect("valid authorization entities"),
-    );
     let token_config =
         exemplum_app::TokenConfig::new(b"test-jwt-secret-key-32-bytes-long!".to_vec());
 
     let components = exemplum_app::AppComponentsFactory::from_pool(
         pool.clone(),
-        authorizer,
         token_config,
         Default::default(),
     );
