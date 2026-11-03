@@ -10,7 +10,7 @@ The repository uses a two-tier architecture cleanly separating framework foundat
 /workspace/
 ├── Cargo.toml                    # Root workspace: framework crates + operations tools
 ├── Cargo.lock
-├── Makefile.toml                 # Root CI orchestrator: runs root CI + example CI
+├── Makefile                      # Root CI orchestrator: runs root CI + example CI
 ├── CLAUDE.md                     # Development conventions & architecture guide
 ├── cmd/
 │   └── apalis-dashboard/         # Standalone framework background tasks dashboard
@@ -35,7 +35,7 @@ The repository uses a two-tier architecture cleanly separating framework foundat
 │       └── test_rename_project.py
 └── example/                      # Exemplum reference project (independent workspace)
     ├── Cargo.toml                # Example workspace manifest
-    ├── Makefile.toml             # Example tasks (db-up, db-migrate, app, test, ci)
+    ├── Makefile                  # Example tasks (db-up, db-migrate, app, test, ci)
     ├── README.md                 # Exemplum documentation & onboarding guide
     ├── docker-compose.yml        # Local PostgreSQL container for Exemplum
     ├── infra/                    # PostgreSQL init & schema provisioning
@@ -49,7 +49,7 @@ The `example/` directory houses **Exemplum**, an independent, self-contained wor
 - User CRUD service over SeaORM with gRPC interfaces (`exemplum-dmn-users`)
 - Public greeting API and composed Axum router (`exemplum-app`, `exemplum-dmn-hello-world`)
 - Executable entry points for the HTTP server (`app`) and database migration tool (`exemplum-db`)
-- Local PostgreSQL Docker Compose stack and dedicated `Makefile.toml`
+- Local PostgreSQL Docker Compose stack and dedicated `Makefile`
 
 For detailed setup, environment variables, and local execution instructions, see [example/README.md](example/README.md).
 
@@ -65,12 +65,12 @@ The script `scripts/rename-project.py` customizes the `example/` reference appli
 2. Apply rename to `example/`:
    ```sh
    python3 scripts/rename-project.py acme_tools
-   cargo make --cwd example fmt-fix
+   make -C example fmt-fix
    ```
 
 3. Verify customized project:
    ```sh
-   cargo make --cwd example ci
+   make -C example ci
    ```
 
 ## Development & Verification
@@ -79,13 +79,13 @@ Install Rust 1.94, Docker, Git, and Python 3.9+. With Docker running, all unit a
 
 ```sh
 # Root framework verification (runs fmt, clippy, test, test-rename, example CI, and sweep):
-cargo make ci
+make ci
 
 # Run only root workspace unit and integration tests:
-cargo make test
+make test
 
 # Run python rename tests:
-cargo make test-rename
+make test-rename
 ```
 
 Database integration tests automatically provision isolated PostgreSQL containers via Testcontainers and SQLx.
@@ -95,9 +95,9 @@ Database integration tests automatically provision isolated PostgreSQL container
 The workspace ships defaults that keep builds fast and `target/` bounded; the
 Exemplum template carries the same settings so new projects start with them.
 
-- **One compile per mode.** `cargo make ci` runs clippy (check mode) and then
+- **One compile per mode.** `make ci` runs clippy (check mode) and then
   `cargo test`, which builds every library, binary, and test target. There is
-  no separate `build` step (`cargo make build` remains for manual use). Every
+  no separate `build` step (`make build` remains for manual use). Every
   pipeline invocation uses `--locked --workspace --all-features`, because a
   different feature set makes cargo rebuild dependents instead of reusing them.
 - **Dev profile.** `[profile.dev]` keeps line tables in workspace crates for
@@ -110,15 +110,15 @@ Exemplum template carries the same settings so new projects start with them.
   stops sccache from caching workspace crates. The tradeoff is a slower
   edit-rebuild of a single large crate in exchange for bounded disk use and
   cache hits.
-- **CI.** When cargo-make detects CI, it also sets `CARGO_INCREMENTAL=0`,
+- **CI.** When `CI` is set (other than `false` or `0`), the Makefiles also set `CARGO_INCREMENTAL=0`,
   `CARGO_PROFILE_DEV_DEBUG=0`, and `CARGO_PROFILE_DEV_STRIP=none`.
 - **Shared target directory.** The root `.cargo/config.toml` sets
   `target-dir = "target"`; cargo also reads it inside `example/`, so the
   framework and Exemplum workspaces share `target/` and reuse dependencies.
-- **Pruning.** Cargo never prunes `target/`. `cargo make sweep` removes
+- **Pruning.** Cargo never prunes `target/`. `make sweep` removes
   artifacts unused for 7 days with [cargo-sweep](https://github.com/holmgr/cargo-sweep)
   (installed by `mise.toml`, or `cargo install cargo-sweep`) and runs at the end
-  of `cargo make ci`; it is skipped when cargo-sweep is not installed. Run `cargo clean` occasionally to
+  of `make ci`; it is skipped when cargo-sweep is not installed. Run `cargo clean` occasionally to
   drop stale copies of large dependency rlibs in `target/debug/deps`.
 
 [sccache](https://github.com/mozilla/sccache) is the recommended compiler

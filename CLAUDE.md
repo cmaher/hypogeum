@@ -17,7 +17,7 @@ This repository is organized into a two-tier architecture:
    - Domain crates in `example/crates/domain/`: `hello-world` (`exemplum-dmn-hello-world`), `users` (`exemplum-dmn-users`).
    - Binaries in `example/cmd/`: `app` (`exemplum-app-cli`), `db` (`exemplum-db-cli`).
    - Local database stack in `example/docker-compose.yml` and `example/infra/postgres/`.
-   - Dedicated task automation in `example/Makefile.toml`.
+   - Dedicated task automation in `example/Makefile`.
 
 ## Template Naming & Scoped Customization
 
@@ -48,29 +48,29 @@ Root framework crates and infrastructure namespaces (`hypgm-*`, `hypgmx-*`, `inf
 From repository root:
 
 ```sh
-cargo make ci          # Full CI: fmt, clippy, test, test-rename, example CI, and sweep
-cargo make fmt         # Check root workspace formatting
-cargo make fmt-fix     # Format root workspace
-cargo make clippy      # Lint root workspace
-cargo make test        # Run root unit and integration tests (Docker must be running)
-cargo make test-rename # Run isolated Python rename test suite
-cargo make sweep       # Prune target/ artifacts unused for 7 days (needs cargo-sweep)
-cargo make apalis-dashboard # Run standalone task dashboard
+make ci          # Full CI: fmt, clippy, test, test-rename, example CI, and sweep
+make fmt         # Check root workspace formatting
+make fmt-fix     # Format root workspace
+make clippy      # Lint root workspace
+make test        # Run root unit and integration tests (Docker must be running)
+make test-rename # Run isolated Python rename test suite
+make sweep       # Prune target/ artifacts unused for 7 days (needs cargo-sweep)
+make apalis-dashboard # Run standalone task dashboard
 ```
 
 ### Exemplum Reference Project Commands
 
-From `example/` (or via `cargo make --cwd example <task>`):
+From `example/` (or via `make -C example <task>`):
 
 ```sh
-cargo make db-up        # Start local PostgreSQL container in background
-cargo make db-status    # Check PostgreSQL container status
-cargo make db-provision # Provision database, roles, and schema contracts
-cargo make db-migrate   # Apply database migrations via exemplum-db
-cargo make db-verify    # Verify database schema contracts
-cargo make db-down      # Stop local PostgreSQL container
-cargo make app          # Run public HTTP application (127.0.0.1:8080)
-cargo make test         # Run example unit and integration tests
-cargo make test-browser # Run Playwright HTML view smoke checks (requires Node.js)
-cargo make ci           # Run full Exemplum CI (fmt, clippy, test, sweep)
+make db-up        # Start local PostgreSQL container in background
+make db-status    # Check PostgreSQL container status
+make db-provision # Provision database, roles, and schema contracts
+make db-migrate   # Apply database migrations via exemplum-db
+make db-verify    # Verify database schema contracts
+make db-down      # Stop local PostgreSQL container
+make app          # Run public HTTP application (127.0.0.1:8080)
+make test         # Run example unit and integration tests
+make test-browser # Run Playwright HTML view smoke checks (requires Node.js)
+make ci           # Run full Exemplum CI (fmt, clippy, test, sweep)
 ```

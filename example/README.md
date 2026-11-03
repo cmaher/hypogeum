@@ -7,7 +7,7 @@ Exemplum is the reference project demonstrating and validating consumption of th
 ```text
 example/
 ├── Cargo.toml            # Independent Cargo workspace manifest
-├── Makefile.toml         # Development and CI task automation
+├── Makefile              # Development and CI task automation
 ├── README.md             # This documentation
 ├── docker-compose.yml    # Local PostgreSQL service container
 ├── infra/
@@ -50,19 +50,19 @@ Exemplum configuration uses the `EXEMPLUM_` prefix. Configuration precedence is:
 
 ## Development Commands
 
-All tasks can be executed using `cargo make` from within the `example/` directory, or from the root via `cargo make -e CARGO_MAKE_WORKING_DIRECTORY=example <task>`.
+All tasks can be executed using `make` from within the `example/` directory, or from the root via `make -C example <task>`.
 
 ### Database Lifecycle
 
 Database operations are executed by `exemplum-db`, which constructs an application-specific `DatabaseConfig` (defining roles `exemplum_migrator`, `exemplum_owner`, `exemplum_tasks`, schema `exemplum`, registered domain migrators, and service contracts) and drives the decoupled framework migration engine `hypgmx-rdbms`.
 
 ```sh
-cargo make db-up        # Start PostgreSQL container in background
-cargo make db-status    # Inspect container status
-cargo make db-provision # Execute provision.sql to create roles and database
-cargo make db-migrate   # Apply database migrations via exemplum-db
-cargo make db-verify    # Verify database schema contracts
-cargo make db-down      # Stop PostgreSQL container
+make db-up        # Start PostgreSQL container in background
+make db-status    # Inspect container status
+make db-provision # Execute provision.sql to create roles and database
+make db-migrate   # Apply database migrations via exemplum-db
+make db-verify    # Verify database schema contracts
+make db-down      # Stop PostgreSQL container
 ```
 
 `exemplum-db inspect --output json` reports each schema's contracts as an array
@@ -75,10 +75,10 @@ under `data.contracts.<schema>`, preserving all tables registered in that schema
 cp env/local.env.example env/local.env
 # Set EXEMPLUM_APP_JWT_SECRET in env/local.env to a private value:
 openssl rand -hex 32
-cargo make db-up
-cargo make db-provision
-cargo make db-migrate
-cargo make app
+make db-up
+make db-provision
+make db-migrate
+make app
 ```
 
 The binary requires explicit database credentials and a signing secret. Before
@@ -119,19 +119,19 @@ database-free server (`crates/app/examples/view_smoke_server.rs`). It requires
 Node.js:
 
 ```sh
-cargo make test-browser
+make test-browser
 ```
 
 ### Verification & CI
 
 ```sh
-cargo make fmt          # Verify source code formatting
-cargo make fmt-fix      # Automatically format source code
-cargo make clippy       # Run clippy with -D warnings
-cargo make build        # Build all workspace packages (not part of ci; test builds everything)
-cargo make test         # Run unit and integration tests (Docker must be running)
-cargo make sweep        # Remove target/ artifacts unused for 7 days (needs cargo-sweep)
-cargo make ci           # Run full CI suite (fmt, clippy, test, sweep)
+make fmt          # Verify source code formatting
+make fmt-fix      # Automatically format source code
+make clippy       # Run clippy with -D warnings
+make build        # Build all workspace packages (not part of ci; test builds everything)
+make test         # Run unit and integration tests (Docker must be running)
+make sweep        # Remove target/ artifacts unused for 7 days (needs cargo-sweep)
+make ci           # Run full CI suite (fmt, clippy, test, sweep)
 ```
 
 The workspace keeps builds fast and `target/` bounded:
@@ -142,11 +142,11 @@ The workspace keeps builds fast and `target/` bounded:
 - `.cargo/config.toml` disables incremental compilation, whose data is never
   pruned and which sccache cannot cache. Edit-rebuilds of one large crate are
   slower in exchange for bounded disk use and compiler-cache hits.
-- In CI, cargo-make also sets `CARGO_INCREMENTAL=0`,
+- When `CI` is set (other than `false` or `0`), `make` also sets `CARGO_INCREMENTAL=0`,
   `CARGO_PROFILE_DEV_DEBUG=0`, and `CARGO_PROFILE_DEV_STRIP=none`.
 - Every CI cargo invocation uses `--locked --workspace --all-features` so
   artifacts are reused rather than rebuilt for a different feature set.
-- `cargo make sweep` runs at the end of `cargo make ci` and is skipped when
+- `make sweep` runs at the end of `make ci` and is skipped when
   [cargo-sweep](https://github.com/holmgr/cargo-sweep) is not installed or
   `SKIP_SWEEP` is set.
 
@@ -192,10 +192,10 @@ private `EXEMPLUM_APP_JWT_SECRET` (for example, `openssl rand -hex 32`):
 
 ```sh
 cp env/local.env.example env/local.env
-cargo make db-up
-cargo make db-provision
-cargo make db-migrate
-cargo make db-verify
+make db-up
+make db-provision
+make db-migrate
+make db-verify
 EXEMPLUM_ADMIN_DATABASE_URL=postgres://exemplum_users:password@127.0.0.1:5432/exemplum \
   cargo run --locked -p exemplum-admin-cli --bin exemplum-admin -- \
   create --username admin --display-name Administrator
@@ -210,7 +210,7 @@ an existing account an administrator, pass `--promote` instead of
 The output reports `"action": "created"` or `"promoted"`. The command uses the
 restricted users role, never the migration account.
 
-Run `cargo make app`, visit `http://127.0.0.1:8080/register`, and register an
+Run `make app`, visit `http://127.0.0.1:8080/register`, and register an
 account. Logging in as that account fails until it is approved. Log in as
 `admin`, visit `/admin/users`, and click **Approve**; the account can then log in.
 
@@ -225,7 +225,7 @@ cargo test --locked -p exemplum-app-cli --test runtime
 
 For real Chromium registration/approval checks with JavaScript both enabled and
 disabled, install the browser dependencies once, then run the same isolated suite
-(or `cargo make test-browser-registration`):
+(or `make test-browser-registration`):
 
 ```sh
 (cd tests/browser && npm ci && npx playwright install chromium)
@@ -233,7 +233,7 @@ EXEMPLUM_TEST_BROWSER=1 cargo test --locked -p exemplum-app-cli --test runtime
 ```
 
 The suite checks that registrations start pending, cannot log in before approval,
-and can after simultaneous administrator approvals. `cargo make test-browser`
-also runs the database-free greeting smoke checks. Root `cargo make ci` includes
+and can after simultaneous administrator approvals. `make test-browser`
+also runs the database-free greeting smoke checks. Root `make ci` includes
 process/database suites and rename checks; the Chromium checks are an explicit
 additional command.

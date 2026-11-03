@@ -62,7 +62,7 @@ async fn view_configuration_is_served() {
     );
     assert_eq!(response.headers()[header::CACHE_CONTROL], "no-cache");
     // Behaviour is exercised in a browser by `example/tests/browser`
-    // (`cargo make --cwd example test-browser`).
+    // (`make -C example test-browser`).
     assert_eq!(body_text(response).await, include_str!("../assets/view.js"));
 }
 
