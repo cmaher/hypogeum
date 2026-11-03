@@ -334,7 +334,7 @@ binary checks the runtime adapters before opening its listener and never
 migrates on startup. Run from `example/` so the default policy paths resolve:
 
 ```sh
-cargo make app
+make app
 ```
 
 Or run the binary directly:
@@ -440,7 +440,7 @@ which composes the real router with in-memory services and no database. It is
 the behavioural coverage for `view.js` and requires Node.js:
 
 ```sh
-cargo make --cwd example test-browser
+make -C example test-browser
 ```
 
 The submitted name `server-error` makes the smoke server's injected service fail,

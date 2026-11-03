@@ -45,7 +45,7 @@ Provision deliberate grants when a future service needs that capability.
 ## Board
 
 ```sh
-cargo make apalis-dashboard
+make apalis-dashboard
 ```
 
 The standalone `apalis-dashboard` binary in `cmd/apalis-dashboard` uses the
@@ -59,6 +59,6 @@ For a composed application, construct `Board::new()`, register typed queues, and
 serve its router. Duplicate registrations fail. Submission attempt budgets are
 capped per queue. The bundled Board interface and empty API need no queue setup.
 
-Run `cargo make test-db` for integration tests covering typed handlers, retries,
+Run `cargo test --locked -p hypgmx-tasks` for integration tests covering typed handlers, retries,
 submissions, transactional enqueue and recovery after killing a worker process.
 Tests use synthetic effects and SQLx-isolated databases in a suite-owned container.
