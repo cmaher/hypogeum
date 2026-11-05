@@ -1847,6 +1847,7 @@ version = "0.2.3"
 dependencies = [
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror",
  "tracing",
  "tracing-core",
