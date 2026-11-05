@@ -3,6 +3,10 @@ use std::sync::{Arc, Mutex, OnceLock};
 use tracing::subscriber::SetGlobalDefaultError;
 use tracing_subscriber::filter::ParseError;
 
+mod file;
+
+pub use file::{LogFileSettings, RotatingFile};
+
 #[derive(Debug, thiserror::Error)]
 pub enum LoggingError {
     #[error("Invalid log format: {0}")]
@@ -11,6 +15,11 @@ pub enum LoggingError {
     InvalidFilter(#[from] ParseError),
     #[error("Failed to set global default subscriber: {0}")]
     Init(#[from] SetGlobalDefaultError),
+    #[error("Failed to open log file {path}: {source}")]
+    LogFile {
+        path: std::path::PathBuf,
+        source: io::Error,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize)]
@@ -186,6 +195,60 @@ pub fn create_test_dispatch(
 
 pub fn init(filter: &str, format: LogFormat) -> Result<(), LoggingError> {
     let subscriber = create_subscriber(filter, format, std::io::stderr)?;
+    tracing::subscriber::set_global_default(subscriber)?;
+    Ok(())
+}
+
+fn fmt_layer<S, W>(
+    format: LogFormat,
+    writer: W,
+    ansi: bool,
+) -> Box<dyn tracing_subscriber::Layer<S> + Send + Sync>
+where
+    S: tracing::Subscriber + for<'span> tracing_subscriber::registry::LookupSpan<'span>,
+    W: for<'writer> tracing_subscriber::fmt::MakeWriter<'writer> + Send + Sync + 'static,
+{
+    let layer = tracing_subscriber::fmt::layer().with_writer(writer);
+    // Leave the default (which honors NO_COLOR) unless colors must be off.
+    let layer = if ansi { layer } else { layer.with_ansi(false) };
+    match format {
+        LogFormat::Text => Box::new(layer),
+        LogFormat::Json => Box::new(layer.json()),
+    }
+}
+
+/// Builds a subscriber that writes to `writer` and to a size-capped rotating
+/// log file, sharing one filter and format. The file never receives ANSI
+/// colors. Write errors on the file are swallowed by `tracing_subscriber`.
+pub fn create_subscriber_with_file<W>(
+    filter: &str,
+    format: LogFormat,
+    writer: W,
+    file: LogFileSettings,
+) -> Result<Box<dyn tracing::Subscriber + Send + Sync>, LoggingError>
+where
+    W: for<'writer> tracing_subscriber::fmt::MakeWriter<'writer> + Send + Sync + 'static,
+{
+    use tracing_subscriber::layer::SubscriberExt;
+
+    let env_filter = tracing_subscriber::EnvFilter::try_new(filter)?;
+    let path = file.path();
+    let rotating =
+        RotatingFile::open(file).map_err(|source| LoggingError::LogFile { path, source })?;
+    let subscriber = tracing_subscriber::registry().with(env_filter).with(vec![
+        fmt_layer(format, writer, true),
+        fmt_layer(format, Mutex::new(rotating), false),
+    ]);
+    Ok(Box::new(subscriber))
+}
+
+/// Like [`init`], additionally writing to a size-capped rotating log file.
+pub fn init_with_file(
+    filter: &str,
+    format: LogFormat,
+    file: LogFileSettings,
+) -> Result<(), LoggingError> {
+    let subscriber = create_subscriber_with_file(filter, format, std::io::stderr, file)?;
     tracing::subscriber::set_global_default(subscriber)?;
     Ok(())
 }
