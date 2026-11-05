@@ -73,8 +73,11 @@ fn keep_zero_truncates_in_place() {
 
     file.write_all(b"first-1\n").unwrap();
     file.write_all(b"second\n").unwrap();
-
     assert_eq!(read(settings.path()), "second\n");
+
+    // The size count restarts after truncation, so a write that fits stays.
+    file.write_all(b"ab\n").unwrap();
+    assert_eq!(read(settings.path()), "second\nab\n");
     assert!(!settings.rotated_path(1).exists());
 }
 
@@ -134,4 +137,37 @@ fn subscriber_writes_filtered_events_to_file_without_ansi() {
     assert!(contents.contains("plain text"));
     assert!(contents.contains("key=\"value\""));
     assert!(!contents.contains('\u{1b}'));
+}
+
+#[test]
+fn oversized_first_event_does_not_rotate_empty_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let settings = file_settings(&dir, 4, 1);
+    let mut file = RotatingFile::open(settings.clone()).unwrap();
+
+    file.write_all(b"much-too-long\n").unwrap();
+
+    assert_eq!(read(settings.path()), "much-too-long\n");
+    assert!(!settings.rotated_path(1).exists());
+}
+
+#[test]
+fn recovers_without_reshifting_after_failed_reopen() {
+    let dir = tempfile::tempdir().unwrap();
+    let settings = file_settings(&dir, 10, 2);
+    let mut file = RotatingFile::open(settings.clone()).unwrap();
+    for line in ["aaaaaaa\n", "bbbbbbb\n", "ccccccc\n"] {
+        file.write_all(line.as_bytes()).unwrap();
+    }
+
+    // Reproduce the state a rotation leaves behind when reopening the active
+    // file fails: the active path is gone while the writer still holds the
+    // old handle and its full size count.
+    fs::remove_file(settings.path()).unwrap();
+
+    file.write_all(b"ddddddd\n").unwrap();
+
+    assert_eq!(read(settings.path()), "ddddddd\n");
+    assert_eq!(read(settings.rotated_path(1)), "bbbbbbb\n");
+    assert_eq!(read(settings.rotated_path(2)), "aaaaaaa\n");
 }

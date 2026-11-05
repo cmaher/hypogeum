@@ -7,13 +7,18 @@ use std::path::{Path, PathBuf};
 /// Logs go to `<directory>/<name>.log`. Before an event would push that file
 /// past `max_bytes`, it is rolled to `<name>.log.1` (older files shift to
 /// `.2`, `.3`, ...) and files beyond `keep` are deleted. With `keep == 0` the
-/// file is truncated in place instead. Total disk use therefore stays within
-/// `max_bytes * (keep + 1)`.
+/// file is truncated in place instead. While the settings stay unchanged,
+/// total disk use therefore stays within `max_bytes * (keep + 1)`.
 ///
-/// Known limit: a single event larger than `max_bytes` is still written whole
-/// to a fresh file, so that one file can exceed the cap.
+/// Known limits: a single event larger than `max_bytes` is still written
+/// whole to a fresh file, so that one file can exceed the cap. Rotated files
+/// beyond a since-reduced `keep`, and a pre-existing file already larger than
+/// `max_bytes`, are not cleaned up beyond the normal rotation.
 ///
-/// Callers resolve and validate these values from their own configuration.
+/// Callers resolve and validate these values from their own configuration:
+/// `max_bytes` must be greater than zero, `keep` should be small (each
+/// rotation does one rename per slot), and `name` must be a plain file name
+/// without path separators.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LogFileSettings {
     pub directory: PathBuf,
@@ -67,15 +72,20 @@ impl RotatingFile {
             self.size = 0;
             return Ok(());
         }
-        remove_if_exists(&self.settings.rotated_path(keep))?;
-        for index in (1..keep).rev() {
-            rename_if_exists(
-                &self.settings.rotated_path(index),
-                &self.settings.rotated_path(index + 1),
-            )?;
-        }
         let path = self.settings.path();
-        fs::rename(&path, self.settings.rotated_path(1))?;
+        // A missing active file means a previous rotation already moved it
+        // and then failed to reopen; only retry the open so retained files
+        // are not shifted again.
+        if path.exists() {
+            remove_if_exists(&self.settings.rotated_path(keep))?;
+            for index in (1..keep).rev() {
+                rename_if_exists(
+                    &self.settings.rotated_path(index),
+                    &self.settings.rotated_path(index + 1),
+                )?;
+            }
+            fs::rename(&path, self.settings.rotated_path(1))?;
+        }
         self.file = open_append(&path)?;
         self.size = 0;
         Ok(())
